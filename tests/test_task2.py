@@ -146,6 +146,9 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, r
         row.outstanding = 0
         row.status = 'PAID'
         db.commit()
+    from scripts import rescore_demo
+    monkeypatch.setattr(rescore_demo, 'SessionLocal', Session)
+    assert rescore_demo.rescore_and_report(validate_seed=False)['open_count'] == 49
     with Session() as db:
         start = perf_counter()
         restored = restore(db, date.today())

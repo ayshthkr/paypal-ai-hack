@@ -25,7 +25,7 @@ def seed_if_empty() -> dict[str, object]:
         db.close()
 
     if invoice_count >= 1500 and client_count >= 40 and current:
-        rescore_and_report()
+        rescore_and_report(validate_seed=False)
         return {"seeded": False, "reason": "synthetic demo data already meets the current dataset size", "clients": client_count, "invoices": invoice_count, "as_of": as_of.isoformat() if as_of else None}
 
     seeded = seed()
