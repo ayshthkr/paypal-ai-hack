@@ -21,6 +21,7 @@ from ml.features import features
 from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
 from ml.activity import fit_bgnbd
 from ml.train import _duration, _survival_from_hazards, km_hazards
+from scripts import seed_demo_if_empty
 
 
 def _invoice(invoice_id: str, client_id: str, *, source="demo", status="OVERDUE", due=None):
@@ -398,6 +399,25 @@ def test_public_demo_reset_reseeds_only_after_rate_limit_and_preserves_cooldown(
     assert "PayPal Sandbox records were not changed" in reset.json()["message"]
     assert limited.status_code == 429
     assert calls == [date(2026, 11, 10)]
+
+
+def test_deployment_bootstrap_replaces_legacy_demo_and_rescores(api, monkeypatch):
+    _, Session = api
+    with Session() as db:
+        owner = Client(id="legacy-owner", display_name="Legacy", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("legacy-invoice", owner.id))
+        db.commit()
+    monkeypatch.setattr(seed_demo_if_empty, "SessionLocal", Session)
+    seeded, rescored = [], []
+    monkeypatch.setattr(seed_demo_if_empty, "seed", lambda: seeded.append(True) or {"clients": 50, "invoices": 2000})
+    monkeypatch.setattr(seed_demo_if_empty, "rescore_and_report", lambda: rescored.append(True) or {"forecast_inside_horizon_share": 0.9})
+
+    result = seed_demo_if_empty.seed_if_empty()
+    assert result["seeded"] is True
+    assert result["previous_clients"] == 1 and result["previous_invoices"] == 1
+    assert seeded == [True] and rescored == [True]
 
 
 def test_new_client_forecast_marks_limited_history_and_reports_model_metadata(api):
