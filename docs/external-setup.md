@@ -35,7 +35,8 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 - [x] API environment contains a generated `SESSION_SECRET`, generated operator username/password, Sandbox credentials, the controlled-recipient allowlist, and the registered webhook ID. The ignored local `.env.render` holds the generated operator login (mode `0600`). Keep `PAYPAL_MODE=sandbox` for acceptance.
 - [x] Confirm the API `/ready` endpoint returns HTTP 200 with its database, operator, Sandbox credentials, model artifact, and webhook ID configured; the web root returns HTTP 200.
 - [x] Deploy the first-boot-only synthetic fixture loader. Hosted dashboard verified with 400 invoice records, LightGBM forecasts, and client drift; simulated actions are labeled and do not call PayPal.
-- [ ] Complete the operator-authenticated hosted journey and the Sandbox buyer payment/webhook-delivery check after PayPal grants the missing Invoicing API scope.
+- [x] Verify hosted operator login and authenticated session through the web API proxy; generated credentials remain in ignored local `.env.render`.
+- [ ] Complete the PayPal invoice/reminder/payment and webhook-delivery check after PayPal grants the missing Invoicing API scope.
 
 ## AG Grid
 

@@ -26,7 +26,7 @@ make dev
 - `make train`: produced `lgbm-hazard-v1-seed-20261110` with LightGBM selected. Validation integrated Brier score: 0.1233 versus pooled KM 0.1413. Test score: 0.0476 versus KM 0.2246; paid-only date MAE: 14.37 days over 19 paid invoices. These are synthetic pipeline metrics and do not establish real-world accuracy.
 - `make smoke` (final run): health, readiness, public synthetic invoice list/detail and forecast passed.
 - Browser journey: forecast and client drift displayed; edited synthetic reminder was approved once and persisted; partial payment updated the balance; full payment set the invoice to `PAID` with USD 0.00 outstanding. The interface confirmed no PayPal email/payment was sent.
-- Hosted demo: `https://latepayer-web.onrender.com` displays the explicitly labeled synthetic portfolio, 400 records, LightGBM forecasts, and client drift. The hosted API proxy returns HTTP 200 for readiness, invoices, and clients. Synthetic actions never contact PayPal.
+- Hosted demo: `https://latepayer-web.onrender.com` displays the explicitly labeled synthetic portfolio, 400 records, LightGBM forecasts, and client drift. The hosted API proxy returns HTTP 200 for readiness, invoices, and clients. Operator login and authenticated session lookup both returned HTTP 200. Synthetic actions never contact PayPal.
 - AG Grid is **Community**, free and MIT-licensed. No AG Studio license/key is needed.
 
 ## Not yet verified outside the local demo
