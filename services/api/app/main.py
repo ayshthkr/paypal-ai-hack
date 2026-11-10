@@ -843,7 +843,7 @@ def invoices(
         ready_recommendations.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
             Invoice.source == source, Recommendation.state == "proposed",
             Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
-            func.date(Recommendation.created_at) == today.isoformat(),
+            func.date(Recommendation.created_at) == today,
         )).all())
     for row in base_rows:
         open_invoice = _payable(row)
@@ -959,7 +959,7 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
         today = _today(db, source)
         reviewed_today.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
             Invoice.source == source, Recommendation.state.in_(["skipped", "sent", "applied"]),
-            func.date(Recommendation.created_at) == today.isoformat(),
+            func.date(Recommendation.created_at) == today,
         )).all())
     ranked = [invoice_id for invoice_id in _rank_policy_candidates(db, scope) if invoice_id not in reviewed_today]
     ranked = ranked[:DAILY_SUGGESTION_CAP]
