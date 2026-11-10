@@ -37,6 +37,7 @@ from ml.activity import fit_bgnbd
 settings = get_settings()
 _REQUEST_DEMO_AS_OF: ContextVar[date | None] = ContextVar("request_demo_as_of", default=None)
 ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"}
+PORTFOLIO_CONTEXT_KEY = "latepayer_portfolio_context"
 app = FastAPI(title="Late Payer", version="1.0.0", description="Invoice payment forecasts and approved PayPal reminders.")
 app.add_middleware(
     CORSMiddleware,
@@ -116,6 +117,9 @@ def _verify_login(username: str, password: str) -> bool:
 
 
 def _client_records(db: Session, client_id: str) -> list[dict]:
+    portfolio = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if portfolio is not None:
+        return portfolio["records_by_client"].get(client_id, [])
     rows = list(db.scalars(select(Invoice).where(Invoice.client_id == client_id)).all())
     ids = [row.id for row in rows]
     payments = list(db.scalars(select(Payment).where(Payment.invoice_id.in_(ids))).all()) if ids else []
@@ -123,6 +127,95 @@ def _client_records(db: Session, client_id: str) -> list[dict]:
     for payment in payments:
         grouped.setdefault(payment.invoice_id, []).append(payment)
     return [_as_record(row, grouped.get(row.id, [])) for row in rows]
+
+
+def _prepare_portfolio_context(
+    db: Session, invoices: list[Invoice], *, include_policy: bool = True, include_predictions: bool = True,
+) -> dict:
+    """Load shared invoice facts once for a portfolio request instead of per invoice."""
+    existing = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if existing is not None:
+        return existing
+
+    invoice_rows = list(invoices)
+    invoice_ids = [invoice.id for invoice in invoice_rows]
+    invoices_by_client: dict[str, list[Invoice]] = {}
+    for invoice in invoice_rows:
+        invoices_by_client.setdefault(invoice.client_id, []).append(invoice)
+
+    payments = list(db.scalars(select(Payment).where(Payment.invoice_id.in_(invoice_ids))).all()) if invoice_ids else []
+    payments_by_invoice: dict[str, list[Payment]] = {}
+    payment_counts: dict[str, int] = {}
+    last_payment_by_invoice: dict[str, datetime] = {}
+    for payment in payments:
+        payments_by_invoice.setdefault(payment.invoice_id, []).append(payment)
+        payment_counts[payment.invoice_id] = payment_counts.get(payment.invoice_id, 0) + 1
+        previous = last_payment_by_invoice.get(payment.invoice_id)
+        if previous is None or payment.occurred_at > previous:
+            last_payment_by_invoice[payment.invoice_id] = payment.occurred_at
+
+    records_by_client = {
+        client_id: [_as_record(invoice, payments_by_invoice.get(invoice.id, [])) for invoice in client_invoices]
+        for client_id, client_invoices in invoices_by_client.items()
+    }
+    partial_payment_clients = {
+        invoice.client_id for invoice in invoice_rows if payment_counts.get(invoice.id, 0) > 1
+    }
+
+    attempts_by_invoice: dict[str, list[tuple[ActionAttempt, str]]] = {}
+    if include_policy and invoice_ids:
+        attempt_rows = db.execute(
+            select(ActionAttempt, Recommendation.invoice_id, Recommendation.tone)
+            .join(Recommendation, ActionAttempt.recommendation_id == Recommendation.id)
+            .where(Recommendation.invoice_id.in_(invoice_ids))
+            .order_by(ActionAttempt.started_at.desc())
+        ).all()
+        for attempt, invoice_id, tone in attempt_rows:
+            attempts_by_invoice.setdefault(invoice_id, []).append((attempt, tone))
+    last_attempt_by_invoice: dict[str, tuple[datetime | None, bool, str | None, datetime | None]] = {}
+    for invoice_id in invoice_ids if include_policy else []:
+        recent = attempts_by_invoice.get(invoice_id, [])[:10]
+        last = next((attempt.started_at for attempt, _ in recent if attempt.state in {"sent", "sending", "unknown"}), None)
+        unresolved = any(attempt.state in {"sending", "unknown"} for attempt, _ in recent)
+        last_tone = next((tone for attempt, tone in recent if last is not None and attempt.started_at == last), None)
+        last_attempt_by_invoice[invoice_id] = (last, unresolved, last_tone, last_payment_by_invoice.get(invoice_id))
+
+    latest_recommendation_by_invoice: dict[str, Recommendation] = {}
+    if include_policy and invoice_ids:
+        recommendations = db.scalars(
+            select(Recommendation).where(Recommendation.invoice_id.in_(invoice_ids))
+            .order_by(Recommendation.created_at.desc())
+        ).all()
+        for recommendation in recommendations:
+            latest_recommendation_by_invoice.setdefault(recommendation.invoice_id, recommendation)
+
+    scoring_dates = {_today(db, source) for source in {invoice.source for invoice in invoice_rows}}
+    predictions_by_key = {}
+    if include_predictions and invoice_ids and scoring_dates:
+        predictions = db.scalars(
+            select(Prediction).where(
+                Prediction.invoice_id.in_(invoice_ids),
+                Prediction.scoring_date.in_(scoring_dates),
+            )
+        ).all()
+        predictions_by_key = {
+            (prediction.invoice_id, prediction.scoring_date, prediction.fingerprint, prediction.model_version): prediction
+            for prediction in predictions
+        }
+
+    context = {
+        "invoices": invoice_rows,
+        "invoices_by_client": invoices_by_client,
+        "payments_by_invoice": payments_by_invoice,
+        "records_by_client": records_by_client,
+        "partial_payment_clients": partial_payment_clients if include_policy else set(),
+        "last_attempt_by_invoice": last_attempt_by_invoice,
+        "latest_recommendation_by_invoice": latest_recommendation_by_invoice,
+        "predictions_by_key": predictions_by_key,
+        "invoice_count_by_client": {client_id: len(rows) for client_id, rows in invoices_by_client.items()},
+    }
+    db.info[PORTFOLIO_CONTEXT_KEY] = context
+    return context
 
 
 def _activity_for_source(db: Session, source: str) -> dict[str, float]:
@@ -166,6 +259,9 @@ def _drift_for(db: Session, client: Client, activity_probability: float | None =
 
 
 def _last_attempt(db: Session, invoice_id: str) -> tuple[datetime | None, bool, str | None, datetime | None]:
+    portfolio = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if portfolio is not None:
+        return portfolio["last_attempt_by_invoice"].get(invoice_id, (None, False, None, None))
     attempts = list(db.scalars(
         select(ActionAttempt).join(Recommendation).where(Recommendation.invoice_id == invoice_id)
         .order_by(ActionAttempt.started_at.desc()).limit(10)
@@ -183,11 +279,17 @@ def _last_attempt(db: Session, invoice_id: str) -> tuple[datetime | None, bool, 
 
 
 def _latest_recommendation(db: Session, invoice_id: str) -> Recommendation | None:
+    portfolio = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if portfolio is not None:
+        return portfolio["latest_recommendation_by_invoice"].get(invoice_id)
     return db.scalar(select(Recommendation).where(Recommendation.invoice_id == invoice_id)
                      .order_by(Recommendation.created_at.desc()).limit(1))
 
 
 def _client_has_partial_history(db: Session, client_id: str) -> bool:
+    portfolio = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if portfolio is not None:
+        return client_id in portfolio["partial_payment_clients"]
     invoice_ids = list(db.scalars(select(Invoice.id).where(Invoice.client_id == client_id)).all())
     if not invoice_ids:
         return False
@@ -551,10 +653,16 @@ def _payable(invoice: Invoice) -> bool:
 
 
 def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cache: dict[str, dict] | None = None) -> list[str]:
-    query = select(Invoice).order_by(Invoice.due_date.asc())
-    if source:
-        query = query.where(Invoice.source == source)
-    rows = list(db.scalars(query).all())
+    portfolio = db.info.get(PORTFOLIO_CONTEXT_KEY)
+    if portfolio is not None:
+        rows = portfolio["invoices"]
+        if source:
+            rows = [row for row in rows if row.source == source]
+    else:
+        query = select(Invoice).order_by(Invoice.due_date.asc())
+        if source:
+            query = query.where(Invoice.source == source)
+        rows = list(db.scalars(query).all())
     candidates = []
     for invoice in rows:
         if not _payable(invoice):
@@ -810,10 +918,13 @@ def invoices(
     if as_of is not None and (as_of > as_of_max or as_of < as_of_max - timedelta(days=60)):
         raise HTTPException(status_code=422, detail="Demo time travel is limited to the latest 60 days.")
 
-    query = select(Invoice).options(joinedload(Invoice.client)).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
-    if not user:
-        query = query.where(Invoice.source == "demo")
-    base_rows = list(db.scalars(query).unique().all())
+    source_names = ["demo"] if not user else ["demo", "paypal"]
+    query = select(Invoice).options(joinedload(Invoice.client)).where(
+        Invoice.source.in_(source_names)
+    ).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
+    portfolio_rows = list(db.scalars(query).unique().all())
+    _prepare_portfolio_context(db, portfolio_rows)
+    base_rows = portfolio_rows
     if client_id:
         base_rows = [row for row in base_rows if row.client_id == client_id]
     if q:
@@ -822,7 +933,6 @@ def invoices(
             row.invoice_number, row.client.display_name, row.status, row.client.email or "",
         ))]
 
-    source_names = ["demo"] if not user else ["demo", "paypal"]
     activity_by_source = {source: _activity_for_source(db, source) for source in source_names}
     forecast_cache: dict[str, dict] = {}
     candidate_order = _rank_policy_candidates(db, None if user else "demo", forecast_cache)
@@ -1065,10 +1175,14 @@ def clients(request: Request, db: Session = Depends(get_db)) -> dict:
     if not user:
         query = query.where(Client.source == "demo")
     rows = list(db.scalars(query).all())
-    activity_by_source = {source: _activity_for_source(db, source) for source in {row.source for row in rows}}
+    source_names = {row.source for row in rows}
+    invoice_query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.source.in_(source_names))
+    invoice_rows = list(db.scalars(invoice_query).unique().all()) if source_names else []
+    portfolio = _prepare_portfolio_context(db, invoice_rows, include_policy=False, include_predictions=False)
+    activity_by_source = {source: _activity_for_source(db, source) for source in source_names}
     output = []
     for client in rows:
-        count = db.scalar(select(func.count(Invoice.id)).where(Invoice.client_id == client.id)) or 0
+        count = portfolio["invoice_count_by_client"].get(client.id, 0)
         output.append({"id": client.id, "name": client.display_name, "source": client.source,
                        "invoice_count": count, "drift": _drift_for(db, client, activity_by_source[client.source].get(client.id))})
     output.sort(key=lambda row: (-row["drift"].get("severity_score", 0), row["name"].casefold()))

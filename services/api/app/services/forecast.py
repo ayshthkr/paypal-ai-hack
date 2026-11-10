@@ -135,13 +135,20 @@ def forecast_invoice(
     scenario: dict | None = None,
 ) -> dict:
     today = today or date.today()
-    client_invoices = list(db.scalars(select(Invoice).where(Invoice.client_id == invoice.client_id)).all())
-    invoice_ids = [item.id for item in client_invoices]
-    payments = list(db.scalars(select(Payment).where(Payment.invoice_id.in_(invoice_ids))).all()) if invoice_ids else []
-    payments_by_invoice: dict[str, list[Payment]] = {}
-    for payment in payments:
-        payments_by_invoice.setdefault(payment.invoice_id, []).append(payment)
-    records = [_as_record(item, payments_by_invoice.get(item.id, [])) for item in client_invoices]
+    portfolio = db.info.get("latepayer_portfolio_context")
+    if portfolio is not None:
+        client_invoices = portfolio["invoices_by_client"].get(invoice.client_id, [])
+        payments_by_invoice = portfolio["payments_by_invoice"]
+        payments = [payment for item in client_invoices for payment in payments_by_invoice.get(item.id, [])]
+        records = portfolio["records_by_client"].get(invoice.client_id, [])
+    else:
+        client_invoices = list(db.scalars(select(Invoice).where(Invoice.client_id == invoice.client_id)).all())
+        invoice_ids = [item.id for item in client_invoices]
+        payments = list(db.scalars(select(Payment).where(Payment.invoice_id.in_(invoice_ids))).all()) if invoice_ids else []
+        payments_by_invoice: dict[str, list[Payment]] = {}
+        for payment in payments:
+            payments_by_invoice.setdefault(payment.invoice_id, []).append(payment)
+        records = [_as_record(item, payments_by_invoice.get(item.id, [])) for item in client_invoices]
     record_by_id = {row["id"]: row for row in records}
     target = record_by_id[invoice.id]
     if scenario:
@@ -166,12 +173,16 @@ def forecast_invoice(
     fingerprint = hashlib.sha256(fingerprint_raw.encode()).hexdigest()
     existing = None
     if persist:
-        existing = db.scalar(select(Prediction).where(
-            Prediction.invoice_id == invoice.id,
-            Prediction.scoring_date == today,
-            Prediction.fingerprint == fingerprint,
-            Prediction.model_version == model_version,
-        ))
+        prediction_key = (invoice.id, today, fingerprint, model_version)
+        if portfolio is not None:
+            existing = portfolio["predictions_by_key"].get(prediction_key)
+        else:
+            existing = db.scalar(select(Prediction).where(
+                Prediction.invoice_id == invoice.id,
+                Prediction.scoring_date == today,
+                Prediction.fingerprint == fingerprint,
+                Prediction.model_version == model_version,
+            ))
     if existing:
         curve = existing.curve
         quantiles = existing.quantiles
@@ -226,13 +237,17 @@ def forecast_invoice(
                 probabilities["14d"] = round(float(np.interp(probabilities["14d"], thresholds_x, thresholds_y)), 6)
         scored_at = datetime.now(timezone.utc)
         if persist:
-            db.add(Prediction(
+            prediction = Prediction(
                 invoice_id=invoice.id, scoring_date=today, fingerprint=fingerprint,
                 model_version=model_version, feature_schema_version=FEATURE_SCHEMA_VERSION,
                 model_label=model_label, history_count=history_count, scored_at=scored_at,
                 curve=curve, quantiles=quantiles, probabilities=probabilities, reasons=reasons,
-            ))
-            db.flush()
+            )
+            db.add(prediction)
+            if portfolio is not None:
+                portfolio["predictions_by_key"][prediction_key] = prediction
+            else:
+                db.flush()
     overdue_days = max(0, (today - invoice.due_date).days)
     return {
         "curve": curve,

@@ -60,6 +60,8 @@ const columnChoices = [
   ["drift", "Client drift"], ["action", "Next action"], ["expected_cash", "Expected cash gain"],
 ] as const;
 const defaultColumns = columnChoices.map(([id]) => id).filter(id => !["status", "window", "expected_cash"].includes(id));
+const MAX_API_WAKE_RETRIES = 30;
+const API_WAKE_RETRY_DELAY_MS = 2500;
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, cache: "no-store", credentials: "same-origin" });
@@ -191,9 +193,11 @@ export default function PortfolioClient() {
       if (latestQuery.current !== searchKey) return;
       const message = cause instanceof Error ? cause.message : "Could not load invoices.";
       const retries = wakeRetries.current.get(searchKey) || 0;
-      if ((message.includes("unavailable") || message.includes("502")) && retries < 5) {
+      if ((message.includes("unavailable") || message.includes("502")) && retries < MAX_API_WAKE_RETRIES) {
         wakeRetries.current.set(searchKey, retries + 1);
-        setError(`The API is waking up. Retrying (${retries + 1}/5)…`);
+        setError(`The API is waking up. Retrying (${retries + 1}/${MAX_API_WAKE_RETRIES})…`);
+      } else if (message.includes("unavailable") || message.includes("502")) {
+        setError(`The API is still unavailable after ${MAX_API_WAKE_RETRIES} retries. Select Retry to try again.`);
       } else setError(message);
     }).finally(() => {
       refreshInFlight.current.delete(url);
@@ -207,7 +211,7 @@ export default function PortfolioClient() {
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (!error.startsWith("The API is waking up.")) return;
-    const timer = window.setTimeout(() => setWakeRetryNonce(value => value + 1), 1800);
+    const timer = window.setTimeout(() => setWakeRetryNonce(value => value + 1), API_WAKE_RETRY_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [error]);
   useEffect(() => { if (wakeRetryNonce > 0) void refresh(); }, [refresh, wakeRetryNonce]);
@@ -345,7 +349,7 @@ export default function PortfolioClient() {
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
         {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")} onReset={() => void resetDemo()} />}
-        {error && <div className="error-box" role="alert">{error}</div>}
+        {error && <div className="error-box" role="alert">{error}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
           <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>
           {askResult && <div className="action-message" role="status" style={{ marginTop: 12 }}>{askResult.answer}</div>}
