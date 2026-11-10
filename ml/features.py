@@ -105,7 +105,10 @@ def features(invoice: object, as_of: date, history: list[object], all_invoices: 
             exposure += max(0.0, amount)
 
     viewed_at = _as_date(_get(invoice, "viewed_at"))
-    viewed = bool(viewed_at and viewed_at <= as_of)
+    observed_at = _as_date(_get(invoice, "viewed_observed_at"))
+    viewed = bool(viewed_at and viewed_at <= as_of) or bool(
+        _get(invoice, "viewed_by_recipient") and observed_at and observed_at <= as_of
+    )
     reminder_days = []
     for event in _get(invoice, "reminder_events", []) or []:
         event_at = _as_date(event.get("sent_at") if isinstance(event, dict) else event)
@@ -128,7 +131,7 @@ def features(invoice: object, as_of: date, history: list[object], all_invoices: 
     term = str(_get(invoice, "payment_term_type", "") or "").upper().replace(" ", "_")
     outstanding = _amount(_get(invoice, "outstanding", _get(invoice, "total", 0)))
     overdue_days = max(0, (as_of - due).days)
-    last_viewed_days = max(0, (as_of - viewed_at).days) if viewed else 180.0
+    last_viewed_days = max(0, (as_of - viewed_at).days) if viewed_at and viewed_at <= as_of else 180.0
     last_reminder_days = max(0, (as_of - max(reminder_days)).days) if reminder_days else 180.0
     return {
         "log_outstanding": math.log1p(outstanding),

@@ -42,6 +42,11 @@ type MorningBrief = {
   clients_slowing_down: { client_id: string; client_name: string; signal_type: string; message: string; severity_score: number }[];
 };
 type AskResult = { intent: string; answer: string; data: unknown };
+type SyncStatus = {
+  last_run: null | { started_at: string; completed_at: string | null; status: string; created: number; updated: number; event_refreshes: number; retry_failures: number; errors: string[] };
+  webhook_failures: number;
+};
+type PaypalRecipient = { id: string; name: string; email: string };
 
 const modules = [AllCommunityModule];
 const gridTheme = themeQuartz.withParams({ accentColor: "#155eef", backgroundColor: "#ffffff", borderColor: "#e6ebee", fontFamily: "Arial, sans-serif", fontSize: "12px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f5f8fc" });
@@ -98,8 +103,17 @@ export default function PortfolioClient() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [wakeRetryNonce, setWakeRetryNonce] = useState(0);
   const [authenticated, setAuthenticated] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [paypalRecipients, setPaypalRecipients] = useState<PaypalRecipient[]>([]);
+  const [newInvoiceClient, setNewInvoiceClient] = useState("");
+  const [newInvoiceAmount, setNewInvoiceAmount] = useState("");
+  const [newInvoiceTerm, setNewInvoiceTerm] = useState("NET_30");
+  const [newInvoicePartial, setNewInvoicePartial] = useState(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [createdInvoice, setCreatedInvoice] = useState<{ id: string; number: string } | null>(null);
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -108,6 +122,7 @@ export default function PortfolioClient() {
   const [askLoading, setAskLoading] = useState(false);
   const gridApi = useRef<GridApi<InvoiceRow> | null>(null);
   const refreshInFlight = useRef(new Map<string, Promise<void>>());
+  const wakeRetries = useRef(new Map<string, number>());
   const latestQuery = useRef(searchKey);
 
   const updateUrl = useCallback((updates: Record<string, string | null>, mode: "push" | "replace" = "push", resetPage = true) => {
@@ -144,11 +159,29 @@ export default function PortfolioClient() {
     const pending = Promise.all([
       getJson<InvoiceResult>(url), getJson<{ items: ClientRow[] }>("/api/clients"),
       getJson<{ authenticated: boolean }>("/api/auth/me"),
-    ]).then(([invoices, clientData, auth]) => {
+    ]).then(async ([invoices, clientData, auth]) => {
       if (latestQuery.current !== searchKey) return;
-      setData(invoices); setClients(clientData.items); setAuthenticated(auth.authenticated); setError("");
+      let operatorSync: SyncStatus | null = null;
+      let recipients: PaypalRecipient[] = [];
+      if (auth.authenticated) {
+        const [syncResult, recipientResult] = await Promise.all([
+          getJson<SyncStatus>("/api/sync/status").catch(() => null),
+          getJson<{ items: PaypalRecipient[] }>("/api/paypal/recipients").catch(() => null),
+        ]);
+        operatorSync = syncResult;
+        recipients = recipientResult?.items || [];
+      }
+      if (latestQuery.current !== searchKey) return;
+      setData(invoices); setClients(clientData.items); setAuthenticated(auth.authenticated);
+      setSyncStatus(operatorSync); setPaypalRecipients(recipients); setError(""); wakeRetries.current.delete(searchKey);
     }).catch(cause => {
-      if (latestQuery.current === searchKey) setError(cause instanceof Error ? cause.message : "Could not load invoices.");
+      if (latestQuery.current !== searchKey) return;
+      const message = cause instanceof Error ? cause.message : "Could not load invoices.";
+      const retries = wakeRetries.current.get(searchKey) || 0;
+      if ((message.includes("unavailable") || message.includes("502")) && retries < 5) {
+        wakeRetries.current.set(searchKey, retries + 1);
+        setError(`The API is waking up. Retrying (${retries + 1}/5)…`);
+      } else setError(message);
     }).finally(() => {
       refreshInFlight.current.delete(url);
       if (latestQuery.current === searchKey) setLoading(false);
@@ -160,18 +193,41 @@ export default function PortfolioClient() {
   useEffect(() => { latestQuery.current = searchKey; }, [searchKey]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
+    if (!error.startsWith("The API is waking up.")) return;
+    const timer = window.setTimeout(() => setWakeRetryNonce(value => value + 1), 1800);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+  useEffect(() => { if (wakeRetryNonce > 0) void refresh(); }, [refresh, wakeRetryNonce]);
+  useEffect(() => {
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
   const sync = async () => {
     setBusy(true); setError("");
     try {
-      const result = await getJson<{ errors?: string[] }>("/api/sync", { method: "POST" });
+      const result = await getJson<{ errors?: string[]; created?: number; updated?: number }>("/api/sync", { method: "POST" });
       setLastSync(new Date().toLocaleTimeString());
       await refresh();
       if (result.errors?.length) setError(`Sync completed with ${result.errors.length} invoice error(s).`);
+      else setError(`Sync complete · ${result.created || 0} imported, ${result.updated || 0} updated.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "PayPal sync failed."); }
     finally { setBusy(false); }
+  };
+
+  const createInvoice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!newInvoiceClient || !newInvoiceAmount) return;
+    setCreatingInvoice(true); setError(""); setCreatedInvoice(null);
+    try {
+      const result = await getJson<{ invoice_id: string; invoice_number: string; status: string }>("/api/paypal/invoices", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: newInvoiceClient, amount: newInvoiceAmount, payment_term_type: newInvoiceTerm, partial_payment_allowed: newInvoicePartial }),
+      });
+      setCreatedInvoice({ id: result.invoice_id, number: result.invoice_number });
+      setNewInvoiceAmount(""); setNewInvoicePartial(false);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create Sandbox invoice."); }
+    finally { setCreatingInvoice(false); }
   };
 
   const openBrief = async () => {
@@ -266,6 +322,22 @@ export default function PortfolioClient() {
             <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${client.signal_type.replaceAll("_", " ")})`).join(" · ") || "none"}</div>
           </> : null)}
         </section>
+        {authenticated && <section className="panel"><div className="panel-head"><div><div className="panel-title">PayPal Sandbox</div><div className="panel-subtitle">Create a controlled test invoice and review the last import.</div></div><span className="status-pill">Sandbox only</span></div>
+          <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString()} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
+          {syncStatus?.last_run?.errors?.length ? <div className="error-box" style={{ marginTop: 10 }}>{syncStatus.last_run.errors.join(" · ")}</div> : null}
+          <form className="toolbar-tools" onSubmit={createInvoice} style={{ marginTop: 14 }}>
+            <select className="select" aria-label="Sandbox invoice recipient" value={newInvoiceClient} onChange={event => setNewInvoiceClient(event.target.value)} required>
+              <option value="">Choose allowlisted recipient</option>{paypalRecipients.map(client => <option value={client.id} key={client.id}>{client.name}</option>)}
+            </select>
+            <input className="search" aria-label="Invoice amount" type="number" min="0.01" max="1000000" step="0.01" placeholder="Amount" value={newInvoiceAmount} onChange={event => setNewInvoiceAmount(event.target.value)} required />
+            <select className="select" aria-label="Payment terms" value={newInvoiceTerm} onChange={event => setNewInvoiceTerm(event.target.value)}><option value="DUE_ON_RECEIPT">Due on receipt</option><option value="NET_15">NET 15</option><option value="NET_30">NET 30</option></select>
+            <label className="fine-print"><input type="checkbox" checked={newInvoicePartial} onChange={event => setNewInvoicePartial(event.target.checked)} /> Allow partial payment</label>
+            <button className="btn primary" disabled={creatingInvoice || !paypalRecipients.length}>{creatingInvoice ? "Creating and sending…" : "Create & send Sandbox invoice"}</button>
+            <button className="btn" type="button" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "Retry sync"}</button>
+          </form>
+          {!paypalRecipients.length && <div className="empty-inline" style={{ marginTop: 10 }}>No allowlisted PayPal recipient is synced. Sync Sandbox invoices and check PAYPAL_ALLOWED_RECIPIENT_EMAILS.</div>}
+          {createdInvoice && <div className="action-message" role="status" style={{ marginTop: 12 }}>Created and sent <Link className="table-link" href={`/invoices/${encodeURIComponent(createdInvoice.id)}`}>{createdInvoice.number}</Link> through PayPal Sandbox.</div>}
+        </section>}
         {loading && !data && <div className="empty-box">Loading invoice portfolio…</div>}
         {data && <>
           <section className="stats-grid">

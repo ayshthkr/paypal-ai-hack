@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -22,14 +23,14 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun
 from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice
 from app.services.paypal import PayPalAdapter, PayPalError, webhook_invoice_id
 from app.services.policy import DAILY_SUGGESTION_CAP, CLOSED_STATUSES, decide, holdback_assignment, render_message
-from app.services.sync import refresh_paypal_invoice, sync_paypal
+from app.services.sync import refresh_paypal_invoice, sync_paypal, upsert_paypal_invoice
 from ml.activity import fit_bgnbd
 
 settings = get_settings()
@@ -63,6 +64,13 @@ class ReplyInput(BaseModel):
 
 class AskInput(BaseModel):
     question: str = Field(min_length=1, max_length=500)
+
+
+class CreateInvoiceInput(BaseModel):
+    client_id: str = Field(min_length=1, max_length=36)
+    amount: Decimal = Field(gt=Decimal("0"), le=Decimal("1000000"))
+    payment_term_type: Literal["DUE_ON_RECEIPT", "NET_15", "NET_30"]
+    partial_payment_allowed: bool = False
 
 
 def _today(db: Session | None = None, source: str | None = None) -> date:
@@ -342,6 +350,8 @@ def _invoice_timeline(db: Session, invoice: Invoice) -> list[dict]:
         add("Sent", invoice.issue_date, "Synthetic invoice delivery is modeled on the issue date.")
     if invoice.viewed_at:
         add("Viewed by recipient", invoice.viewed_at)
+    elif invoice.viewed_by_recipient and invoice.viewed_observed_at:
+        add("Viewed by recipient", invoice.viewed_observed_at, "PayPal confirms the invoice was viewed; its exact view time is unavailable.")
     for reminder in invoice.reminder_events or []:
         if isinstance(reminder, dict):
             tone = str(reminder.get("tone") or "").strip()
@@ -391,7 +401,7 @@ def _invoice_dict(
     if invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0:
         forecast = None if include_detail else (forecast_cache or {}).get(invoice.id)
         if forecast is None:
-            forecast = forecast_invoice(db, invoice, today=today, persist=include_detail)
+            forecast = forecast_invoice(db, invoice, today=today, persist=True)
             if forecast_cache is not None and not include_detail:
                 forecast_cache[invoice.id] = forecast
     if drift_cache is not None and client.id in drift_cache:
@@ -425,14 +435,18 @@ def _invoice_dict(
         recommendation = None
     elif action["action"] == "review_for_writeoff_or_collections" and recommendation and recommendation.state == "proposed":
         recommendation = None
-    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed"}) and action["action"] in {"friendly", "firm"}:
+    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed", "applied"}) and action["action"] in {"friendly", "firm", "offer_partial_payment"}:
         provider_url = ((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")
         if not isinstance(provider_url, str) or urlparse(provider_url).scheme != "https" or not urlparse(provider_url).hostname or not urlparse(provider_url).hostname.endswith("paypal.com"):
             provider_url = None
-        body = render_message(client.display_name, invoice.outstanding, invoice.currency, invoice.due_date, action["tone"], provider_url)
+        body = (
+            "Approval will enable partial payments on this PayPal invoice. No reminder message will be sent."
+            if action["action"] == "offer_partial_payment"
+            else render_message(client.display_name, invoice.outstanding, invoice.currency, invoice.due_date, action["tone"], provider_url)
+        )
         recommendation = Recommendation(
             invoice_id=invoice.id, action=action["action"], tone=action["tone"], reason=action["reason"],
-            draft_text=body, draft_source="template", edited_text=body, invoice_version=invoice.material_version,
+            draft_text=body, draft_source="policy" if action["action"] == "offer_partial_payment" else "template", edited_text=body, invoice_version=invoice.material_version,
             policy_step=action.get("policy_step"),
         )
         db.add(recommendation)
@@ -450,6 +464,8 @@ def _invoice_dict(
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,
         "viewed_at": invoice.viewed_at.isoformat() if invoice.viewed_at else None,
+        "viewed_by_recipient": invoice.viewed_by_recipient,
+        "viewed_observed_at": invoice.viewed_observed_at.isoformat() if invoice.viewed_observed_at else None,
         "partial_payment_allowed": invoice.partial_payment_allowed,
         "payment_term_type": invoice.payment_term_type,
         "reminder_events": invoice.reminder_events or [],
@@ -523,7 +539,7 @@ def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cac
         invoice_today = _today(db, invoice.source)
         forecast = (forecast_cache or {}).get(invoice.id)
         if forecast is None:
-            forecast = forecast_invoice(db, invoice, today=invoice_today, persist=False)
+            forecast = forecast_invoice(db, invoice, today=invoice_today, persist=True)
             if forecast_cache is not None:
                 forecast_cache[invoice.id] = forecast
         last_attempt, unresolved, last_tone, last_payment = _last_attempt(db, invoice.id)
@@ -765,7 +781,7 @@ def invoices(
         today = _today(db, source)
         ready_recommendations.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
             Invoice.source == source, Recommendation.state == "proposed",
-            Recommendation.action.in_(["friendly", "firm"]),
+            Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
             func.date(Recommendation.created_at) == today.isoformat(),
         )).all())
     for row in base_rows:
@@ -820,7 +836,7 @@ def invoices(
     for row in base_rows:
         if not _payable(row):
             continue
-        forecast = forecast_cache.get(row.id) or forecast_invoice(db, row, today=_today(db, row.source), persist=False)
+        forecast = forecast_cache.get(row.id) or forecast_invoice(db, row, today=_today(db, row.source), persist=True)
         forecast_cache[row.id] = forecast
         p50 = forecast.get("quantiles", {}).get("p50")
         if not p50 or not p50.get("date"):
@@ -1139,7 +1155,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
             if not _payable(row):
                 continue
             today = _today(db, row.source)
-            forecast = forecast_invoice(db, row, today=today, persist=False)
+            forecast = forecast_invoice(db, row, today=today, persist=True)
             p50 = forecast.get("quantiles", {}).get("p50") or {}
             if p50.get("date"):
                 expected = date.fromisoformat(p50["date"])
@@ -1172,6 +1188,73 @@ def sync(request: Request, db: Session = Depends(get_db)) -> dict:
         return sync_paypal(db, PayPalAdapter())
     except PayPalError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/sync/status")
+def sync_status(request: Request, db: Session = Depends(get_db)) -> dict:
+    require_operator(request)
+    latest = db.scalar(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(1))
+    webhook_failures = db.scalar(select(func.count(InvoiceEvent.id)).where(
+        InvoiceEvent.verified.is_(True), InvoiceEvent.processing_status.in_(["retry", "verification_retry"]),
+    )) or 0
+    return {
+        "last_run": ({
+            "started_at": latest.started_at.isoformat(), "completed_at": latest.completed_at.isoformat() if latest.completed_at else None,
+            "status": latest.status, "created": latest.created_count, "updated": latest.updated_count,
+            "event_refreshes": latest.event_refreshes, "retry_failures": latest.retry_failures,
+            "errors": (latest.errors or [])[:5],
+        } if latest else None),
+        "webhook_failures": int(webhook_failures),
+    }
+
+
+@app.get("/paypal/recipients")
+def paypal_recipients(request: Request, db: Session = Depends(get_db)) -> dict:
+    require_operator(request)
+    allowed = settings.allowed_recipients
+    clients = list(db.scalars(select(Client).where(Client.source == "paypal").order_by(Client.display_name)).all())
+    return {"items": [{"id": client.id, "name": client.display_name, "email": client.email}
+                      for client in clients if client.email and client.email.lower() in allowed],
+            "currency": settings.paypal_sandbox_currency.upper()}
+
+
+@app.post("/paypal/invoices")
+def create_paypal_invoice(payload: CreateInvoiceInput, request: Request, db: Session = Depends(get_db)) -> dict:
+    require_operator(request)
+    if settings.paypal_mode.lower() != "sandbox":
+        raise HTTPException(status_code=403, detail="Invoice creation is restricted to PayPal Sandbox.")
+    client = db.get(Client, payload.client_id)
+    if not client or not client.email or client.email.lower() not in settings.allowed_recipients:
+        raise HTTPException(status_code=403, detail="Choose a recipient in PAYPAL_ALLOWED_RECIPIENT_EMAILS.")
+    currency = settings.paypal_sandbox_currency.upper()
+    if len(currency) != 3 or not currency.isalpha():
+        raise HTTPException(status_code=503, detail="PAYPAL_SANDBOX_CURRENCY must be a three-letter currency code.")
+    issue_date = _today(db, "paypal")
+    term_days = {"DUE_ON_RECEIPT": 0, "NET_15": 15, "NET_30": 30}[payload.payment_term_type]
+    due_date = issue_date + timedelta(days=term_days)
+    invoice_number = f"LP-{issue_date:%Y%m%d}-{uuid4().hex[:8].upper()}"
+    adapter = PayPalAdapter()
+    try:
+        draft = adapter.create_invoice(
+            client.email, payload.amount, currency, invoice_number, due_date,
+            "Thank you for your work with us.", payment_term_type=payload.payment_term_type,
+            partial_payment_allowed=payload.partial_payment_allowed, issue_date=issue_date,
+        )
+        paypal_id = str(draft.get("id") or "")
+        if not paypal_id:
+            raise PayPalError("PayPal created a draft without returning its invoice ID.", ambiguous=True)
+        invoice, _ = upsert_paypal_invoice(db, draft)
+        db.commit()
+        adapter.send_invoice(paypal_id)
+        invoice = refresh_paypal_invoice(db, adapter, paypal_id)
+        db.commit()
+    except PayPalError as exc:
+        db.commit()
+        detail = str(exc)
+        if "invoice_number" in locals():
+            detail = f"Sandbox invoice {invoice_number} may need reconciliation before creating another invoice. {detail}"
+        raise HTTPException(status_code=502, detail=detail) from exc
+    return {"invoice_id": invoice.id, "invoice_number": invoice.invoice_number, "status": invoice.status}
 
 
 @app.post("/webhooks/paypal")
@@ -1282,10 +1365,15 @@ def _finish_attempt(db: Session, attempt: ActionAttempt, recommendation: Recomme
     attempt.error = error
     attempt.finished_at = datetime.now(timezone.utc)
     recommendation.state = state
-    if state == "sent" and recommendation.policy_step is not None:
+    if state in {"sent", "applied"} and recommendation.policy_step is not None:
         invoice = db.get(Invoice, recommendation.invoice_id)
         if invoice:
             invoice.reminder_step = max(invoice.reminder_step, recommendation.policy_step + 1)
+            if state == "sent":
+                invoice.reminder_events = [*(invoice.reminder_events or []), {
+                    "sent_at": attempt.finished_at.isoformat(), "tone": recommendation.tone,
+                }]
+                invoice.material_version += 1
     _update_policy_outcomes(db, recommendation.invoice_id, {
         "status": state, "action": recommendation.action, "recommendation_id": recommendation.id,
         "provider_reference": reference, "recorded_at": attempt.finished_at.isoformat(), "error": error,
@@ -1330,6 +1418,61 @@ def send_recommendation(recommendation_id: str, payload: SendInput, request: Req
         return _finish_attempt(db, attempt, recommendation, state, error=str(exc))
 
 
+@app.post("/recommendations/{recommendation_id}/approve-partial-payment")
+def approve_partial_payment(recommendation_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    require_operator(request)
+    recommendation = db.get(Recommendation, recommendation_id)
+    if not recommendation:
+        raise HTTPException(status_code=404, detail="Recommendation not found.")
+    invoice = _get_invoice_or_404(db, recommendation.invoice_id)
+    if invoice.source != "paypal":
+        raise HTTPException(status_code=409, detail="Only PayPal Sandbox invoices can update provider payment settings.")
+    if recommendation.action != "offer_partial_payment":
+        raise HTTPException(status_code=409, detail="This recommendation is not a partial-payment action.")
+    if settings.paypal_mode.lower() != "sandbox":
+        raise HTTPException(status_code=403, detail="Partial-payment updates are restricted to PayPal Sandbox.")
+    if (invoice.client.email or "").lower() not in settings.allowed_recipients:
+        raise HTTPException(status_code=403, detail="Recipient is not in PAYPAL_ALLOWED_RECIPIENT_EMAILS.")
+    if recommendation.state not in {"proposed", "failed"}:
+        raise HTTPException(status_code=409, detail=f"Recommendation is already {recommendation.state}.")
+    adapter = PayPalAdapter()
+    try:
+        refreshed = refresh_paypal_invoice(db, adapter, invoice.paypal_id or "")
+        db.commit()
+    except PayPalError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=f"Could not re-check PayPal invoice before approval: {exc}") from exc
+    if refreshed.material_version != recommendation.invoice_version:
+        raise HTTPException(status_code=409, detail="Invoice changed at PayPal; review the refreshed recommendation before approving.")
+    if not _payable(refreshed) or refreshed.partial_payment_allowed:
+        raise HTTPException(status_code=409, detail="Invoice is closed, already allows partial payment, or has no remaining balance.")
+    forecast = forecast_invoice(db, refreshed, today=_today(db, refreshed.source), persist=False)
+    last_attempt, unresolved, last_tone, last_payment = _last_attempt(db, refreshed.id)
+    current_action = decide(
+        refreshed, forecast.get("probability_by_due"), last_attempt, unresolved,
+        _today(db, refreshed.source), forecast.get("probabilities", {}).get("14d"),
+        last_payment, last_tone, _client_has_partial_history(db, refreshed.client_id),
+    )
+    if current_action["action"] != "offer_partial_payment" or holdback_assignment(refreshed.id, _today(db, refreshed.source)):
+        raise HTTPException(status_code=409, detail="The partial-payment action is no longer recommended by today's policy.")
+    if refreshed.id not in _top_policy_candidates(db, refreshed.source):
+        raise HTTPException(status_code=409, detail="This invoice is outside today's top five suggestions by expected cash gain.")
+    action_text = "Approved: enable PayPal partial payments; no reminder message is sent."
+    attempt = _begin_attempt(db, recommendation, refreshed, action_text)
+    try:
+        adapter.enable_partial_payment(refreshed.paypal_id or "")
+    except PayPalError as exc:
+        return _finish_attempt(db, attempt, recommendation, "unknown" if exc.ambiguous else "failed", error=str(exc))
+    try:
+        refreshed = refresh_paypal_invoice(db, adapter, refreshed.paypal_id or "")
+    except PayPalError as exc:
+        return _finish_attempt(db, attempt, recommendation, "unknown", error=f"PayPal update was accepted but re-sync failed: {exc}")
+    if not refreshed.partial_payment_allowed:
+        return _finish_attempt(db, attempt, recommendation, "unknown", error="PayPal accepted the update request, but the re-synced invoice does not yet show partial payments enabled.")
+    result = _finish_attempt(db, attempt, recommendation, "applied", reference=refreshed.paypal_id)
+    return {**result, "note": "Partial payments were enabled in PayPal Sandbox and the invoice was re-synced."}
+
+
 @app.post("/demo/recommendations/{recommendation_id}/send")
 def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(get_db)) -> dict:
     recommendation = db.get(Recommendation, recommendation_id)
@@ -1340,6 +1483,42 @@ def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(
         raise HTTPException(status_code=403, detail="Demo simulation is restricted to synthetic invoices.")
     if recommendation.invoice_version != invoice.material_version or not _payable(invoice):
         raise HTTPException(status_code=409, detail="Invoice changed or is no longer payable.")
+    if recommendation.action == "offer_partial_payment":
+        forecast = forecast_invoice(db, invoice, today=_today(db, invoice.source), persist=False)
+        last_attempt, unresolved, last_tone, last_payment = _last_attempt(db, invoice.id)
+        decision = decide(
+            invoice, forecast.get("probability_by_due"), last_attempt, unresolved,
+            _today(db, invoice.source), forecast.get("probabilities", {}).get("14d"),
+            last_payment, last_tone, _client_has_partial_history(db, invoice.client_id),
+        )
+        if decision["action"] != "offer_partial_payment" or invoice.id not in _top_policy_candidates(db, "demo"):
+            raise HTTPException(status_code=409, detail="The partial-payment action is no longer recommended.")
+        if holdback_assignment(invoice.id, _today(db, invoice.source)):
+            raise HTTPException(status_code=409, detail="This invoice is assigned to today's policy holdback group.")
+        text_value = payload.text.strip()
+        content_hash = hashlib.sha256(text_value.encode()).hexdigest()
+        result = db.execute(update(Recommendation).where(
+            Recommendation.id == recommendation.id, Recommendation.state == "proposed",
+            Recommendation.invoice_version == invoice.material_version,
+        ).values(state="applied", edited_text=text_value, approved_text=text_value,
+                 approved_hash=content_hash, approved_at=datetime.now(timezone.utc)))
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Recommendation is already processed.")
+        invoice.partial_payment_allowed = True
+        invoice.material_version += 1
+        if recommendation.policy_step is not None:
+            invoice.reminder_step = max(invoice.reminder_step, recommendation.policy_step + 1)
+        attempt = ActionAttempt(recommendation_id=recommendation.id, attempt_key=uuid4().hex,
+                                state="applied", provider_reference=f"synthetic-demo-{uuid4().hex[:12]}",
+                                finished_at=datetime.now(timezone.utc))
+        db.add(attempt)
+        _update_policy_outcomes(db, invoice.id, {
+            "status": "applied", "action": recommendation.action, "recommendation_id": recommendation.id,
+            "simulated": True, "recorded_at": datetime.now(timezone.utc).isoformat(),
+        })
+        db.commit()
+        return {"state": "applied", "simulated": True, "note": "Partial-payment settings were simulated; no PayPal update or email was sent."}
     _check_policy(db, invoice, forecast_invoice(db, invoice, today=_today(db, invoice.source), persist=False), source_scope="demo")
     text_value = payload.text.strip()
     content_hash = hashlib.sha256(text_value.encode()).hexdigest()

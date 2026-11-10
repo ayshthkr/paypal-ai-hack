@@ -51,6 +51,8 @@ class Invoice(Base):
     promised_payment_date: Mapped[date | None] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="demo", index=True)
     viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    viewed_by_recipient: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    viewed_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     partial_payment_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     payment_term_type: Mapped[str | None] = mapped_column(String(32))
     reminder_events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -100,6 +102,9 @@ class Prediction(Base):
     scoring_date: Mapped[date] = mapped_column(Date, nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_label: Mapped[str] = mapped_column(String(64), nullable=False, default="kaplan_meier")
+    history_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
     feature_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     curve: Mapped[list] = mapped_column(JSON, nullable=False)
     quantiles: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -113,7 +118,7 @@ class Recommendation(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), index=True)
-    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
     tone: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -172,3 +177,17 @@ class ReplyTriage(Base):
     promised_payment_date: Mapped[date | None] = mapped_column(Date)
     classifier: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
+class SyncRun(Base):
+    __tablename__ = "sync_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running", index=True)
+    created_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    event_refreshes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    errors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import SurvivalCurve from "./survival-curve";
 
 type Quantile = { days: number; date: string } | null;
-type Forecast = { curve: number[]; quantiles: Record<string, Quantile>; probabilities: Record<string, number>; probability_by_due: number; reasons: string[]; model: string; model_version: string; already_overdue: boolean; forecast_horizon_days: number; history_count: number } | null;
+type Forecast = { curve: number[]; quantiles: Record<string, Quantile>; probabilities: Record<string, number>; probability_by_due: number; reasons: string[]; model: string; model_version: string; already_overdue: boolean; forecast_horizon_days: number; history_count: number; scoring_date: string; scored_at: string } | null;
 type Recommendation = { id: string; action: string; tone: string; reason: string; draft_text: string; draft_source: string; drafted_at: string | null; edited_text: string; invoice_version: number; state: string; approved_text: string | null } | null;
 type IssueForecast = { source: string; model_version: string | null; p10_date: string | null; p50_date: string | null; p90_date: string | null; probabilities: Record<string, number> | null; absolute_error_days?: number | null; within_p10_p90?: boolean | null } | null;
 type Outcome = { paid_at: string | null; days_from_due: number | null; timing: "late" | "early" | "on_time" | "date_unavailable"; issue_forecast: IssueForecast } | null;
@@ -15,6 +15,7 @@ type InvoiceData = {
   id: string; paypal_id: string | null; invoice_number: string; client_id: string; client_name: string; client_email: string | null;
   issue_date: string; due_date: string; days_to_due: number; total: string; paid: string; outstanding: string; currency: string;
   status: string; source: string; material_version: number; payment_url: string | null; forecast: Forecast; why: string; disputed: boolean; promised_payment_date: string | null;
+  viewed_at: string | null; viewed_by_recipient: boolean; viewed_observed_at: string | null; partial_payment_allowed: boolean; payment_term_type: string | null;
   drift: { signal: string; available: boolean; settled_count: number; message: string };
   decision: { action: string; tone: string; reason: string }; recommendation: Recommendation;
   outcome: Outcome; timeline: TimelineEvent[];
@@ -176,6 +177,8 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const p50 = data.forecast?.quantiles.p50;
   const actionUrl = isDemo ? `/api/demo/recommendations/${rec?.id}/send` : `/api/recommendations/${rec?.id}/send`;
   const canSend = Boolean(rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
+  const isPartialAction = Boolean(rec && rec.action === "offer_partial_payment");
+  const canApplyPartial = Boolean(isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
 
   return <div className="app-shell">
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
@@ -197,7 +200,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="quantiles"><div className="quantile"><div className="quantile-label">Paid by due date</div><div className="quantile-value">{Math.round(data.forecast.probability_by_due * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 14 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["14d"] * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 30 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["30d"] * 100)}%</div></div></div>
               <div className="quantiles">{(["p10", "p50", "p90"] as const).map(key => <div className="quantile" key={key}><div className="quantile-label">{key.toUpperCase()} payment date</div><div className="quantile-value">{shortDate(data.forecast?.quantiles[key]?.date)}</div></div>)}</div>
               <ul className="reasons">{data.forecast.reasons.map((reason, index) => <li key={index}><span className="reason-mark">✓</span>{reason}</li>)}</ul>
-              <div className="fine-print" style={{ marginTop: 15 }}>Active model: {data.forecast.model_version} · Synthetic training history · 180-day horizon</div>
+              <div className="fine-print" style={{ marginTop: 15 }}>Model: {data.forecast.model_version} · Scored {new Date(data.forecast.scored_at).toLocaleString()} · 180-day horizon</div>
             </>}
           </div>
           <div className="panel"><div className="panel-head"><div><div className="panel-title">Client timing signal</div><div className="panel-subtitle">Current settled history; forecast history is point-in-time</div></div><span className="status-pill">{data.drift.signal.replaceAll("_", " ")}</span></div><div className="drift-card"><strong>{data.drift.available ? `${data.drift.settled_count} settled invoices reviewed` : "Insufficient history"}</strong><p>{data.drift.message}</p><div className="fine-print">The forecast used {data.forecast?.history_count ?? 0} prior settled invoices known on its scoring date; the timing signal uses currently available settled history.</div></div></div>
@@ -212,6 +215,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="fact"><div className="fact-label">Paid</div><div className="fact-value">{data.currency} {Number(data.paid).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
               <div className="fact"><div className="fact-label">Due date</div><div className="fact-value">{shortDate(data.due_date)}</div></div>
               <div className="fact"><div className="fact-label">Currency</div><div className="fact-value">{data.currency}</div></div>
+              <div className="fact"><div className="fact-label">Viewed</div><div className="fact-value">{data.viewed_by_recipient ? data.viewed_at ? shortDate(data.viewed_at) : "Yes · exact time unavailable" : "Not yet"}</div></div>
+              <div className="fact"><div className="fact-label">Partial payments</div><div className="fact-value">{data.partial_payment_allowed ? "Allowed" : "Not enabled"}</div></div>
+              <div className="fact"><div className="fact-label">Payment terms</div><div className="fact-value">{(data.payment_term_type || "Not specified").replaceAll("_", " ")}</div></div>
               <div className="fact"><div className="fact-label">Decision</div><div className="fact-value">{data.decision.action}</div></div>
               <div className="fact"><div className="fact-label">Policy reason</div><div className="fact-value" style={{ fontSize: 11, lineHeight: 1.35 }}>{data.decision.reason}</div></div>
             </div>
@@ -219,8 +225,20 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
             {isDemo && Number(data.outstanding) > 0 && <div className="action-buttons"><button className="btn" disabled={busy} onClick={() => void recordPayment((Number(data.outstanding) / 2).toFixed(2))}>Simulate partial payment</button><button className="btn" disabled={busy} onClick={() => void recordPayment()}>Simulate full payment</button></div>}
           </div>
           <div className="panel">
-            <div className="panel-head"><div><div className="panel-title">Reminder review</div><div className="panel-subtitle">{rec ? rec.reason : data.decision.reason}</div></div>{rec && <span className="recommendation-tag">{rec.state}</span>}</div>
-            {rec ? <>
+            <div className="panel-head"><div><div className="panel-title">{isPartialAction ? "Partial-payment review" : "Reminder review"}</div><div className="panel-subtitle">{rec ? rec.reason : data.decision.reason}</div></div>{rec && <span className="recommendation-tag">{rec.state}</span>}</div>
+            {rec && isPartialAction ? <>
+              <div className="drift-card"><strong>PayPal payment setting</strong><p>{rec.edited_text}</p><div className="fine-print">Approval enables partial payments on the existing invoice. The provider update may notify the recipient.</div></div>
+              <div className="action-buttons">
+                {canApplyPartial && <button className="btn primary" disabled={busy} onClick={() => {
+                  const url = isDemo ? `/api/demo/recommendations/${rec.id}/send` : `/api/recommendations/${rec.id}/approve-partial-payment`;
+                  if (isDemo || window.confirm("Enable partial payments on this PayPal Sandbox invoice? PayPal may notify the recipient of the invoice update.")) void action(url, "POST", { text: rec.edited_text });
+                }}>{busy ? "Applying…" : isDemo ? "Approve & simulate" : "Approve & enable partial payment"}</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
+                {rec.state === "applied" && <span className="fine-print">Partial-payment settings are enabled{isDemo ? " in the synthetic demo" : " in PayPal Sandbox"}.</span>}
+                {rec.state === "unknown" && <span className="fine-print">Provider update status is uncertain. Sync PayPal before retrying.</span>}
+                {rec.state === "failed" && <span className="fine-print">The provider rejected the update. Review and retry is available.</span>}
+              </div>
+            </> : rec ? <>
               <div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? "Gemini, grounded in invoice facts" : "grounded template"}{rec.drafted_at ? ` · ${new Date(rec.drafted_at).toLocaleString()}` : ""}</div>
               <textarea aria-label="Editable reminder preview" value={draft} onChange={event => setDraft(event.target.value)} disabled={rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/>
               <div className="delivery-note">{data.reminder_delivery_note || (isDemo ? "Demo mode: simulated send records the approval only. No PayPal email is sent." : "The exact approved copy is recorded for audit. PayPal's native reminder email controls the message body.")}</div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -140,18 +140,34 @@ class PayPalAdapter:
         self._request("POST", f"/v2/invoicing/invoices/{invoice_id}/remind", payload={"send_to_recipient": True})
         return invoice_id
 
-    def create_invoice(self, recipient_email: str, amount: Decimal, currency: str, invoice_number: str, due_date: date, note: str) -> dict[str, Any]:
+    def create_invoice(
+        self, recipient_email: str, amount: Decimal, currency: str, invoice_number: str,
+        due_date: date, note: str, *, payment_term_type: str = "DUE_ON_DATE_SPECIFIED",
+        partial_payment_allowed: bool = False, issue_date: date | None = None,
+    ) -> dict[str, Any]:
         email = recipient_email.strip().lower()
         self._require_sandbox()
         if email not in self.settings.allowed_recipients:
             raise PayPalError("Recipient is not in PAYPAL_ALLOWED_RECIPIENT_EMAILS.")
+        if amount <= 0:
+            raise PayPalError("Invoice amount must be greater than zero.")
+        currency = currency.upper()
+        issue_date = issue_date or date.today()
+        supported_terms = {"DUE_ON_RECEIPT", "NET_15", "NET_30", "DUE_ON_DATE_SPECIFIED"}
+        if payment_term_type not in supported_terms:
+            raise PayPalError("Unsupported payment term.")
+        term = {"term_type": payment_term_type}
+        if payment_term_type == "DUE_ON_DATE_SPECIFIED":
+            term["due_date"] = due_date.isoformat()
         payload = {
-            "detail": {"invoice_number": invoice_number, "invoice_date": date.today().isoformat(), "currency_code": currency,
-                       "payment_term": {"term_type": "DUE_ON_DATE_SPECIFIED", "due_date": due_date.isoformat()}, "note": note},
+            "detail": {"invoice_number": invoice_number, "invoice_date": issue_date.isoformat(), "currency_code": currency,
+                       "payment_term": term, "note": note},
             "primary_recipients": [{"billing_info": {"email_address": email}}],
             "items": [{"name": "Sandbox receivables demonstration", "quantity": "1",
                        "unit_amount": {"currency_code": currency, "value": f"{amount:.2f}"}}],
         }
+        if partial_payment_allowed:
+            payload["configuration"] = {"partial_payment": {"allow_partial_payment": True}}
         response = self._request("POST", "/v2/invoicing/invoices", payload=payload)
         try:
             created = response.json()
@@ -194,6 +210,24 @@ class PayPalAdapter:
         self._require_sandbox()
         response = self._request("POST", f"/v2/invoicing/invoices/{invoice_id}/send", payload={"send_to_recipient": True})
         return str(response.headers.get("PayPal-Debug-Id") or invoice_id)
+
+    def enable_partial_payment(self, invoice_id: str) -> None:
+        """Enable partial payments while preserving the current PayPal invoice fields."""
+        self._require_sandbox()
+        current = self.get_invoice(invoice_id)
+        payload = dict(current)
+        for read_only in ("id", "status", "amount", "due_amount", "payments", "links"):
+            payload.pop(read_only, None)
+        detail = dict(payload.get("detail") or {})
+        detail.pop("metadata", None)
+        payload["detail"] = detail
+        configuration = dict(payload.get("configuration") or {})
+        configuration["partial_payment"] = {"allow_partial_payment": True}
+        payload["configuration"] = configuration
+        self._request(
+            "PUT", f"/v2/invoicing/invoices/{invoice_id}", payload=payload,
+            params={"send_to_recipient": "true"},
+        )
 
     def record_payment(self, invoice_id: str, amount: Decimal, currency: str, method: str = "BANK_TRANSFER", note: str = "") -> dict[str, Any]:
         self._require_sandbox()
@@ -256,8 +290,38 @@ def normalize_invoice(payload: dict[str, Any]) -> dict[str, Any]:
     if not display_name:
         display_name = recipient.get("business_name") or recipient.get("email_address") or "PayPal customer"
     issue_date = date.fromisoformat(detail.get("invoice_date") or (detail.get("metadata") or {}).get("create_time", date.today().isoformat())[:10])
-    due_date = date.fromisoformat((detail.get("payment_term") or {}).get("due_date") or issue_date.isoformat())
+    payment_term = detail.get("payment_term") or {}
+    payment_term_type = str(payment_term.get("term_type") or "").upper() or None
+    due_date_value = payment_term.get("due_date")
+    if due_date_value:
+        due_date = date.fromisoformat(due_date_value)
+    elif payment_term_type and payment_term_type.startswith("NET_"):
+        try:
+            due_date = issue_date + timedelta(days=int(payment_term_type.removeprefix("NET_")))
+        except ValueError:
+            due_date = issue_date
+    else:
+        due_date = issue_date
     metadata = detail.get("metadata") or {}
+    raw_viewed = detail.get("viewed_by_recipient", payload.get("viewed_by_recipient"))
+    viewed = raw_viewed if isinstance(raw_viewed, bool) else None
+    viewed_at = None
+    for raw_time in (
+        detail.get("recipient_viewed_time"), detail.get("viewed_at"), detail.get("view_time"),
+        metadata.get("recipient_viewed_time"), metadata.get("viewed_at"), metadata.get("view_time"),
+        payload.get("recipient_viewed_time"), payload.get("viewed_at"),
+    ):
+        if not raw_time:
+            continue
+        try:
+            viewed_at = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+            if viewed_at.tzinfo is None:
+                viewed_at = viewed_at.replace(tzinfo=timezone.utc)
+            break
+        except ValueError:
+            continue
+    configuration = payload.get("configuration") or {}
+    partial_payment = configuration.get("partial_payment") or {}
     return {
         "paypal_id": payload["id"], "invoice_number": str(detail.get("invoice_number") or payload["id"]),
         "client_identity": str(recipient.get("email_address") or payload["id"]).lower(), "client_name": display_name,
@@ -265,6 +329,9 @@ def normalize_invoice(payload: dict[str, Any]) -> dict[str, Any]:
         "total": total, "paid": paid, "outstanding": outstanding,
         "currency": (amount.get("currency_code") or detail.get("currency_code") or "USD").upper(),
         "status": status, "payment_url": metadata.get("recipient_view_url"),
+        "viewed_by_recipient": viewed, "viewed_at": viewed_at,
+        "partial_payment_allowed": bool(partial_payment.get("allow_partial_payment")),
+        "payment_term_type": payment_term_type,
         "payload": payload,
     }
 

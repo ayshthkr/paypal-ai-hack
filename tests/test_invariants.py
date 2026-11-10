@@ -250,6 +250,25 @@ def test_cancelled_invoice_with_stale_balance_is_closed_in_api_and_payment_is_bl
     assert client.post("/demo/invoices/cancelled-stale/payment", json={}).status_code == 409
 
 
+def test_mixed_currency_open_totals_remain_separate_in_api(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="currency-owner", display_name="Currency Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        usd = _invoice("currency-usd", owner.id)
+        eur = _invoice("currency-eur", owner.id)
+        usd.currency, usd.outstanding = "USD", Decimal("120.00")
+        eur.currency, eur.outstanding = "EUR", Decimal("80.00")
+        db.add_all([usd, eur])
+        db.commit()
+
+    payload = client.get("/invoices?view=open&page_size=50").json()
+    assert payload["currency_totals"] == {"EUR": "80.00", "USD": "120.00"}
+    amounts = payload["aging_buckets"]["late_1_30"]["amounts"]
+    assert amounts == {"EUR": "80.00", "USD": "120.00"}
+
+
 def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
     client, Session = api
     with Session() as db:
@@ -708,3 +727,268 @@ def test_training_generator_has_current_as_of_age_mix_profiles_and_cadence():
     assert all(row["issue_date"] <= as_of for row in first)
     assert all(row["viewed_at"] is None or row["viewed_at"] <= as_of for row in first)
     assert all(isinstance(row["partial_payment_allowed"], bool) and isinstance(row["reminder_events"], list) for row in first)
+
+
+def test_paypal_sync_imports_view_state_terms_and_partial_payment_configuration(api):
+    _, Session = api
+    payload = {
+        "id": "paypal-viewed-invoice", "status": "UNPAID",
+        "detail": {
+            "invoice_number": "LP-VIEWED-1", "invoice_date": "2026-10-01",
+            "payment_term": {"term_type": "NET_15"}, "viewed_by_recipient": True,
+            "metadata": {"recipient_viewed_time": "2026-10-04T12:30:00Z"},
+        },
+        "amount": {"currency_code": "USD", "value": "150.00"},
+        "due_amount": {"currency_code": "USD", "value": "150.00"},
+        "configuration": {"partial_payment": {"allow_partial_payment": True}},
+        "primary_recipients": [{"billing_info": {"email_address": "viewed@example.test"}}],
+    }
+    with Session() as db:
+        invoice, created = sync_service.upsert_paypal_invoice(db, payload)
+        assert created is True
+        assert invoice.due_date == date(2026, 10, 16)
+        assert invoice.viewed_by_recipient is True
+        assert invoice.viewed_at == datetime(2026, 10, 4, 12, 30, tzinfo=timezone.utc)
+        assert invoice.partial_payment_allowed is True
+        assert invoice.payment_term_type == "NET_15"
+
+
+def test_forecast_cache_reuses_same_day_prediction_and_invalidates_on_invoice_change(api, monkeypatch):
+    from app.services import forecast as forecast_service
+
+    _, Session = api
+    as_of = date(2026, 11, 10)
+    model_calls = []
+
+    class CountingModel:
+        def predict(self, matrix):
+            model_calls.append(len(matrix))
+            return [0.01] * len(matrix)
+
+    monkeypatch.setattr(forecast_service, "_load_artifacts", lambda: (
+        CountingModel(), [0.005] * 180, "lightgbm", "cache-test-v1", {"feature_list": []}, {},
+    ))
+    with Session() as db:
+        owner = Client(id="cache-owner", display_name="Cache Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        historical = []
+        for index, issue in enumerate((date(2026, 1, 1), date(2026, 4, 1), date(2026, 7, 1))):
+            row = _invoice(f"cache-paid-{index}", owner.id, status="PAID")
+            row.issue_date = issue
+            row.due_date = issue + timedelta(days=30)
+            row.total = row.paid = Decimal("100.00")
+            row.outstanding = Decimal("0.00")
+            historical.append(row)
+        target = _invoice("cache-target", owner.id)
+        target.issue_date = date(2026, 10, 1)
+        target.due_date = date(2026, 11, 20)
+        db.add_all([*historical, target])
+        db.flush()
+        for index, row in enumerate(historical):
+            db.add(Payment(
+                provider_payment_id=f"cache-payment-{index}", invoice_id=row.id, amount=Decimal("100.00"),
+                currency="USD", occurred_at=datetime.combine(row.issue_date + timedelta(days=35), datetime.min.time(), tzinfo=timezone.utc), source="demo",
+            ))
+        db.flush()
+
+        first = forecast_service.forecast_invoice(db, target, today=as_of, persist=True)
+        second = forecast_service.forecast_invoice(db, target, today=as_of, persist=True)
+        assert first["scored_at"] == second["scored_at"]
+        assert model_calls == [180]
+        assert db.query(Prediction).filter_by(invoice_id=target.id, scoring_date=as_of).count() == 1
+
+        target.partial_payment_allowed = True
+        target.material_version += 1
+        db.flush()
+        forecast_service.forecast_invoice(db, target, today=as_of, persist=True)
+        assert model_calls == [180, 180]
+        assert db.query(Prediction).filter_by(invoice_id=target.id, scoring_date=as_of).count() == 2
+
+
+def test_paypal_partial_payment_update_uses_full_invoice_put_and_notifies_recipient():
+    put_requests = []
+    current = {
+        "id": "paypal-update-1", "status": "UNPAID",
+        "detail": {"invoice_number": "LP-UPDATE-1", "metadata": {"create_time": "2026-10-01T00:00:00Z"}},
+        "invoicer": {}, "primary_recipients": [], "items": [],
+        "configuration": {"allow_tip": False}, "amount": {"currency_code": "USD", "value": "100.00"},
+        "due_amount": {"currency_code": "USD", "value": "100.00"}, "payments": [], "links": [],
+    }
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/v1/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 900})
+        if request.method == "GET":
+            return httpx.Response(200, json=current)
+        put_requests.append(request)
+        return httpx.Response(204)
+
+    settings = Settings(paypal_client_id="client", paypal_client_secret="secret", paypal_mode="sandbox")
+    adapter = PayPalAdapter(settings, httpx.Client(transport=httpx.MockTransport(handler)))
+    adapter.enable_partial_payment("paypal-update-1")
+    request = put_requests[0]
+    body = __import__("json").loads(request.content)
+    assert body["configuration"]["partial_payment"] == {"allow_partial_payment": True}
+    assert "metadata" not in body["detail"]
+    assert "amount" not in body and "status" not in body and "links" not in body
+    assert request.url.params["send_to_recipient"] == "true"
+
+
+def test_sync_status_records_import_failure_and_webhook_retry_count(api, monkeypatch):
+    client, Session = api
+    cookie = create_session(main.settings, now=int(datetime.now(timezone.utc).timestamp()))
+    client.cookies.set(COOKIE_NAME, cookie)
+    with Session() as db:
+        db.add(InvoiceEvent(
+            provider_event_id="retry-status-event", event_type="INVOICING.INVOICE.PAID",
+            raw_payload={}, verified=True, processing_status="retry",
+        ))
+        db.commit()
+
+    class FailingAdapter:
+        def list_invoices(self):
+            raise PayPalError("sandbox temporarily unavailable")
+
+    monkeypatch.setattr(main, "PayPalAdapter", FailingAdapter)
+    result = client.post("/sync")
+    assert result.status_code == 200
+    assert result.json()["status"] == "partial"
+    status = client.get("/sync/status")
+    assert status.status_code == 200
+    assert status.json()["last_run"]["status"] == "partial"
+    assert status.json()["last_run"]["errors"]
+    assert status.json()["webhook_failures"] == 1
+
+
+def test_operator_can_create_and_send_allowlisted_sandbox_invoice(api, monkeypatch):
+    client, Session = api
+    allowed_email = "allowed@example.test"
+    settings = Settings(
+        app_env=main.settings.app_env, session_secret=main.settings.session_secret,
+        operator_username=main.settings.operator_username, operator_password=main.settings.operator_password,
+        paypal_mode="sandbox", paypal_allowed_recipient_emails=allowed_email,
+        paypal_sandbox_currency="USD",
+    )
+    monkeypatch.setattr(main, "settings", settings)
+    client.cookies.set(COOKIE_NAME, create_session(settings, now=int(datetime.now(timezone.utc).timestamp())))
+    with Session() as db:
+        owner = Client(
+            id="create-invoice-owner", provider_customer_id=allowed_email, display_name="Allowed Buyer",
+            email=allowed_email, source="paypal", drift={},
+        )
+        db.add(owner)
+        db.commit()
+
+    calls = []
+    invoice_data = {
+        "id": "paypal-created-1", "status": "DRAFT",
+        "detail": {"invoice_number": "LP-CREATED-1", "invoice_date": date.today().isoformat(), "payment_term": {"term_type": "NET_15"}},
+        "amount": {"currency_code": "USD", "value": "125.50"},
+        "due_amount": {"currency_code": "USD", "value": "125.50"},
+        "configuration": {"partial_payment": {"allow_partial_payment": True}},
+        "primary_recipients": [{"billing_info": {"email_address": allowed_email}}],
+    }
+
+    class FakeAdapter:
+        def create_invoice(self, *args, **kwargs):
+            calls.append(("create", args, kwargs))
+            return invoice_data
+
+        def send_invoice(self, paypal_id):
+            calls.append(("send", paypal_id))
+            return paypal_id
+
+        def get_invoice(self, paypal_id):
+            return {**invoice_data, "status": "UNPAID"}
+
+    def refresh(db, adapter, paypal_id):
+        invoice, _ = sync_service.upsert_paypal_invoice(db, adapter.get_invoice(paypal_id))
+        return invoice
+
+    monkeypatch.setattr(main, "PayPalAdapter", FakeAdapter)
+    monkeypatch.setattr(main, "refresh_paypal_invoice", refresh)
+    response = client.post("/paypal/invoices", json={
+        "client_id": "create-invoice-owner", "amount": "125.50",
+        "payment_term_type": "NET_15", "partial_payment_allowed": True,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "UNPAID"
+    assert [call[0] for call in calls] == ["create", "send"]
+    assert calls[0][1][0] == allowed_email
+    assert calls[0][2]["payment_term_type"] == "NET_15"
+    assert calls[0][2]["partial_payment_allowed"] is True
+    with Session() as db:
+        invoice = db.query(Invoice).filter_by(paypal_id="paypal-created-1").one()
+        assert invoice.source == "paypal" and invoice.partial_payment_allowed is True
+
+
+def test_operator_partial_payment_approval_updates_provider_then_resyncs(api, monkeypatch):
+    client, Session = api
+    settings = Settings(
+        app_env=main.settings.app_env, session_secret=main.settings.session_secret,
+        operator_username=main.settings.operator_username, operator_password=main.settings.operator_password,
+        paypal_mode="sandbox", paypal_allowed_recipient_emails="partial@example.test",
+    )
+    monkeypatch.setattr(main, "settings", settings)
+    client.cookies.set(COOKIE_NAME, create_session(settings, now=int(datetime.now(timezone.utc).timestamp())))
+    today = date(2026, 11, 10)
+    monkeypatch.setattr(main, "_today", lambda db=None, source=None: today)
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.2, "probabilities": {"14d": 0.2},
+    })
+    monkeypatch.setattr(main, "_client_has_partial_history", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "_top_policy_candidates", lambda *args, **kwargs: {"partial-approval-invoice"})
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    with Session() as db:
+        owner = Client(
+            id="partial-approval-owner", provider_customer_id="partial@example.test", display_name="Partial Buyer",
+            email="partial@example.test", source="paypal", drift={},
+        )
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("partial-approval-invoice", owner.id, source="paypal", due=today - timedelta(days=21))
+        invoice.paypal_id = "paypal-partial-approval"
+        invoice.invoice_number = "LP-PARTIAL-APPROVAL"
+        invoice.total = invoice.outstanding = Decimal("5000.00")
+        invoice.material_version = 1
+        invoice.reminder_step = 2
+        db.add(invoice)
+        db.flush()
+        recommendation = Recommendation(
+            invoice_id=invoice.id, action="offer_partial_payment", tone="friendly", reason="Large balance with partial history.",
+            draft_text="Enable partial payment.", draft_source="policy", edited_text="Enable partial payment.",
+            invoice_version=invoice.material_version, policy_step=3, state="proposed",
+        )
+        db.add(recommendation)
+        db.commit()
+        recommendation_id = recommendation.id
+
+    refreshes = []
+    updates = []
+
+    class FakeAdapter:
+        def enable_partial_payment(self, paypal_id):
+            updates.append(paypal_id)
+
+    def refresh(db, adapter, paypal_id):
+        refreshes.append(paypal_id)
+        invoice = db.get(Invoice, "partial-approval-invoice")
+        if len(refreshes) == 2:
+            invoice.partial_payment_allowed = True
+            invoice.material_version += 1
+            db.flush()
+        return invoice
+
+    monkeypatch.setattr(main, "PayPalAdapter", FakeAdapter)
+    monkeypatch.setattr(main, "refresh_paypal_invoice", refresh)
+    response = client.post(f"/recommendations/{recommendation_id}/approve-partial-payment")
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "applied"
+    assert updates == ["paypal-partial-approval"]
+    assert refreshes == ["paypal-partial-approval", "paypal-partial-approval"]
+    with Session() as db:
+        invoice = db.get(Invoice, "partial-approval-invoice")
+        saved = db.get(Recommendation, recommendation_id)
+        assert invoice.partial_payment_allowed is True
+        assert saved.state == "applied"
