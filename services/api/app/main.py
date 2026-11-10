@@ -631,7 +631,7 @@ def _invoice_dict(
         )
         insert = pg_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
         db.execute(insert(Recommendation).values(**values).on_conflict_do_nothing(
-            index_elements=["invoice_id", "invoice_version"], index_where=Recommendation.state == "proposed"))
+            index_elements=["invoice_id", "invoice_version"], index_where=text("state = 'proposed'")))
         recommendation = db.scalar(select(Recommendation).where(Recommendation.invoice_id == invoice.id,
             Recommendation.invoice_version == invoice.material_version, Recommendation.state == "proposed"))
     currency_due = max(0, (invoice.due_date - today).days)
