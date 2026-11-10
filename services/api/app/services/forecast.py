@@ -12,6 +12,7 @@ from lightgbm import Booster
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.dates import business_date, event_date
 from app.telemetry import timed
 from app.config import get_settings
 from app.models import Invoice, Payment, Prediction, ReadModel
@@ -24,7 +25,7 @@ HORIZON = 180
 def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
     settled_at = None
     if invoice.status == "PAID" and payments:
-        settled_at = max(payment.occurred_at.date() for payment in payments)
+        settled_at = max(business_date(payment.occurred_at) for payment in payments)
     ordered_payments = sorted(payments, key=lambda payment: payment.occurred_at)
     if invoice.status == "PARTIALLY_PAID":
         partial_payments = ordered_payments
@@ -32,7 +33,7 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         partial_payments = ordered_payments[:-1]
     else:
         partial_payments = [payment for payment in ordered_payments if payment.provider_payment_id.startswith("demo-partial-")]
-    partial_at = max((payment.occurred_at.date() for payment in partial_payments), default=None)
+    partial_at = max((business_date(payment.occurred_at) for payment in partial_payments), default=None)
     partial_amount = sum((payment.amount for payment in partial_payments), start=invoice.total * 0)
     return {
         "id": invoice.id,
@@ -44,17 +45,18 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         "outstanding": invoice.outstanding,
         "currency": invoice.currency,
         "status": invoice.status,
-        "viewed_at": invoice.viewed_at.date() if invoice.viewed_at else None,
+        "viewed_at": business_date(invoice.viewed_at) if invoice.viewed_at else None,
         "viewed_by_recipient": bool(invoice.viewed_at or invoice.viewed_by_recipient),
-        "viewed_observed_at": invoice.viewed_observed_at.date() if invoice.viewed_observed_at else None,
+        "viewed_observed_at": business_date(invoice.viewed_observed_at) if invoice.viewed_observed_at else None,
         "partial_payment_allowed": invoice.partial_payment_allowed,
         "payment_term_type": invoice.payment_term_type,
-        "reminder_events": invoice.reminder_events or [],
+        "reminder_events": [{**event, "sent_at": day.isoformat()} if isinstance(event, dict) and (day := event_date(event.get("sent_at"))) else event
+                            for event in invoice.reminder_events or []],
         "partial_at": partial_at,
         "partial_amount": partial_amount,
         "settled_at": settled_at,
         "paid_at": settled_at,
-        "cancelled_at": invoice.synced_at.date() if invoice.status in {"CANCELLED", "VOIDED", "DELETED"} and invoice.synced_at else None,
+        "cancelled_at": business_date(invoice.synced_at) if invoice.status in {"CANCELLED", "VOIDED", "DELETED"} and invoice.synced_at else None,
     }
 
 
@@ -184,7 +186,7 @@ def forecast_invoice(
         ) for item in client_invoices),
         "payments": sorted((p.provider_payment_id, str(p.amount), p.occurred_at.isoformat()) for p in payments),
         "today": today.isoformat(),
-        "inference_revision": "conditional-tail-v4",
+        "inference_revision": "conditional-tail-v5-business-dates",
     }, sort_keys=True)
     fingerprint = hashlib.sha256(fingerprint_raw.encode()).hexdigest()
     existing = None

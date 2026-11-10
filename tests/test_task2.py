@@ -215,3 +215,31 @@ def test_repeated_queue_reads_reuse_one_proposal_and_one_audit(api):
     with Session() as db:
         assert db.query(Recommendation).filter_by(invoice_id=invoice_id,state='proposed').count() == 1
         assert db.query(PolicyDecisionLog).filter_by(invoice_id=invoice_id).count() == 1
+
+
+def test_utc_audit_timestamps_use_the_merchant_payment_date(api, monkeypatch):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from app.models import Client, DemoState, Invoice, Payment
+    from app.services import dates
+    from app.services.forecast import _as_record
+    monkeypatch.setattr(dates, 'get_settings', lambda: SimpleNamespace(merchant_timezone='Asia/Kolkata'))
+    client, Session = api
+    paid_at = datetime(2026, 11, 10, 20, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        db.add(Client(id='calendar-client',display_name='Calendar',source='demo',drift={}))
+        db.add(DemoState(id='demo',as_of_date=date(2026,11,11)))
+        db.flush()
+        invoice = Invoice(id='calendar-invoice',invoice_number='CAL-1',client_id='calendar-client',issue_date=date(2026,10,11),
+            due_date=date(2026,11,11),total=Decimal(100),paid=Decimal(100),outstanding=Decimal(0),currency='USD',status='PAID',source='demo',material_version=1,
+            viewed_at=paid_at,reminder_events=[{'sent_at':paid_at.isoformat(),'tone':'friendly'}])
+        payment = Payment(invoice_id=invoice.id,provider_payment_id='calendar-payment',amount=Decimal(100),currency='USD',occurred_at=paid_at,source='demo')
+        db.add(invoice)
+        db.flush()
+        db.add(payment)
+        db.commit()
+        record = _as_record(invoice,[payment])
+        assert record['settled_at'] == record['viewed_at'] == date(2026,11,11)
+        assert record['reminder_events'][0]['sent_at'] == '2026-11-11'
+    outcome = client.get('/invoices/calendar-invoice').json()['outcome']
+    assert outcome['paid_at'] == '2026-11-11' and outcome['days_from_due'] == 0

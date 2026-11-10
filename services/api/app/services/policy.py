@@ -4,6 +4,7 @@ import hashlib
 from datetime import date
 from decimal import Decimal
 
+from app.services.dates import business_date, event_date
 from app.config import get_settings
 
 CLOSED_STATUSES = {"PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"}
@@ -75,21 +76,21 @@ def decide(
                       promised_payment_date=promised_payment_date.isoformat())
     if unresolved:
         return result(reason="A previous delivery is unresolved; reconcile it before another reminder.")
-    if last_payment_at and (today - last_payment_at.date()).total_seconds() < 48 * 60 * 60:
+    if last_payment_at and (today - business_date(last_payment_at)).total_seconds() < 48 * 60 * 60:
         return result(reason="A payment arrived within the last 48 hours; allow it to reconcile before another action.")
     if last_attempt_at:
         cooldown = 5 if (last_attempt_tone or "friendly") == "friendly" else 7
-        elapsed_days = (today - last_attempt_at.date()).days
+        elapsed_days = (today - business_date(last_attempt_at)).days
         if elapsed_days < cooldown:
             return result(reason=f"A {last_attempt_tone or 'friendly'} reminder was attempted {elapsed_days} days ago; wait {cooldown} days between reminders.")
 
     reminder_events = []
     for event in getattr(invoice, "reminder_events", []) or []:
         try:
-            sent = date.fromisoformat(str(event.get("sent_at", ""))[:10])
+            sent = event_date(event.get("sent_at"))
         except (ValueError, AttributeError):
             continue
-        if sent <= today:
+        if sent is not None and sent <= today:
             reminder_events.append((sent, event.get("tone", "friendly")))
     reminder_events.sort()
     if reminder_events and not last_attempt_at:

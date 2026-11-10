@@ -38,6 +38,7 @@ from app.db import get_db
 from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun, ReadModel, AIAudit
 from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
+from app.services.dates import business_date
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice, warm_model
 from app.services.paypal import PayPalAdapter, PayPalError, webhook_invoice_id
@@ -473,12 +474,12 @@ def _paid_outcome(db: Session, invoice: Invoice) -> dict | None:
     if invoice.status != "PAID":
         return None
     payments = list(db.scalars(select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.occurred_at.asc())).all())
-    paid_date = max((payment.occurred_at.date() for payment in payments), default=None)
+    paid_date = max((business_date(payment.occurred_at) for payment in payments), default=None)
     if paid_date is None and invoice.paypal_id:
         verified_paid_events = list(db.scalars(select(InvoiceEvent).where(
             InvoiceEvent.verified.is_(True), InvoiceEvent.event_type.ilike("%PAID%"),
         )).all())
-        paid_dates = [event.occurred_at.date() for event in verified_paid_events
+        paid_dates = [business_date(event.occurred_at) for event in verified_paid_events
                       if event.occurred_at and _payload_mentions(event.raw_payload, {invoice.paypal_id})]
         paid_date = max(paid_dates, default=None)
     issue_prediction = _issue_prediction(db, invoice)
