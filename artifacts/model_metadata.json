@@ -1,14 +1,15 @@
 {
-  "model_version": "lgbm-hazard-v1-seed-20261110",
+  "model_version": "lgbm-hazard-v2-seed-20261110-asof-2026-11-10",
   "feature_schema_version": "latepayer-features-v1",
   "seed": 20261110,
-  "history_cutoff": "2026-10-31",
-  "training_cutoff": "2025-12-31",
-  "train_rows": 12745,
-  "train_event_rows": 316,
-  "train_invoices": 329,
-  "validation_invoices": 29,
-  "validation_event_count": 28,
+  "as_of_date": "2026-11-10",
+  "history_cutoff": "2026-11-10",
+  "training_cutoff": "2025-11-15",
+  "train_rows": 34103,
+  "train_event_rows": 1303,
+  "train_invoices": 1374,
+  "validation_invoices": 445,
+  "validation_event_count": 445,
   "validation_horizons": [
     7,
     14,
@@ -16,16 +17,21 @@
     60,
     90
   ],
-  "validation_ibs_lightgbm": 0.12330130764787176,
-  "validation_ibs_km": 0.14130951054418806,
+  "validation_ibs_lightgbm": 0.05146481800936649,
+  "validation_ibs_km": 0.1452746669825053,
   "active_model": "lightgbm",
-  "test_cohort": [
-    "2026-04-01",
-    "2026-07-01"
+  "validation_cohort": [
+    "2025-11-16",
+    "2026-05-13"
   ],
-  "test_observation_cutoff": "2026-10-31",
-  "test_invoices": 29,
-  "test_event_count": 19,
+  "validation_observation_cutoff": "2026-11-10",
+  "test_cohort": [
+    "2026-05-14",
+    "2026-11-10"
+  ],
+  "test_observation_cutoff": "2026-11-10",
+  "test_invoices": 399,
+  "test_event_count": 349,
   "test_horizons": [
     7,
     14,
@@ -34,9 +40,9 @@
     90,
     120
   ],
-  "test_ibs_lightgbm": 0.04761213461737108,
-  "test_ibs_km": 0.22461137920284066,
-  "test_paid_only_date_mae_days": 14.368421052631579,
-  "test_paid_only_invoice_count": 19,
+  "test_ibs_lightgbm": 0.06346155298761609,
+  "test_ibs_km": 0.12011699506094187,
+  "test_paid_only_date_mae_days": 6.799426934097421,
+  "test_paid_only_invoice_count": 349,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date MAE excludes censored invoices."
 }

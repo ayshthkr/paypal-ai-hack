@@ -1,4 +1,6 @@
-.PHONY: setup dev web api migrate seed-demo train sync seed-sandbox record-payment check smoke clean
+.PHONY: setup dev web api migrate seed-demo train rescore-demo sync seed-sandbox record-payment check smoke clean
+
+AS_OF ?= today
 
 setup:
 	[ -f .env ] || cp .env.example .env
@@ -7,8 +9,7 @@ setup:
 	docker compose up -d db
 	until docker compose exec -T db pg_isready -U latepayer -d latepayer >/dev/null 2>&1; do sleep 1; done
 	uv run alembic upgrade head
-	PYTHONPATH=.:services/api uv run python scripts/seed_demo.py
-	PYTHONPATH=. uv run python scripts/train_model.py
+	$(MAKE) seed-demo AS_OF=$(AS_OF)
 
 dev:
 	@trap 'kill 0' EXIT INT TERM; \
@@ -25,10 +26,15 @@ migrate:
 	uv run alembic upgrade head
 
 seed-demo:
-	PYTHONPATH=.:services/api uv run python scripts/seed_demo.py
+	AS_OF="$(AS_OF)" PYTHONPATH=.:services/api uv run python scripts/seed_demo.py
+	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/train_model.py
+	AS_OF="$(AS_OF)" PYTHONPATH=.:services/api uv run python scripts/rescore_demo.py
 
 train:
-	PYTHONPATH=. uv run python scripts/train_model.py
+	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/train_model.py
+
+rescore-demo:
+	PYTHONPATH=.:services/api uv run python scripts/rescore_demo.py
 
 sync:
 	PYTHONPATH=.:services/api uv run python scripts/sync_paypal.py

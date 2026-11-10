@@ -16,7 +16,7 @@ from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
 from app.services.policy import decide
 from app.services import sync as sync_service
 from ml.features import features
-from ml.synthetic import generate_records
+from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
 from ml.train import _duration, _survival_from_hazards, km_hazards
 
 
@@ -289,8 +289,20 @@ def test_paypal_mutation_error_keeps_provider_issue_code():
         adapter.send_invoice("invoice-id")
 
 
-def test_training_generator_has_exact_reproducible_size_and_profiles():
-    first = generate_records()
-    second = generate_records()
-    assert len(first) == 400 and first == second
-    assert {row["profile"] for row in first} == {"prompt", "slow", "volatile", "drifting", "new"}
+def test_training_generator_has_current_as_of_age_mix_profiles_and_cadence():
+    as_of = date(2026, 11, 10)
+    first = generate_records(observation_cutoff=as_of)
+    second = generate_records(observation_cutoff=as_of)
+    assert first == second
+    clients = {row["client_id"]: row for row in first}
+    assert len(clients) == 52
+    assert 1500 <= len(first) <= 3000
+    assert {row["profile"] for row in first} == {"prompt", "due_date", "chronic_late", "deteriorating", "erratic"}
+    assert sum(row["profile"] == "deteriorating" for row in clients.values()) == 4
+    open_rows = [row for row in first if row["outstanding"] > 0 and not row["cancelled"]]
+    assert len(open_rows) == 50
+    assert {name: sum(row["open_age_bucket"] == name for row in open_rows) for name in OPEN_BUCKET_COUNTS} == OPEN_BUCKET_COUNTS
+    assert sum(row["client_churned"] for row in clients.values()) == 3
+    assert all(row["issue_date"] <= as_of for row in first)
+    assert all(row["viewed_at"] is None or row["viewed_at"].date() <= as_of for row in first)
+    assert all(isinstance(row["partial_payment_allowed"], bool) and isinstance(row["reminder_events"], list) for row in first)

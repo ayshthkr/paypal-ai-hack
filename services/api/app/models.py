@@ -25,6 +25,14 @@ class Client(Base):
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="client")
 
 
+class DemoState(Base):
+    __tablename__ = "demo_state"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="demo")
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    seeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
 class Invoice(Base):
     __tablename__ = "invoices"
 
@@ -41,6 +49,10 @@ class Invoice(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     disputed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="demo", index=True)
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    partial_payment_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payment_term_type: Mapped[str | None] = mapped_column(String(32))
+    reminder_events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     provider_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     material_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

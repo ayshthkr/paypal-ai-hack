@@ -11,13 +11,9 @@ import numpy as np
 from lightgbm import LGBMClassifier, Booster
 
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
-from ml.synthetic import HISTORY_CUTOFF, SEED, generate_records
+from ml.synthetic import SEED, generate_records, resolve_as_of
 
 HORIZON = 180
-TRAIN_CUTOFF = date(2025, 12, 31)
-VALIDATION_COHORT = (date(2026, 1, 1), date(2026, 3, 31))
-VALIDATION_CUTOFF = date(2026, 6, 30)
-TEST_COHORT = (date(2026, 4, 1), date(2026, 7, 1))
 
 
 def _history(records: list[dict], client_id: str) -> list[dict]:
@@ -33,9 +29,13 @@ def _duration(row: dict, observation_end: date) -> tuple[int, int]:
 
 
 def _row_features(records: list[dict], invoice: dict, as_of: date, frozen_history: list[dict] | None = None,
-                  frozen_exposure: list[dict] | None = None) -> list[float]:
-    history = frozen_history if frozen_history is not None else _history(records, invoice["client_id"])
-    all_rows = frozen_exposure if frozen_exposure is not None else records
+                  frozen_exposure: list[dict] | None = None,
+                  client_records: list[dict] | None = None) -> list[float]:
+    evidence = client_records if client_records is not None else [
+        row for row in records if row["client_id"] == invoice["client_id"]
+    ]
+    history = frozen_history if frozen_history is not None else [row for row in evidence if row["settled_at"]]
+    all_rows = frozen_exposure if frozen_exposure is not None else evidence
     values = features(invoice, as_of, history, all_rows)
     return [values[name] for name in FEATURES]
 
@@ -44,6 +44,9 @@ def make_risk_rows(records: list[dict], observation_end: date, eligible) -> tupl
     X: list[list[float]] = []
     y: list[int] = []
     subjects = []
+    by_client: dict[str, list[dict]] = {}
+    for row in records:
+        by_client.setdefault(row["client_id"], []).append(row)
     for invoice in records:
         if invoice["cancelled"] or not eligible(invoice):
             continue
@@ -51,7 +54,7 @@ def make_risk_rows(records: list[dict], observation_end: date, eligible) -> tupl
         # Build each invoice-day row only from evidence available at the beginning of that day.
         for day_number in range(1, duration + 1):
             as_of = invoice["issue_date"] + timedelta(days=day_number - 1)
-            X.append(_row_features(records, invoice, as_of))
+            X.append(_row_features(records, invoice, as_of, client_records=by_client[invoice["client_id"]]))
             y.append(int(event == 1 and day_number == duration))
         subjects.append((invoice, duration, event))
     return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.int8), subjects
@@ -95,10 +98,11 @@ def _censor_survival(subjects: list[tuple[dict, int, int]]) -> list[float]:
 
 def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_fallback: list[float], issue_origin: bool = True) -> list[float]:
     origin = invoice["issue_date"]
-    history = [row for row in _history(records, invoice["client_id"]) if row["settled_at"] <= origin]
+    client_records = [row for row in records if row["client_id"] == invoice["client_id"]]
+    history = [row for row in client_records if row["settled_at"] and row["settled_at"] <= origin]
     # Freeze the knowledge state at the forecast origin; only age and calendar features advance.
     exposure = []
-    for row in records:
+    for row in client_records:
         if row["issue_date"] <= origin:
             snapshot = dict(row)
             snapshot["settled_at"] = None
@@ -113,7 +117,7 @@ def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_
     matrix = []
     for day_number in range(1, HORIZON + 1):
         as_of = origin + timedelta(days=day_number - 1)
-        matrix.append(_row_features(records, invoice, as_of, history, exposure))
+        matrix.append(_row_features(records, invoice, as_of, history, exposure, client_records))
     raw = np.asarray(matrix, dtype=np.float32)
     if model is None:
         hazards = hazards_fallback.copy()
@@ -146,10 +150,17 @@ def _paid_only_mae(subjects, prediction_days: dict[str, int | None]) -> float | 
     return float(np.mean(errors)) if errors else None
 
 
-def train(output_dir: Path = Path("artifacts")) -> dict:
+def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str | None = None) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
-    records = generate_records()
-    X_train, y_train, train_subjects = make_risk_rows(records, TRAIN_CUTOFF, lambda row: row["issue_date"] <= TRAIN_CUTOFF)
+    history_cutoff = resolve_as_of(observation_cutoff)
+    train_cutoff = history_cutoff - timedelta(days=360)
+    validation_lo = train_cutoff + timedelta(days=1)
+    validation_hi = history_cutoff - timedelta(days=181)
+    validation_cutoff = history_cutoff
+    test_lo = history_cutoff - timedelta(days=180)
+    test_hi = history_cutoff
+    records = generate_records(observation_cutoff=history_cutoff)
+    X_train, y_train, train_subjects = make_risk_rows(records, train_cutoff, lambda row: row["issue_date"] <= train_cutoff)
     if len(X_train) == 0 or y_train.sum() == 0:
         raise RuntimeError("Synthetic training split produced no full settlements; refusing to save a nominal model.")
     model = LGBMClassifier(
@@ -163,10 +174,8 @@ def train(output_dir: Path = Path("artifacts")) -> dict:
     baseline = km_hazards(train_subjects)
     (output_dir / "kaplan_meier.json").write_text(json.dumps({"hazards": baseline, "horizon_days": HORIZON, "method": "pooled Kaplan–Meier"}, indent=2))
 
-    validation_lo, validation_hi = VALIDATION_COHORT
-    test_lo, test_hi = TEST_COHORT
-    val_X, val_y, val_subjects = make_risk_rows(records, VALIDATION_CUTOFF, lambda r: validation_lo <= r["issue_date"] <= validation_hi)
-    _, _, test_subjects = make_risk_rows(records, HISTORY_CUTOFF, lambda r: test_lo <= r["issue_date"] <= test_hi)
+    _, _, val_subjects = make_risk_rows(records, validation_cutoff, lambda r: validation_lo <= r["issue_date"] <= validation_hi)
+    _, _, test_subjects = make_risk_rows(records, history_cutoff, lambda r: test_lo <= r["issue_date"] <= test_hi)
     # Validation is scored on its later observation boundary; model selection is reserved for validation.
     val_predictions: dict[str, list[float]] = {}
     val_days: dict[str, int | None] = {}
@@ -215,22 +224,27 @@ def train(output_dir: Path = Path("artifacts")) -> dict:
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
+    model_version = f"lgbm-hazard-v2-seed-{SEED}-asof-{history_cutoff.isoformat()}"
     schema = {
         "version": FEATURE_SCHEMA_VERSION, "features": FEATURES, "horizon_days": HORIZON, "seed": SEED,
-        "dataset": "fully synthetic invoice records generated locally; 25 profiles; 400 invoices; no downloads",
-        "history_cutoff": HISTORY_CUTOFF.isoformat(), "training_cutoff": TRAIN_CUTOFF.isoformat(),
-        "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()], "validation_observation_cutoff": VALIDATION_CUTOFF.isoformat(),
-        "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": HISTORY_CUTOFF.isoformat(),
-        "generation_parameters": {"client_profiles": ["prompt", "slow", "volatile", "drifting", "new"], "invoice_count": 400, "clients": 25, "horizon_days": HORIZON},
+        "dataset": "fully synthetic invoice records generated locally; 52 clients; no downloads",
+        "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
+        "training_cutoff": train_cutoff.isoformat(),
+        "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()], "validation_observation_cutoff": validation_cutoff.isoformat(),
+        "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": history_cutoff.isoformat(),
+        "generation_parameters": {"client_profiles": ["prompt", "due_date", "chronic_late", "deteriorating", "erratic"], "invoice_count": len(records), "clients": len({row["client_id"] for row in records}), "horizon_days": HORIZON},
     }
     report = {
-        "model_version": "lgbm-hazard-v1-seed-20261110", "feature_schema_version": FEATURE_SCHEMA_VERSION,
-        "seed": SEED, "history_cutoff": HISTORY_CUTOFF.isoformat(), "training_cutoff": TRAIN_CUTOFF.isoformat(),
+        "model_version": model_version, "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "seed": SEED, "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
+        "training_cutoff": train_cutoff.isoformat(),
         "train_rows": int(len(X_train)), "train_event_rows": int(y_train.sum()), "train_invoices": len(train_subjects),
         "validation_invoices": len(val_subjects), "validation_event_count": int(sum(event for _, _, event in val_subjects)),
         "validation_horizons": val_horizons, "validation_ibs_lightgbm": val_ibs, "validation_ibs_km": val_km_ibs,
         "active_model": active_model,
-        "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": HISTORY_CUTOFF.isoformat(),
+        "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
+        "validation_observation_cutoff": validation_cutoff.isoformat(),
+        "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": history_cutoff.isoformat(),
         "test_invoices": len(test_subjects), "test_event_count": int(sum(event for _, _, event in test_subjects)),
         "test_horizons": test_horizons, "test_ibs_lightgbm": test_ibs, "test_ibs_km": test_km_ibs,
         "test_paid_only_date_mae_days": _paid_only_mae(test_subjects, test_days),

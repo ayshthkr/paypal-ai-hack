@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, Invoice, InvoiceEvent, Payment, Recommendation
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, Recommendation
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice
@@ -49,7 +49,11 @@ class PaymentInput(BaseModel):
     amount: Decimal | None = None
 
 
-def _today() -> date:
+def _today(db: Session | None = None, source: str | None = None) -> date:
+    if db is not None and source == "demo":
+        demo_state = db.get(DemoState, "demo")
+        if demo_state:
+            return demo_state.as_of_date
     try:
         return datetime.now(ZoneInfo(settings.merchant_timezone)).date()
     except (ZoneInfoNotFoundError, ValueError):
@@ -81,7 +85,7 @@ def _drift_for(db: Session, client: Client) -> dict:
     if len(issued) >= 5:
         gaps = [(issued[index] - issued[index - 1]).days for index in range(1, len(issued))]
         cadence = float(sorted(gaps)[len(gaps) // 2])
-    drift = client_drift(records, _today(), cadence_days=cadence)
+    drift = client_drift(records, _today(db, client.source), cadence_days=cadence)
     client.drift = drift
     client.scored_at = datetime.now(timezone.utc)
     return drift
@@ -104,7 +108,7 @@ def _latest_recommendation(db: Session, invoice_id: str) -> Recommendation | Non
 
 def _invoice_dict(db: Session, invoice: Invoice, include_detail: bool = False, drift_cache: dict[str, dict] | None = None) -> dict:
     client = invoice.client or db.get(Client, invoice.client_id)
-    today = _today()
+    today = _today(db, invoice.source)
     forecast = None
     if invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0:
         forecast = forecast_invoice(db, invoice, today=today, persist=include_detail)
@@ -138,6 +142,10 @@ def _invoice_dict(db: Session, invoice: Invoice, include_detail: bool = False, d
         "currency": invoice.currency, "status": invoice.status, "disputed": invoice.disputed,
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,
+        "viewed_at": invoice.viewed_at.isoformat() if invoice.viewed_at else None,
+        "partial_payment_allowed": invoice.partial_payment_allowed,
+        "payment_term_type": invoice.payment_term_type,
+        "reminder_events": invoice.reminder_events or [],
         "payment_url": (((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")) if invoice.source == "paypal" else None,
         "forecast": forecast, "drift": drift, "decision": action,
         "recommendation": _recommendation_dict(recommendation),
@@ -192,7 +200,7 @@ def _payable(invoice: Invoice) -> bool:
 
 def _check_policy(db: Session, invoice: Invoice, forecast: dict | None) -> None:
     last_attempt, unresolved = _last_attempt(db, invoice.id)
-    action = decide(invoice, forecast["probability_by_due"] if forecast else None, last_attempt, unresolved, _today())
+    action = decide(invoice, forecast["probability_by_due"] if forecast else None, last_attempt, unresolved, _today(db, invoice.source))
     if action["action"] not in {"friendly", "firm"}:
         raise HTTPException(status_code=409, detail=action["reason"])
 
@@ -428,7 +436,7 @@ def send_recommendation(recommendation_id: str, payload: SendInput, request: Req
         raise HTTPException(status_code=409, detail="Invoice changed at PayPal; review the refreshed recommendation before sending.")
     if not _payable(refreshed):
         raise HTTPException(status_code=409, detail="Invoice is paid, closed, disputed, or has no remaining balance.")
-    forecast = forecast_invoice(db, refreshed, today=_today(), persist=False)
+    forecast = forecast_invoice(db, refreshed, today=_today(db, refreshed.source), persist=False)
     _check_policy(db, refreshed, forecast)
     if recommendation.invoice_version != refreshed.material_version:
         raise HTTPException(status_code=409, detail="Recommendation is stale; review it again before sending.")
@@ -451,7 +459,7 @@ def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(
         raise HTTPException(status_code=403, detail="Demo simulation is restricted to synthetic invoices.")
     if recommendation.invoice_version != invoice.material_version or not _payable(invoice):
         raise HTTPException(status_code=409, detail="Invoice changed or is no longer payable.")
-    _check_policy(db, invoice, forecast_invoice(db, invoice, today=_today(), persist=False))
+    _check_policy(db, invoice, forecast_invoice(db, invoice, today=_today(db, invoice.source), persist=False))
     text_value = payload.text.strip()
     content_hash = hashlib.sha256(text_value.encode()).hexdigest()
     result = db.execute(update(Recommendation).where(
