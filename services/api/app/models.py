@@ -161,7 +161,7 @@ class PolicyDecisionLog(Base):
     decision_date: Mapped[date] = mapped_column(Date, nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     features: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    chosen_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    chosen_action: Mapped[str] = mapped_column(String(64), nullable=False)
     alternatives: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     assigned_holdback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     outcome: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
