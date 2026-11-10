@@ -1,6 +1,6 @@
 # External setup checklist
 
-PayPal account/KYC and Render account setup are marked done based on your latest notes. The Sandbox REST app credentials are now saved in the ignored local `.env`, and OAuth was verified. Secrets are not in source control or chat.
+PayPal account/KYC and Render account setup are marked done based on your latest notes. Correct Sandbox REST app credentials are saved in the ignored local `.env`, and OAuth was verified. Secrets are not in source control or chat.
 
 ## One-time local setup
 
@@ -12,14 +12,14 @@ PayPal account/KYC and Render account setup are marked done based on your latest
 ## PayPal
 
 - [x] PayPal account and identity verification/KYC: done per your latest note. No further PayPal account/KYC action is listed.
-- [x] Sandbox REST app Client ID and Secret saved in local `.env`; OAuth verification passed. `PAYPAL_MODE=sandbox`.
+- [x] New US Sandbox Business merchant and `Late Payer Sandbox` REST app created; corrected Client ID and Secret saved in local `.env`; OAuth verification passed. `PAYPAL_MODE=sandbox`.
 - [x] Add the existing controlled Sandbox Personal buyer email to `PAYPAL_ALLOWED_RECIPIENT_EMAILS` in local `.env`.
 - [x] Existing controlled Sandbox Personal account selected for testing; the email is stored locally in the allowlist, not shown here.
-- [x] Keep `PAYPAL_SANDBOX_CURRENCY=USD`. PayPal rejected sending a USD invoice from the Indian Sandbox merchant with `INR_FOREIGN_CURRENCY_BLOCKED`, and its invoice-create schema rejected INR.
+- [ ] Enable the PayPal app's **Invoicing** capability. It is currently disabled, so invoice operations fail with `NOT_AUTHORIZED`; no invoice was created or sent.
 - [ ] After deploying the API, register `https://<API_HOST>/webhooks/paypal` in that PayPal app for `INVOICING.INVOICE.PAID`, `INVOICING.INVOICE.CANCELLED`, `INVOICING.INVOICE.REFUNDED`, and `INVOICING.INVOICE.SENT`; copy its Webhook ID to `PAYPAL_WEBHOOK_ID`.
-- [ ] Complete a Sandbox invoice payment and confirm the webhook delivery and invoice refresh.
+- [ ] Seed/send a controlled USD Sandbox invoice, complete its Sandbox payment, and confirm the webhook delivery and invoice refresh.
 
-The remaining PayPal items are an accepted Sandbox reminder/payment check and deployed webhook registration—not account verification or KYC. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle.
+The remaining PayPal items are enabling app-level Invoicing, completing the controlled Sandbox invoice/payment check, and deployed webhook registration—not account verification or KYC. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle.
 
 ### PayPal India KYC
 
@@ -29,9 +29,10 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 
 - [x] Render account setup: done per your note.
 - [x] Code pushed to private GitHub repository `ayshthkr/paypal-ai-hack` on branch `codex/late-payer-v1`.
-- [ ] Connect Render to this repository with repository-only access. This gives Render read/deploy access to the project source.
+- [x] GitHub sign-in completed; Render's GitHub App is restricted to the single private `ayshthkr/paypal-ai-hack` repository.
+- [ ] Complete Render's Git deployment credential connection and verify that the repository appears in the Blueprint picker.
 - [ ] Deploy the repository Blueprint from `render.yaml`.
-- [ ] In the API service, set a generated `SESSION_SECRET`, operator username/password, Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
+- [ ] In the API service, set a generated `SESSION_SECRET`, operator username/password, corrected Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
 - [ ] Set the API service's `WEB_ORIGIN` to the deployed web URL and `PAYPAL_WEBHOOK_ID` after registering the webhook.
 - [ ] Confirm the API `/ready` endpoint and complete the browser journey: demo invoice → forecast → edit reminder → operator login → approve/send → Sandbox buyer payment → refreshed status.
 
@@ -41,5 +42,5 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 
 ## Not configured in this workspace
 
-- [ ] Render GitHub authorization, service deployment, and hosted environment values are not configured yet.
-- [ ] PayPal webhook registration and a live Sandbox delivery remain to be completed after the API is public.
+- [ ] Render Git deployment credential, service deployment, and hosted environment values are not configured yet.
+- [ ] PayPal app-level Invoicing permission, webhook registration, and a Sandbox delivery remain to be completed.

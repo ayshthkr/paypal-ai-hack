@@ -30,6 +30,6 @@ make dev
 
 ## Not yet verified outside the local demo
 
-- PayPal account/KYC is complete per the user. Sandbox app Client ID/Secret and an existing controlled Sandbox Personal buyer are configured in local `.env`, and Sandbox OAuth passed. PayPal allowed creation/import of a USD draft but rejected sending it with `INR_FOREIGN_CURRENCY_BLOCKED`; the API schema rejected INR invoice creation. Sandbox reminder/payment acceptance is therefore pending a compatible merchant currency/account setup. Webhook delivery is still pending deployment.
-- The source is pushed to private GitHub repo `ayshthkr/paypal-ai-hack`. Render GitHub access and deployment are pending. Hosted readiness and the hosted browser journey remain pending.
+- PayPal account/KYC is complete per the user. Correct credentials for the new US Sandbox Business app and an existing controlled Sandbox Personal buyer are configured in local `.env`, and Sandbox OAuth passed. The app's Invoicing capability is disabled, so the first invoice operation returned `NOT_AUTHORIZED` without creating or sending an invoice. Enable Invoicing, then verify a Sandbox reminder/payment. Webhook delivery is still pending deployment.
+- The source is pushed to private GitHub repo `ayshthkr/paypal-ai-hack`. GitHub sign-in is complete and Render's GitHub App is scoped to that repository only, but Render's Git deployment credential is not yet connected in the dashboard. Hosted readiness and the hosted browser journey remain pending.
 - Complete these external steps in [the setup checklist](external-setup.md). Keep `PAYPAL_MODE=sandbox` during acceptance; after deployment, register `https://<API_HOST>/webhooks/paypal`, configure its webhook ID, and verify a real Sandbox delivery.
