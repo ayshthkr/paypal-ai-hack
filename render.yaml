@@ -62,3 +62,5 @@ services:
           type: web
           name: latepayer-api
           property: hostport
+      - key: API_URL
+        value: https://latepayer-api.onrender.com
