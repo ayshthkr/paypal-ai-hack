@@ -234,7 +234,7 @@ def _prepare_portfolio_context(
         }
 
     context = {
-        "read_models": {(row.key, row.as_of): row for row in db.scalars(select(ReadModel).where(ReadModel.as_of.in_(scoring_dates))).all()},
+        "read_models": {(row.key, row.as_of): row for row in db.scalars(select(ReadModel).where(ReadModel.as_of.in_(scoring_dates), ReadModel.key != "demo:snapshot")).all()},
         "invoices": invoice_rows,
         "invoices_by_client": invoices_by_client,
         "payments_by_invoice": payments_by_invoice,
