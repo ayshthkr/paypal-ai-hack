@@ -171,9 +171,11 @@ export default function PortfolioClient() {
     const url = `/api/invoices?${apiParams.toString()}`;
     const existing = refreshInFlight.current.get(url);
     if (existing) return existing;
+    const controller = new AbortController();
+    const requestInit = { signal: controller.signal };
     const pending = Promise.all([
-      getJson<InvoiceResult>(url), getJson<{ items: ClientRow[] }>("/api/clients"),
-      getJson<{ authenticated: boolean }>("/api/auth/me"),
+      getJson<InvoiceResult>(url, requestInit), getJson<{ items: ClientRow[] }>("/api/clients", requestInit),
+      getJson<{ authenticated: boolean }>("/api/auth/me", requestInit),
     ]).then(async ([invoices, clientData, auth]) => {
       if (latestQuery.current !== searchKey) return;
       let operatorSync: SyncStatus | null = null;
@@ -190,6 +192,7 @@ export default function PortfolioClient() {
       setData(invoices); setClients(clientData.items); setAuthenticated(auth.authenticated);
       setSyncStatus(operatorSync); setPaypalRecipients(recipients); setError(""); wakeRetries.current.delete(searchKey);
     }).catch(cause => {
+      controller.abort();
       if (latestQuery.current !== searchKey) return;
       const message = cause instanceof Error ? cause.message : "Could not load invoices.";
       const retries = wakeRetries.current.get(searchKey) || 0;
