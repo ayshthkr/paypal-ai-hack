@@ -6,7 +6,7 @@ import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -77,6 +77,17 @@ function SearchInput({ query, onDebouncedQuery }: { query: string; onDebouncedQu
   return <input className="search" aria-label="Search invoices" placeholder="Search client, invoice, status" value={draft} onChange={event => setDraft(event.target.value)} />;
 }
 
+function TimeTravelControl({ currentAsOf, maxAsOf, resetBusy, onCommit, onReset }: { currentAsOf: string; maxAsOf: string; resetBusy: boolean; onCommit: (value: string) => void; onReset: () => void }) {
+  const [selectedDate, setSelectedDate] = useState(currentAsOf || maxAsOf);
+  const currentOffset = Math.round((new Date(`${selectedDate}T00:00:00Z`).getTime() - new Date(`${maxAsOf}T00:00:00Z`).getTime()) / 86_400_000);
+  const onChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const date = new Date(`${maxAsOf}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + Number(event.target.value));
+    setSelectedDate(date.toISOString().slice(0, 10));
+  };
+  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
+}
+
 function money(currency: string, value: number | string) {
   return `${currency} ${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -105,13 +116,10 @@ export default function PortfolioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [wakeRetryNonce, setWakeRetryNonce] = useState(0);
-  const [timeTravelDate, setTimeTravelDate] = useState("");
-  const timeTravelRef = useRef("");
   const [authenticated, setAuthenticated] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
-  const [resetMessage, setResetMessage] = useState("");
   const [paypalRecipients, setPaypalRecipients] = useState<PaypalRecipient[]>([]);
   const [newInvoiceClient, setNewInvoiceClient] = useState("");
   const [newInvoiceAmount, setNewInvoiceAmount] = useState("");
@@ -197,11 +205,6 @@ export default function PortfolioClient() {
 
   useEffect(() => { latestQuery.current = searchKey; }, [searchKey]);
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { const message = window.sessionStorage.getItem("latepayer-demo-reset-message"); if (message) { setResetMessage(message); window.sessionStorage.removeItem("latepayer-demo-reset-message"); } }, []);
-  useEffect(() => {
-    const value = params.get("as_of") || data?.as_of_max || "";
-    if (value) { setTimeTravelDate(value); timeTravelRef.current = value; }
-  }, [data?.as_of_max, params]);
   useEffect(() => {
     if (!error.startsWith("The API is waking up.")) return;
     const timer = window.setTimeout(() => setWakeRetryNonce(value => value + 1), 1800);
@@ -228,11 +231,18 @@ export default function PortfolioClient() {
 
   const resetDemo = async () => {
     if (!window.confirm("Reset all synthetic demo payments, reminders, and replies to the starting state? PayPal Sandbox records are not changed.")) return;
-    setResetBusy(true); setError(""); setResetMessage("");
+    setResetBusy(true); setError("");
     try {
-      const result = await getJson<{ message: string }>("/api/demo/reset", { method: "POST" });
-      window.sessionStorage.setItem("latepayer-demo-reset-message", result.message);
-      window.location.assign("/");
+      await getJson("/api/demo/reset", { method: "POST" });
+      const next = new URLSearchParams(searchKey);
+      next.delete("as_of"); next.delete("action_only"); next.delete("drifting_only"); next.delete("age_bucket");
+      next.set("view", "open"); next.set("page", "1");
+      const query = next.toString();
+      router.replace(query ? `/?${query}` : "/", { scroll: false });
+      const [invoices, clientData] = await Promise.all([
+        getJson<InvoiceResult>(`/api/invoices?${query}`), getJson<{ items: ClientRow[] }>("/api/clients"),
+      ]);
+      setData(invoices); setClients(clientData.items);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not reset the synthetic demo."); }
     finally { setResetBusy(false); }
   };
@@ -334,8 +344,7 @@ export default function PortfolioClient() {
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
-        {!authenticated && data && <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${timeTravelDate || data.as_of_max}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, Math.round((new Date(`${timeTravelDate || data.as_of_max}T00:00:00Z`).getTime() - new Date(`${data.as_of_max}T00:00:00Z`).getTime()) / 86_400_000)))} onChange={event => { const date = new Date(`${data.as_of_max}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + Number(event.target.value)); const value = date.toISOString().slice(0, 10); setTimeTravelDate(value); timeTravelRef.current = value; }} onPointerUp={() => updateUrl({ as_of: timeTravelRef.current === data.as_of_max ? null : timeTravelRef.current }, "replace")} onKeyUp={() => updateUrl({ as_of: timeTravelRef.current === data.as_of_max ? null : timeTravelRef.current }, "replace")} /><button className="btn" disabled={resetBusy} onClick={() => void resetDemo()}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>}
-        {resetMessage && <div className="action-message" role="status">{resetMessage}</div>}
+        {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")} onReset={() => void resetDemo()} />}
         {error && <div className="error-box" role="alert">{error}</div>}
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
           <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>

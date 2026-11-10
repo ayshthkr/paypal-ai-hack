@@ -19,19 +19,19 @@ function score(value: number | null | undefined) { return value == null ? "—" 
 export default function ModelPerformance() {
   const [data, setData] = useState<Evaluation | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
-    setError(""); setData(null);
     void fetch("/api/evaluation", { cache: "no-store" }).then(async response => {
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
-      if (active) setData(value as Evaluation);
-    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "Could not load evaluation."); });
+      if (active) { setData(value as Evaluation); setLoading(false); }
+    }).catch(cause => { if (active) { setError(cause instanceof Error ? cause.message : "Could not load evaluation."); setLoading(false); } });
     return () => { active = false; };
   }, [reload]);
-  if (error) return <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh the evaluation to retry." : error} <button className="btn" onClick={() => setReload(value => value + 1)}>Retry</button></div>;
-  if (!data) return <div className="empty-box">Loading model evaluation…</div>;
+  if (error) return <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh the evaluation to retry." : error} <button className="btn" onClick={() => { setError(""); setData(null); setLoading(true); setReload(value => value + 1); }}>Retry</button></div>;
+  if (loading || !data) return <div className="empty-box">Loading model evaluation…</div>;
   if (!data.available) return <section className="panel"><div className="eyebrow">Model performance</div><h1>Evaluation unavailable</h1><p className="subheading">{data.reason || "Train the model to create its evaluation report."}</p></section>;
 
   const calibration = data.calibration_14d?.deciles || [];

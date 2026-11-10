@@ -30,7 +30,7 @@ export default function ActionQueue() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load today's action queue."); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { const timer = window.setTimeout(() => void refresh(), 0); return () => window.clearTimeout(timer); }, [refresh]);
 
   const act = async (item: QueueItem, operation: "approve" | "skip") => {
     const recommendation = item.recommendation;
