@@ -5,6 +5,8 @@ import hmac
 import json
 import re
 import statistics
+import logging
+from time import perf_counter
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -23,6 +25,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.telemetry import metrics, timed
 from app.config import get_settings
 from app.db import get_db
 from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun
@@ -60,9 +63,17 @@ async def demo_time_travel_context(request: Request, call_next):
         except ValueError:
             pass
     token = _REQUEST_DEMO_AS_OF.set(override)
+    timings = {"db": 0.0, "model_load": 0.0, "scoring": 0.0, "drift": 0.0}
+    timing_token = metrics.set(timings)
+    started = perf_counter()
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        timings["total"] = (perf_counter() - started) * 1000
+        response.headers["Server-Timing"] = ", ".join(f"{key};dur={value:.2f}" for key, value in timings.items())
+        logging.getLogger("latepayer.timing").info("%s %s %s", request.method, request.url.path, timings)
+        return response
     finally:
+        metrics.reset(timing_token)
         _REQUEST_DEMO_AS_OF.reset(token)
 
 
@@ -240,6 +251,7 @@ def _activity_for_source(db: Session, source: str) -> dict[str, float]:
     return fit.get("probabilities", {})
 
 
+@timed("drift")
 def _drift_for(db: Session, client: Client, activity_probability: float | None = None) -> dict:
     cadence = None
     records = _client_records(db, client.id)

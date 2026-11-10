@@ -11,6 +11,7 @@ from lightgbm import Booster
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.telemetry import timed
 from app.config import get_settings
 from app.models import Invoice, Payment, Prediction
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
@@ -63,6 +64,7 @@ def _file_revision(path: Path) -> tuple[int, int] | None:
     return stat.st_mtime_ns, stat.st_size
 
 
+@timed("model_load")
 def _load_artifacts() -> tuple[Booster | None, list[float], str, str, dict, dict]:
     settings = get_settings()
     path = Path(settings.model_path)
@@ -130,6 +132,7 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
     return {"days": day, "date": (today + timedelta(days=day)).isoformat()}
 
 
+@timed("scoring")
 def forecast_invoice(
     db: Session, invoice: Invoice, today: date | None = None, persist: bool = True,
     scenario: dict | None = None,

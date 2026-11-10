@@ -1,6 +1,9 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from time import perf_counter
+
+from sqlalchemy import create_engine, event
+from app.telemetry import metrics
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -33,3 +36,15 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _before_query(conn, cursor, statement, parameters, context, executemany):
+    context._latepayer_started = perf_counter()
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _after_query(conn, cursor, statement, parameters, context, executemany):
+    timings = metrics.get()
+    if timings is not None:
+        timings["db"] = timings.get("db", 0.0) + (perf_counter() - context._latepayer_started) * 1000
