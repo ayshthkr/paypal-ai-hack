@@ -144,6 +144,16 @@ def _today(db: Session | None = None, source: str | None = None) -> date:
         return datetime.now(timezone.utc).date()
 
 
+def _historical_demo(db: Session, source: str) -> bool:
+    override = _REQUEST_DEMO_AS_OF.get()
+    if source != "demo" or override is None:
+        return False
+    state = db.info.get("demo_clock") or db.get(DemoState, "demo")
+    if state:
+        db.info["demo_clock"] = state
+    return bool(state and override != state.as_of_date)
+
+
 def _verify_login(username: str, password: str) -> bool:
     if not settings.production_auth_configured:
         return False
@@ -323,8 +333,9 @@ def _drift_for(db: Session, client: Client, activity_probability: float | None =
         records, _today(db, client.source), cadence_days=cadence,
         activity_probability=activity_probability, money_at_risk_by_currency=risk,
     )
-    client.drift = drift
-    client.scored_at = datetime.now(timezone.utc)
+    if not _historical_demo(db, client.source):
+        client.drift = drift
+        client.scored_at = datetime.now(timezone.utc)
     return drift
 
 
@@ -591,6 +602,8 @@ def _invoice_dict(
     create_recommendation: bool = True,
 ) -> dict:
     client = invoice.client or db.get(Client, invoice.client_id)
+    if _historical_demo(db, invoice.source):
+        create_recommendation = False
     today = _today(db, invoice.source)
     outstanding = Decimal("0.00") if invoice.status in CLOSED_STATUSES else invoice.outstanding
     forecast = None
@@ -627,7 +640,7 @@ def _invoice_dict(
         action["tone"] = "none"
         action["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
     recommendation = _latest_recommendation(db, invoice.id)
-    if recommendation and include_detail and recommendation.policy_date is None:
+    if recommendation and include_detail and create_recommendation and recommendation.policy_date is None:
         recommendation.policy_date = today
     if invoice.disputed or (invoice.promised_payment_date and today <= invoice.promised_payment_date):
         recommendation = None
@@ -667,7 +680,7 @@ def _invoice_dict(
         "currency": invoice.currency, "status": invoice.status, "disputed": invoice.disputed,
         "promised_payment_date": invoice.promised_payment_date.isoformat() if invoice.promised_payment_date else None,
         "reminder_step": invoice.reminder_step,
-        "simulation_disabled": invoice.source == "demo" and _REQUEST_DEMO_AS_OF.get() is not None and _REQUEST_DEMO_AS_OF.get() != (db.get(DemoState, "demo").as_of_date if db.get(DemoState, "demo") else today),
+        "simulation_disabled": _historical_demo(db, invoice.source),
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,
         "viewed_at": invoice.viewed_at.isoformat() if invoice.viewed_at else None,
@@ -776,6 +789,8 @@ def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
 
 
 def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> None:
+    if _historical_demo(db, invoice.source):
+        return
     decision = summary["decision"]
     forecast = summary.get("forecast") or {}
     fields = {
@@ -1961,6 +1976,8 @@ def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(
     invoice = _get_invoice_or_404(db, recommendation.invoice_id)
     if invoice.source != "demo":
         raise HTTPException(status_code=403, detail="Demo simulation is restricted to synthetic invoices.")
+    if _historical_demo(db, invoice.source):
+        raise HTTPException(409, "Return the demo clock to today before simulating actions.")
     if recommendation.invoice_version != invoice.material_version or not _payable(invoice):
         raise HTTPException(status_code=409, detail="Invoice changed or is no longer payable.")
     if recommendation.action == "offer_partial_payment":
@@ -2031,7 +2048,7 @@ def demo_payment(invoice_id: str, payload: PaymentInput, db: Session = Depends(g
         raise HTTPException(status_code=403, detail="Payment simulation is restricted to synthetic invoices.")
     if not _payable(invoice):
         raise HTTPException(status_code=409, detail="Invoice cannot accept another payment.")
-    if _REQUEST_DEMO_AS_OF.get() and _REQUEST_DEMO_AS_OF.get() != _today(db):
+    if _historical_demo(db, invoice.source):
         raise HTTPException(409, "Return the demo clock to today before simulating payment.")
     amount = payload.amount if payload.amount is not None else invoice.outstanding
     try:

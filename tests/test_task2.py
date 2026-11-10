@@ -243,3 +243,34 @@ def test_utc_audit_timestamps_use_the_merchant_payment_date(api, monkeypatch):
         assert record['reminder_events'][0]['sent_at'] == '2026-11-11'
     outcome = client.get('/invoices/calendar-invoice').json()['outcome']
     assert outcome['paid_at'] == '2026-11-11' and outcome['days_from_due'] == 0
+
+
+def test_historical_clock_preserves_current_drafts_and_signals(api):
+    from decimal import Decimal
+    from app.models import Client, DemoState, Invoice, Recommendation
+    from app.services.policy import holdback_assignment
+    client, Session = api
+    today = date.today()
+    past = today-timedelta(days=7)
+    invoice_id = next(f'clock-draft-{i}' for i in range(100) if not holdback_assignment(f'clock-draft-{i}',today) and not holdback_assignment(f'clock-draft-{i}',past))
+    with Session() as db:
+        db.add(Client(id='clock-draft-owner',display_name='Clock',source='demo',drift={}))
+        db.add(DemoState(id='demo',as_of_date=today))
+        db.flush()
+        db.add(Invoice(id=invoice_id,invoice_number='CLOCK-1',client_id='clock-draft-owner',issue_date=today-timedelta(days=45),
+            due_date=today-timedelta(days=15),total=Decimal(100),paid=Decimal(0),outstanding=Decimal(100),currency='USD',status='OVERDUE',source='demo',material_version=1))
+        db.flush()
+        db.add(Recommendation(id='clock-draft-rec',invoice_id=invoice_id,action='friendly',tone='friendly',reason='Review',
+            draft_text='Keep my draft',edited_text='Keep my draft',invoice_version=1,state='proposed',policy_date=today))
+        db.commit()
+        original_signal = db.get(Client,'clock-draft-owner').drift
+    assert client.post(f'/demo/clock?as_of={past}').status_code == 200
+    historical = client.get(f'/invoices/{invoice_id}?as_of={past}')
+    assert historical.status_code == 200 and historical.json()['simulation_disabled'] is True
+    assert historical.json()['recommendation']['id'] == 'clock-draft-rec'
+    assert client.post(f'/demo/invoices/{invoice_id}/payment?as_of={past}',json={}).status_code == 409
+    with Session() as db:
+        assert db.query(Recommendation).filter_by(invoice_id=invoice_id).count() == 1
+        row = db.get(Recommendation,'clock-draft-rec')
+        assert row.edited_text == 'Keep my draft' and row.state == 'proposed' and row.policy_date == today
+        assert db.get(Client,'clock-draft-owner').drift == original_signal
