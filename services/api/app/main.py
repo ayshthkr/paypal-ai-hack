@@ -343,7 +343,11 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     db.commit()
     try:
         resource = payload.get("resource") or {}
-        paypal_id = resource.get("id") or resource.get("invoice_id")
+        invoice_resource = resource.get("invoice") if isinstance(resource.get("invoice"), dict) else {}
+        paypal_id = (
+            resource.get("id") or resource.get("invoice_id")
+            or invoice_resource.get("id") or invoice_resource.get("invoice_id")
+        )
         if not paypal_id:
             raise ValueError("Webhook resource did not include an invoice ID.")
         refresh_paypal_invoice(db, PayPalAdapter(), str(paypal_id))

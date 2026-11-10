@@ -176,6 +176,46 @@ def test_invalid_webhook_is_stored_but_never_mutates_invoice(api, monkeypatch):
         assert event.verified is False and event.processing_status == "rejected"
 
 
+def test_verified_nested_paypal_invoice_event_refreshes_invoice(api, monkeypatch):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="nested-webhook-owner", display_name="Sandbox", source="paypal", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("nested-webhook-invoice", owner.id, source="paypal"))
+        db.commit()
+
+    class ValidWebhookAdapter:
+        def verify_webhook(self, headers, payload):
+            return True
+
+    refreshed_ids = []
+
+    def refresh_invoice(db, adapter, paypal_id):
+        refreshed_ids.append(paypal_id)
+        invoice = db.get(Invoice, "nested-webhook-invoice")
+        invoice.status = "PAID"
+        invoice.paid = invoice.total
+        invoice.outstanding = Decimal("0.00")
+        db.commit()
+        return invoice
+
+    monkeypatch.setattr(main, "PayPalAdapter", ValidWebhookAdapter)
+    monkeypatch.setattr(main, "refresh_paypal_invoice", refresh_invoice)
+    response = client.post("/webhooks/paypal", json={
+        "id": "evt-nested-invoice",
+        "event_type": "INVOICING.INVOICE.PAID",
+        "resource": {"invoice": {"id": "nested-webhook-invoice", "status": "MARKED_AS_PAID"}},
+    })
+    assert response.status_code == 200
+    assert refreshed_ids == ["nested-webhook-invoice"]
+    with Session() as db:
+        invoice = db.get(Invoice, "nested-webhook-invoice")
+        event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-nested-invoice").one()
+        assert invoice.status == "PAID" and invoice.outstanding == Decimal("0.00")
+        assert event.verified is True and event.processing_status == "processed"
+
+
 def test_paypal_mutation_timeout_is_marked_ambiguous():
     observed_accept = []
 
