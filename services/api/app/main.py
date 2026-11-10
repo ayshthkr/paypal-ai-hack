@@ -129,8 +129,13 @@ def _today(db: Session | None = None, source: str | None = None) -> date:
     if source == "demo" and _REQUEST_DEMO_AS_OF.get() is not None:
         return _REQUEST_DEMO_AS_OF.get()
     if db is not None and source == "demo":
+        if "demo_clock" in db.info:
+            return db.info["demo_clock"].as_of_date
         demo_state = db.get(DemoState, "demo")
         if demo_state:
+            # Keep a strong request-local reference: SQLAlchemy's weak identity
+            # map otherwise re-queries this row for every invoice/client.
+            db.info["demo_clock"] = demo_state
             return demo_state.as_of_date
     try:
         return datetime.now(ZoneInfo(settings.merchant_timezone)).date()
