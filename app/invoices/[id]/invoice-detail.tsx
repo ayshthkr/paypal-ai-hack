@@ -17,7 +17,7 @@ type Neighbor = { id: string; invoice_number: string; query: string };
 type InvoiceData = {
   id: string; paypal_id: string | null; invoice_number: string; client_id: string; client_name: string; client_email: string | null;
   issue_date: string; due_date: string; days_to_due: number; total: string; paid: string; outstanding: string; currency: string;
-  status: string; source: string; material_version: number; payment_url: string | null; forecast: Forecast; why: string; disputed: boolean; promised_payment_date: string | null;
+  simulation_disabled?: boolean; status: string; source: string; material_version: number; payment_url: string | null; forecast: Forecast; why: string; disputed: boolean; promised_payment_date: string | null;
   viewed_at: string | null; viewed_by_recipient: boolean; viewed_observed_at: string | null; partial_payment_allowed: boolean; payment_term_type: string | null;
   drift: { signal: string; available: boolean; settled_count: number; message: string };
   decision: { action: string; tone: string; reason: string }; recommendation: Recommendation;
@@ -35,6 +35,8 @@ function shortDate(value: string | null | undefined) {
 
 export default function InvoiceDetail({ id, portfolioQuery }: { id: string; portfolioQuery: string }) {
   const router = useRouter();
+  const clockDate = new URLSearchParams(portfolioQuery).get("as_of");
+  const clockQuery = clockDate ? `?as_of=${encodeURIComponent(clockDate)}` : "";
   const [data, setData] = useState<InvoiceData | null>(null);
   const [draft, setDraft] = useState("");
   const { authenticated } = useAuth();
@@ -53,11 +55,11 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const refresh = useCallback(async () => {
     if (refreshInFlight.current) return refreshInFlight.current;
     const pending = Promise.all([
-      requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}`),
+      requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}${clockQuery}`),
 
     ]).then(([invoice]) => {
       setData(invoice); setError(""); setNotFound(false);
-      setDraft(previous => previous && invoice.recommendation?.state === "proposed" ? previous : invoice.recommendation?.edited_text || "");
+      setDraft(previous => previous && invoice.recommendation?.state === "proposed" ? previous : sessionStorage.getItem(`latepayer-draft:${invoice.recommendation?.id}`) ?? invoice.recommendation?.edited_text ?? "");
     }).catch(cause => {
       setError(cause instanceof Error ? cause.message : "Could not load invoice.");
       setNotFound(cause instanceof RequestError && cause.status === 404);
@@ -67,13 +69,14 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
     });
     refreshInFlight.current = pending;
     return pending;
-  }, [id]);
+  }, [id, clockQuery]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
+    if (notFound) return;
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, notFound]);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +132,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   };
 
   const recordPayment = async (amount?: string) => {
-    if (!data) return;
+    if (!data || data.simulation_disabled) return;
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await requestJson<{ note: string; status: string }>(`/api/demo/invoices/${encodeURIComponent(id)}/payment`, { method: "POST", body: JSON.stringify(amount ? { amount } : {}) });
@@ -176,13 +179,14 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const isDemo = data.source === "demo";
   const p50 = data.forecast?.quantiles.p50;
   const actionUrl = isDemo ? `/api/demo/recommendations/${rec?.id}/send` : `/api/recommendations/${rec?.id}/send`;
-  const canSend = Boolean(rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
+  const canSend = Boolean(!data.simulation_disabled && rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
   const isPartialAction = Boolean(rec && rec.action === "offer_partial_payment");
-  const canApplyPartial = Boolean(isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
+  const canApplyPartial = Boolean(!data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
 
   return <div className="app-shell">
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
     <main className="main-wrap">
+      {data.simulation_disabled && <div className="demo-banner" role="status">Viewing as of {clockDate} · return the clock to today to simulate actions.</div>}
       {isDemo && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Forecast and approval flow use generated records. Simulated actions do not contact PayPal.</span></div>}
       {error && <div className="error-box" role="alert" style={{ marginBottom: 14 }}>{error} <button className="btn" onClick={() => void refresh()}>Retry</button></div>}
       <div className="heading-row"><div><div className="eyebrow">Invoice detail · {data.source === "demo" ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.invoice_number}</h1><p className="subheading"><Link className="table-link" href={`/clients/${encodeURIComponent(data.client_id)}`}>{data.client_name}</Link>{data.client_email ? ` · ${data.client_email}` : ""}</p></div><div className="top-actions"><span className={`status-pill ${data.disputed ? "disputed" : data.status.toLowerCase()}`}>{data.disputed ? "DISPUTED" : data.status.replaceAll("_", " ")}</span>{!isDemo && authenticated && <button className="btn primary" disabled={busy} onClick={async () => { setBusy(true); try { await requestJson("/api/sync", { method: "POST" }); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Sync failed."); } finally { setBusy(false); } }}>↻ Sync PayPal</button>}</div></div>
@@ -222,8 +226,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="fact"><div className="fact-label">Decision</div><div className="fact-value">{data.decision.action}</div></div>
               <div className="fact"><div className="fact-label">Policy reason</div><div className="fact-value" style={{ fontSize: 11, lineHeight: 1.35 }}>{data.decision.reason}</div></div>
             </div>
+            <button className="btn" onClick={() => { void navigator.clipboard.writeText(window.location.href).then(() => setNotice("Invoice link copied.")).catch(() => setError("Could not copy the invoice link.")); }}>Copy invoice link</button>
             {!isDemo && data.payment_url && <a className="btn" href={data.payment_url} target="_blank" rel="noreferrer">Open PayPal invoice ↗</a>}
-            {isDemo && Number(data.outstanding) > 0 && <div className="action-buttons"><button className="btn" disabled={busy} onClick={() => void recordPayment((Number(data.outstanding) / 2).toFixed(2))}>Simulate partial payment</button><button className="btn" disabled={busy} onClick={() => void recordPayment()}>Simulate full payment</button></div>}
+            {isDemo && Number(data.outstanding) > 0 && <div className="action-buttons"><button className="btn" disabled={busy || data.simulation_disabled} onClick={() => void recordPayment((Number(data.outstanding) / 2).toFixed(2))}>Simulate partial payment</button><button className="btn" disabled={busy || data.simulation_disabled} onClick={() => void recordPayment()}>Simulate full payment</button></div>}
           </div>
           <div className="panel">
             <div className="panel-head"><div><div className="panel-title">{isPartialAction ? "Partial-payment review" : "Reminder review"}</div><div className="panel-subtitle">{rec ? rec.reason : data.decision.reason}</div></div>{rec && <span className="recommendation-tag">{rec.state}</span>}</div>
@@ -240,7 +245,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the update. Review and retry is available.</span>}
               </div>
             </> : rec ? <>
-              <div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? "Gemini, grounded in invoice facts" : "grounded template"}{rec.drafted_at ? ` · ${new Date(rec.drafted_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })}` : ""}</div>
+              <div className="fine-print">Grounded in: {data.invoice_number}, {data.currency} {Number(data.outstanding).toLocaleString("en-US")}, due {shortDate(data.due_date)}, recorded reminder and settlement history.</div><div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? "Gemini, grounded in invoice facts" : "grounded template"}{rec.drafted_at ? ` · ${new Date(rec.drafted_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })}` : ""}</div>
               <textarea aria-label="Editable reminder preview" value={draft} onChange={event => setDraft(event.target.value)} disabled={rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/>
               <div className="delivery-note">{data.reminder_delivery_note || (isDemo ? "Demo mode: simulated send records the approval only. No PayPal email is sent." : "The exact approved copy is recorded for audit. PayPal's native reminder email controls the message body.")}</div>
               <div className="action-buttons">

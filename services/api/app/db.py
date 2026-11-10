@@ -65,3 +65,10 @@ def _refresh_projections(db):
 @event.listens_for(Session, "after_rollback")
 def _clear_projection_changes(db):
     db.info.pop("projection_clients", None)
+
+
+@event.listens_for(Session, "after_commit")
+def _invalidate_committed_projection(db):
+    if db.info.pop("projection_was_refreshed", False):
+        from app.http_cache import invalidate
+        invalidate()

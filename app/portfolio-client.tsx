@@ -36,7 +36,7 @@ type InvoiceResult = {
   aging_buckets: Record<string, AgingBucket>;
   expected_cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[];
   synthetic_demo: boolean; models: string[]; ready_for_review_count: number; drifting_client_count: number;
-  as_of: string; as_of_max: string;
+  as_of: string; as_of_max: string; client_signals?: ClientRow[];
 };
 type ClientRow = { id: string; name: string; drift: Drift };
 type MorningBrief = {
@@ -45,7 +45,7 @@ type MorningBrief = {
   top_candidates: { invoice_id: string; invoice_number: string; client_name: string; currency: string; outstanding: string; action: string; reason: string; expected_cash_gain: number }[];
   clients_slowing_down: { client_id: string; client_name: string; signal_type: string; message: string; severity_score: number }[];
 };
-type AskResult = { intent: string; answer: string; data: unknown };
+type AskResult = { intent: string; answer: string; data: unknown; grounded_in?: string };
 type SyncStatus = {
   last_run: null | { started_at: string; completed_at: string | null; status: string; created: number; updated: number; event_refreshes: number; retry_failures: number; errors: string[] };
   webhook_failures: number;
@@ -106,6 +106,8 @@ export default function PortfolioClient() {
   const selectedAge = params.get("age_bucket") || "";
   const actionOnly = params.get("action_only") === "1";
   const driftingOnly = params.get("drifting_only") === "1";
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientOptionsOpen, setClientOptionsOpen] = useState(false);
   const urlQuery = params.get("q") || "";
   const detailHref = useCallback((id: string, query = searchKey) => `/invoices/${encodeURIComponent(id)}${query ? `?${query}` : ""}`, [searchKey]);
 
@@ -147,6 +149,7 @@ export default function PortfolioClient() {
     if (resetPage && !("page" in updates)) next.set("page", "1");
     const query = next.toString();
     const href = query ? `/?${query}` : "/";
+    if ("age_bucket" in updates || "predicted_week" in updates) document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" });
     if (mode === "push") router.push(href, { scroll: false });
     else router.replace(href, { scroll: false });
   }, [router, searchKey]);
@@ -198,6 +201,12 @@ export default function PortfolioClient() {
     return pending;
   }, [searchKey, authenticated]);
 
+  useEffect(() => {
+    if (!clientOptionsOpen) return;
+    let active = true;
+    const timer = window.setTimeout(() => { void getJson<{ items: ClientRow[] }>(`/api/clients?options_only=true&q=${encodeURIComponent(clientSearch)}`).then(value => { if (active) setClients(value.items); }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "Client search failed"); }); }, 200);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [clientOptionsOpen, clientSearch]);
   useEffect(() => { latestQuery.current = searchKey; }, [searchKey]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
@@ -285,9 +294,9 @@ export default function PortfolioClient() {
 
   const baseColumns = useMemo<ColDef<InvoiceRow>[]>(() => [
     { colId: "invoice_number", field: "invoice_number", headerName: "Invoice", pinned: "left", minWidth: 140, flex: .8,
-      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={detailHref(cell.data?.id || "")}>{cell.value}</Link> },
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" onMouseEnter={() => { router.prefetch(detailHref(cell.data?.id || "")); void getJson(`/api/invoices/${encodeURIComponent(cell.data?.id || "")}`).catch(() => {}); }} href={detailHref(cell.data?.id || "")}>{cell.value}</Link> },
     { colId: "client_name", field: "client_name", headerName: "Client", pinned: "left", minWidth: 160, flex: 1.1,
-      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={`/clients/${encodeURIComponent(cell.data?.client_id || "")}`}>{cell.value}</Link> },
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" onMouseEnter={() => { void getJson(`/api/facts/clients/${encodeURIComponent(cell.data?.client_id || "")}`).catch(() => {}); }} href={`/clients/${encodeURIComponent(cell.data?.client_id || "")}`}>{cell.value}</Link> },
     { colId: "outstanding", field: "outstanding", headerName: "Balance", minWidth: 125,
       valueFormatter: cell => cell.data ? money(cell.data.currency, cell.value) : "" },
     { colId: "due_date", field: "due_date", headerName: "Due", minWidth: 115,
@@ -315,10 +324,10 @@ export default function PortfolioClient() {
     { colId: "expected_cash", headerName: "Expected cash gain", minWidth: 160,
       valueGetter: cell => cell.data?.decision.expected_cash_gain,
       valueFormatter: cell => cell.data?.decision.expected_cash_gain_currency ? money(cell.data.decision.expected_cash_gain_currency, cell.value || 0) : "—" },
-  ], [detailHref]);
+  ], [detailHref, router]);
   const columns = useMemo(() => baseColumns.map(column => ({ ...column, hide: !visibleColumns.includes(column.colId || column.field || "") })), [baseColumns, visibleColumns]);
   const rowData = useMemo(() => data?.items || [], [data]);
-  const drifting = clients.filter(client => ["paying_later", "later_than_usual", "gone_quiet"].includes(client.drift.signal_type));
+  const drifting = data?.client_signals || [];
   const driftCounts = {
     payingLater: drifting.filter(client => client.drift.signal_type === "paying_later").length,
     laterThanUsual: drifting.filter(client => client.drift.signal_type === "later_than_usual").length,
@@ -340,11 +349,11 @@ export default function PortfolioClient() {
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
-        {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")} onReset={() => void resetDemo()} />}
+        {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => { void getJson(`/api/demo/clock?as_of=${value}`, { method: "POST" }).then(() => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")).catch(cause => setError(cause.message)); }} onReset={() => void resetDemo()} />}
         {error && <div className="error-box" role="alert">{error}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
           <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>
-          {askResult && <div className="action-message" role="status" style={{ marginTop: 12 }}>{askResult.answer}</div>}
+          {askResult && <div className="action-message" role="status" style={{ marginTop: 12 }}>{askResult.answer}<small className="fine-print"> Grounded in: {askResult.grounded_in || "current scoped invoice facts"}</small></div>}
         </section>
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
           {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
@@ -371,6 +380,7 @@ export default function PortfolioClient() {
         </section>}
         {loading && !data && <div role="status" aria-label="Loading portfolio" className="portfolio-skeleton"><div className="stats-grid">{[1,2,3,4].map(key => <div className="skeleton-card" key={key} />)}</div><div className="skeleton-grid" /></div>}
         {data && <>
+          {data.as_of !== data.as_of_max && <div className="demo-banner" role="status">Viewing as of {data.as_of} · simulation is disabled while the clock is moved back.</div>}
           <section className="stats-grid">
             <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
             <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
@@ -397,25 +407,26 @@ export default function PortfolioClient() {
           </section>
 
           <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Outstanding balances grouped by their p50 settlement week.</div></div></div>
-            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{data.expected_cash_by_week.map(entry => <div className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {new Date(`${entry.week_start}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{money(entry.currency, entry.amount)}</strong><small>{entry.invoice_count} invoice{entry.invoice_count === 1 ? "" : "s"}</small></div>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
+            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span>{data.expected_cash_by_week.filter(entry => entry.week_start === week).map(entry => <strong key={entry.currency}>{money(entry.currency, entry.amount)} <small>({entry.invoice_count})</small></strong>)}</button>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
           </section>
 
           <section className="grid-panel" id="invoice-grid">
+            <div className="toolbar-tools filter-toolbar"><label>Status <select multiple aria-label="Filter statuses" value={(params.get("statuses") || "").split(",").filter(Boolean)} onChange={event => updateUrl({ statuses: Array.from(event.target.selectedOptions).map(option => option.value).join(",") || null })}>{["SENT","OVERDUE","PARTIALLY_PAID","PAID","CANCELLED"].map(value => <option key={value}>{value}</option>)}</select></label><button className="btn" onClick={() => updateUrl({ statuses: null })}>All statuses</button><label>Due from <input type="date" aria-label="Due from" value={params.get("due_from") || ""} onChange={event => updateUrl({ due_from: event.target.value || null })} /></label><label>Due to <input type="date" aria-label="Due to" value={params.get("due_to") || ""} onChange={event => updateUrl({ due_to: event.target.value || null })} /></label>{params.has("predicted_week") && <button className="btn" onClick={() => updateUrl({ predicted_week: null })}>Clear settlement week</button>}</div>
             <div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count.toLocaleString("en-US")} records in this view</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div>
               <div className="toolbar-tools"><SearchInput key={urlQuery} query={urlQuery} onDebouncedQuery={value => updateUrl({ q: value || null }, "replace")} />
-                <select onFocus={() => { if (!clients.length) void getJson<{ items: ClientRow[] }>("/api/clients").then(value => setClients(value.items)); }} className="select" aria-label="Filter by client" value={selectedClient} onChange={event => updateUrl({ client_id: event.target.value || null })}><option value="">All clients</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
+                <div className="client-combobox"><input className="search" role="combobox" aria-autocomplete="list" aria-expanded={clientOptionsOpen} aria-controls="client-options" aria-label="Search clients" placeholder={selectedClient ? "Client filter active · search to change" : "All clients · search"} value={clientSearch} onFocus={() => setClientOptionsOpen(true)} onChange={event => { setClientSearch(event.target.value); setClientOptionsOpen(true); }} onKeyDown={event => { if (event.key === "Escape") setClientOptionsOpen(false); if (event.key === "ArrowDown") { event.preventDefault(); document.querySelector<HTMLButtonElement>("#client-options button")?.focus(); } }} />{clientOptionsOpen && <div id="client-options" role="listbox"><button role="option" aria-selected={!selectedClient} onClick={() => { updateUrl({ client_id: null }); setClientSearch(""); setClientOptionsOpen(false); }}>All clients</button>{clients.map(client => <button role="option" aria-selected={selectedClient === client.id} key={client.id} onKeyDown={event => { if (event.key === "ArrowDown") (event.currentTarget.nextElementSibling as HTMLElement)?.focus(); if (event.key === "ArrowUp") (event.currentTarget.previousElementSibling as HTMLElement)?.focus(); if (event.key === "Escape") setClientOptionsOpen(false); }} onClick={() => { updateUrl({ client_id: client.id }); setClientSearch(client.name); setClientOptionsOpen(false); }}>{client.name}</button>)}</div>}</div>
                 <select className="select" aria-label="Sort invoices" value={`${currentSort}:${currentDirection}`} onChange={event => { const [sort, direction] = event.target.value.split(":"); updateUrl({ sort, direction }); }}>
-                  <option value="action:asc">Action queue</option><option value="expected_cash:desc">Expected cash gain</option><option value="p14:desc">Paid in 14d · high to low</option><option value="p14:asc">Paid in 14d · low to high</option><option value="due:asc">Due date · earliest</option><option value="balance:desc">Balance · high to low</option><option value="client:asc">Client · A to Z</option>
+                  <option value="action:asc">Action queue · expected gain rank</option><option value="predicted:asc">Predicted date · earliest</option><option value="drift:asc">Client drift state</option><option value="expected_cash:desc">Expected cash gain</option><option value="p14:desc">Paid in 14d · high to low</option><option value="p14:asc">Paid in 14d · low to high</option><option value="due:asc">Due date · earliest</option><option value="balance:desc">Balance · high to low</option><option value="client:asc">Client · A to Z</option>
                 </select>
                 <details className="column-chooser"><summary>Columns</summary><div className="column-menu">{columnChoices.map(([id, label]) => <label key={id}><input type="checkbox" checked={visibleColumns.includes(id)} onChange={event => setVisibleColumns(columns => event.target.checked ? [...columns, id] : columns.filter(column => column !== id))}/>{label}</label>)}</div></details>
-                <button className="btn" onClick={() => gridApi.current?.exportDataAsCsv({ fileName: "late-payer-current-page.csv" })}>Export CSV</button>
+                <a className="btn" href={`/api/exports/invoices.csv?${searchKey}`}>Export all filtered rows</a>
               </div>
             </div>
             <nav className="view-tabs" aria-label="Invoice views">{viewTabs.map(([key, label]) => <button className={currentView === key && !actionOnly && !driftingOnly ? "active" : ""} key={key} onClick={() => selectView(key)}>{label}<span>{data.view_counts[key] || 0}</span></button>)}</nav>
             {actionOnly && <div className="filter-note">Showing only today&apos;s pending proposed reminders. <button onClick={() => updateUrl({ action_only: null })}>Clear</button></div>}
             {driftingOnly && <div className="filter-note">Showing invoices for clients with a timing signal. <button onClick={() => updateUrl({ drifting_only: null })}>Clear</button></div>}
             <div className="grid-wrap">{rowData.length ? <AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} defaultColDef={{ sortable: false, filter: false, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={event => { gridApi.current = event.api; }} /> : <div className="empty-box">No invoices match this view and its filters. Change a filter or select another view.</div>}</div>
-            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · open {currency} <strong>{Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
+            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · not converted · open {currency} <strong>{Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
               <div className="pager"><label>Rows <select className="select" aria-label="Rows per page" value={pageSize} onChange={event => updateUrl({ page_size: event.target.value })}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><span>Page {currentPage} of {pageCount}</span><button className="btn" disabled={currentPage <= 1} onClick={() => updateUrl({ page: String(currentPage - 1) }, "push", false)}>Previous</button><button className="btn" disabled={currentPage >= pageCount} onClick={() => updateUrl({ page: String(currentPage + 1) }, "push", false)}>Next</button></div>
             </div>
           </section>

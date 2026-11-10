@@ -18,6 +18,8 @@ def refresh(db: Session, client_ids: set[str] | None = None, as_of=None):
     try:
         sources = {row.source for row in rows if client_ids is None or row.client_id in client_ids}
         activity = {source: _activity_for_source(db, source) for source in sources}
+        for source, probabilities in activity.items():
+            db.merge(ReadModel(key=f"activity:{source}", as_of=as_of or _today(db, source), version="1", payload=probabilities))
         clients = {row.client_id: row.client for row in rows if client_ids is None or row.client_id in client_ids}
         for client in clients.values():
             day = as_of or _today(db, client.source)
@@ -30,6 +32,7 @@ def refresh(db: Session, client_ids: set[str] | None = None, as_of=None):
             payload = forecast_invoice(db, row, today=day)
             db.merge(ReadModel(key=f"forecast:{row.id}", as_of=day, version=str(row.material_version), payload=payload))
         db.flush()
+        db.info["projection_was_refreshed"] = True
     finally:
         db.info.pop("precomputing", None)
         db.info.pop(PORTFOLIO_CONTEXT_KEY, None)

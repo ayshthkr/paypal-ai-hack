@@ -225,3 +225,11 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
 .skeleton-card { height: 110px; }
 .skeleton-grid { height: 400px; margin-top: 24px; }
 @media (prefers-reduced-motion: reduce) { .skeleton-card, .skeleton-grid { animation: none; } }
+.client-combobox { position: relative; }
+.client-combobox [role=listbox] { position: absolute; z-index: 20; background: white; border: 1px solid #cbd5e1; box-shadow: 0 8px 30px #0002; max-height: 260px; overflow-y: auto; min-width: 250px; }
+.client-combobox [role=option] { display: block; width: 100%; text-align: left; padding: 9px 12px; }
+.client-combobox [role=option]:focus { background: #eff6ff; }
+.filter-toolbar { padding: 12px; flex-wrap: wrap; gap: 12px; align-items: center; }
+.filter-toolbar input, .filter-toolbar select { border: 1px solid #cbd5e1; padding: 6px; border-radius: 6px; }
+.filter-toolbar label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.filter-toolbar select[multiple] { height: 76px; font-size: 12px; }

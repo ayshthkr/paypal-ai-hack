@@ -84,8 +84,10 @@ class Payment(Base):
 
 class InvoiceEvent(Base):
     __tablename__ = "invoice_events"
+    __table_args__ = (Index("ix_invoice_events_invoice_occurred", "invoice_id", "occurred_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    invoice_id: Mapped[str | None] = mapped_column(String(36))
     provider_event_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -204,3 +206,13 @@ class ReadModel(Base):
     version: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class AIAudit(Base):
+    __tablename__ = "ai_audits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    invoice_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    facts: Mapped[dict] = mapped_column(JSON, nullable=False)
+    output: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

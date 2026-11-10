@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 type Decile = { decile: number; count: number; predicted: number; observed: number; calibrated?: number };
 type Evaluation = {
+  policy_simulation?: { label: string; invoice_count: number; eligible_invoice_count: number; simulated_dso_saved_days: number; assumption: string };
   shap_summary?: { feature: string; mean_absolute_shap: number }[];
   interval_calibration?: { method: string; count: number; correction_days: number; caveat: string };
   error_by_currency?: { group: string; count: number; median_absolute_error_days: number; coverage: number }[];
@@ -62,6 +63,7 @@ export default function ModelPerformance() {
     <section className="panel"><div className="panel-title">Calibration and uncertainty</div><p>{data.interval_calibration?.method} · n={data.interval_calibration?.count} · correction {data.interval_calibration?.correction_days} days.</p><p className="fine-print">{data.interval_calibration?.caveat} {data.model_comparison_note}</p><p>Drift recall {percent(data.drift_backtest?.recall)} across {data.drift_backtest?.actual_positive_client_count} actual positive clients · median lead time {data.drift_backtest?.median_lead_time_days ?? "—"} days (n={data.drift_backtest?.lead_time_client_count}).</p></section>
     <section className="performance-grid">{[["Error by currency", data.error_by_currency], ["Conditional error by age bucket", data.error_by_age_bucket]].map(([title, rows]) => <article className="panel" key={String(title)}><div className="panel-title">{String(title)}</div><table className="client-invoice-table"><thead><tr><th>Group</th><th>Invoices</th><th>Median error</th><th>Coverage</th></tr></thead><tbody>{(rows as Evaluation["error_by_currency"])?.map(row => <tr key={row.group}><td>{row.group}</td><td>{row.count}</td><td>{row.median_absolute_error_days == null ? "—" : `${row.median_absolute_error_days.toFixed(1)}d`}</td><td>{percent(row.coverage)}</td></tr>)}</tbody></table></article>)}</section>
     <section className="panel"><div className="panel-title">SHAP summary · validation risk rows</div>{data.shap_summary?.slice(0,10).map(row => <div className="importance-row" key={row.feature}><span>{row.feature.replaceAll("_", " ")}</span><strong>{row.mean_absolute_shap.toFixed(3)}</strong></div>)}</section>
+    {data.policy_simulation && <section className="panel"><div className="panel-title">{data.policy_simulation.label}</div><p>{data.policy_simulation.simulated_dso_saved_days} simulated weighted DSO days saved · {data.policy_simulation.eligible_invoice_count} eligible of {data.policy_simulation.invoice_count} paid invoices.</p><p className="fine-print">{data.policy_simulation.assumption}</p></section>}
     <section className="panel"><div className="panel-title">Evaluation split</div><div className="panel-subtitle">Train through {data.split?.train_cutoff} · validation {data.split?.validation_cohort.join(" to ")} · test {data.split?.test_cohort.join(" to ")} · grouped by {data.split?.unit || "invoice"}.</div><p className="fine-print" style={{ marginTop: 12 }}>{data.caveat}</p></section>
   </>;
 }

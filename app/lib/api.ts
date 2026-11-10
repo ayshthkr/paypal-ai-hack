@@ -4,7 +4,7 @@ export class RequestError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 const reads = new Map<string, { expires: number; promise: Promise<unknown> }>();
-export function clearReads() { reads.clear(); void mutate(() => true); }
+export function clearReads(authChanged = false) { reads.clear(); void mutate(key => authChanged || key !== "/api/auth/me"); }
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const reading = !init?.method || init.method === "GET";
   const cached = reads.get(url);

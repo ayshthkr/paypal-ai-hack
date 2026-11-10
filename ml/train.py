@@ -12,6 +12,7 @@ from lightgbm import LGBMClassifier, Booster
 from sklearn.isotonic import IsotonicRegression
 from sklearn.inspection import permutation_importance
 
+from ml.policy_simulation import replay
 from ml.evaluation import fit_conformal, calibrated_band, grouped_errors, client_bootstrap
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
@@ -434,6 +435,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             "test_cohort": [test_lo.isoformat(), test_hi.isoformat()],
             "test_observation_cutoff": history_cutoff.isoformat(), "unit": "invoice",
         },
+        "policy_simulation": replay(test_subjects),
         "survival_metrics": test_metrics,
         "concordance_confidence_intervals": confidence_intervals,
         "model_comparison_note": "Client-cluster bootstrap intervals quantify uncertainty. Prefer the simpler Cox model when intervals overlap unless calibration or operational value justifies LightGBM.",

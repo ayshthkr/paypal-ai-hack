@@ -72,6 +72,8 @@ def seed(as_of=None) -> dict[str, object]:
                     currency=row["currency"], occurred_at=utc_datetime(occurred), source="demo",
                 ))
         db.commit()
+        from app.services.demo_snapshot import capture
+        capture(db)
         open_rows = [row for row in records if row["outstanding"] > 0 and not row["cancelled"]]
         buckets = {name: sum(row["open_age_bucket"] == name for row in open_rows) for name in OPEN_BUCKET_COUNTS}
         if not 40 <= len(open_rows) <= 60 or len(open_rows) != OPEN_COUNT or buckets != OPEN_BUCKET_COUNTS:

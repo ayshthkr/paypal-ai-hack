@@ -1,4 +1,4 @@
-.PHONY: setup dev web api migrate seed-demo train rescore-demo sync seed-sandbox record-payment check smoke clean
+.PHONY: setup dev web api migrate seed-demo train rescore-demo sync seed-sandbox record-payment check smoke browser-smoke clean
 
 AS_OF ?= today
 
@@ -54,6 +54,9 @@ check:
 
 smoke:
 	PYTHONPATH=.:services/api uv run python scripts/smoke.py
+
+browser-smoke:
+	bun run test:browser
 
 clean:
 	docker compose down -v

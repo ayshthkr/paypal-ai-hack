@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import BoundedSemaphore
 from datetime import date, timedelta
 
 import httpx
@@ -24,7 +26,7 @@ _NUMBER_WORDS = re.compile(
 )
 
 
-def _gemini_json(prompt: str) -> dict | None:
+def _gemini_json_request(prompt: str) -> dict | None:
     key = get_settings().gemini_api_key
     if not key:
         return None
@@ -43,7 +45,7 @@ def _gemini_json(prompt: str) -> dict | None:
             GEMINI_URL,
             headers={"x-goog-api-key": key},
             json=request_body,
-            timeout=httpx.Timeout(6.0, connect=2.0),
+            timeout=httpx.Timeout(3.0, connect=1.0),
         )
         response.raise_for_status()
         parts = response.json()["candidates"][0]["content"]["parts"]
@@ -167,3 +169,22 @@ def extract_promised_date(reply: str, today: date) -> date | None:
                 return None
         return parsed
     return None
+
+
+_AI_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="grounded-ai")
+_AI_SLOTS = BoundedSemaphore(2)
+
+
+def _gemini_json(prompt: str) -> dict | None:
+    if not get_settings().gemini_api_key or not _AI_SLOTS.acquire(blocking=False):
+        return None
+    def run():
+        try:
+            return _gemini_json_request(prompt)
+        finally:
+            _AI_SLOTS.release()
+    future = _AI_EXECUTOR.submit(run)
+    try:
+        return future.result(timeout=3.0)
+    except TimeoutError:
+        return None

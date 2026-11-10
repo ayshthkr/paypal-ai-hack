@@ -14,3 +14,5 @@ coverage/
 .env.render
 .env.render.*
 !.env.render.example
+playwright-report/
+test-results/

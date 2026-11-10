@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { requestJson, RequestError, clearReads } from "../../lib/api";
 import { useEffect, useState } from "react";
 
 type DelayInvoice = {
@@ -23,17 +25,8 @@ type WhatIf = {
   with_partial_payment: { payment_term_type: string; partial_payment_allowed: boolean; p50: { date: string; days: number } | null; probabilities: Record<string, number>; limited_history: boolean };
 };
 
-class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
-}
-
-async function getFacts(id: string): Promise<ClientFacts> {
-  const response = await fetch(`/api/facts/clients/${encodeURIComponent(id)}`, { cache: "no-store", credentials: "same-origin" });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(value.detail || `Request failed (${response.status})`, response.status);
-  return value as ClientFacts;
-}
+const ApiError = RequestError;
+const getFacts = (id: string) => requestJson<ClientFacts>(`/api/facts/clients/${encodeURIComponent(id)}`);
 
 function formatDate(value: string | null) {
   if (!value) return "—";
@@ -45,6 +38,11 @@ function money(currency: string, value: number | string) {
 }
 
 export default function ClientDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const statusFilter = searchParams.get("status") || "all";
+  const setFilter = (key: string, value: string) => { const params = new URLSearchParams(searchParams.toString()); params.set(key, value); if (key !== "page") params.set("page", "1"); router.replace(`?${params.toString()}`, { scroll: false }); };
   const [data, setData] = useState<ClientFacts | null>(null);
   const [error, setError] = useState("");
   const [notFound, setNotFound] = useState(false);
@@ -68,7 +66,7 @@ export default function ClientDetail({ id }: { id: string }) {
   }, [id, reload]);
 
   if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
-  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => setReload(value => value + 1)}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
+  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => { clearReads(); setReload(value => value + 1); }}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
 
   const balances = data.invoices.reduce<Record<string, number>>((totals, invoice) => {
     if (!new Set(["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"]).has(invoice.status) && Number(invoice.outstanding) > 0) {
@@ -93,13 +91,17 @@ export default function ClientDetail({ id }: { id: string }) {
     finally { setWhatIfLoading(false); }
   };
 
+  const filteredInvoices = data.invoices.filter(invoice => statusFilter === "all" || (statusFilter === "open" ? Number(invoice.outstanding) > 0 && !["CANCELLED", "VOIDED"].includes(invoice.status) : invoice.status === statusFilter));
+  const pageCount = Math.max(1, Math.ceil(filteredInvoices.length/25));
+  const pageInvoices = filteredInvoices.slice((page-1)*25, page*25);
   const forecastDate = (value: WhatIf["baseline"]["p50"]) => value ? formatDate(value.date) : "Beyond 180 days";
 
   return <div className="app-shell">
-    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link></div></header>
+    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href={`/?client_id=${encodeURIComponent(id)}&view=all`}>← Client portfolio</Link></div></header>
     <main className="main-wrap">
       {data.client.source === "demo" && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Invoice and payment history is generated for the receivables demo.</span></div>}
       <div className="heading-row"><div><div className="eyebrow">Client detail · {data.client.source === "demo" ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.client.name}</h1><p className="subheading">{data.history.invoice_count} invoices · {data.history.settled_invoice_count} fully settled · as of {formatDate(data.as_of)}</p></div><span className="status-pill">{data.drift.signal.replaceAll("_", " ")}</span></div>
+      {data.history.settled_invoice_count < 5 && <div className="delivery-note">Limited history · fewer than 5 settlements; forecasts use pooled priors.</div>}
       <section className="stats-grid">
         <div className="stat-card"><div className="stat-label">Settled invoices</div><div className="stat-value">{data.history.settled_invoice_count}</div><div className="stat-note">{data.history.median_days_late == null ? "No settled delay history yet" : `Median ${data.history.median_days_late} days vs due date`}</div></div>
         <div className="stat-card"><div className="stat-label">Partial-payment history</div><div className="stat-value">{data.history.partial_payment_invoice_count}</div><div className="stat-note">Invoices with multiple payment records</div></div>
@@ -120,8 +122,9 @@ export default function ClientDetail({ id }: { id: string }) {
         {whatIfError && <div className="error-box" role="alert" style={{ marginTop: 12 }}>{whatIfError.includes("unavailable") || whatIfError.includes("502") ? "The API may be waking up. Retry the scenario." : whatIfError} <button className="btn" onClick={() => void runWhatIf()}>Retry</button></div>}
         {whatIf && <><div className="fine-print" style={{ marginTop: 12 }}>Model {whatIf.baseline.limited_history ? "uses a limited-history baseline" : "uses this client’s observed payment history"} · {whatIf.currency} {Number(whatIf.representative_amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} representative amount · as of {formatDate(whatIf.as_of)}</div><div className="what-if-grid">{[["NET 30 · no partial payments", whatIf.baseline], [`${whatIfTerm.replaceAll("_", " ")} · no partial payments`, whatIf.with_terms], [`${whatIfTerm.replaceAll("_", " ")} · partial payments allowed`, whatIf.with_partial_payment]].map(([label, result]) => { const scenario = result as WhatIf["baseline"]; return <article className="what-if-card" key={String(label)}><strong>{String(label)}</strong><span>p50 full settlement</span><b>{forecastDate(scenario.p50)}</b><span>Paid in 14 days</span><b>{Math.round((scenario.probabilities["14d"] || 0) * 100)}%</b></article>; })}</div></>}
       </section>
-      <section className="grid-panel"><div className="grid-toolbar"><div><div className="grid-title">Client invoices <span className="fine-print">{data.invoices.length} records</span></div><div className="fine-print" style={{ marginTop: 5 }}>Forecast and next-action facts are shown per invoice.</div></div></div>
-        {data.invoices.length ? <div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th>Outstanding</th><th>Paid in 14d</th><th>Next action</th></tr></thead><tbody>{data.invoices.map(invoice => <tr key={invoice.id}><td><Link className="table-link" href={`/invoices/${encodeURIComponent(invoice.id)}?view=all&client_id=${encodeURIComponent(data.client.id)}&page=1&page_size=25&sort=action&direction=asc`}>{invoice.invoice_number}</Link></td><td>{formatDate(invoice.issue_date)}</td><td>{formatDate(invoice.due_date)}</td><td><span className={`status-pill ${invoice.status.toLowerCase()}`}>{invoice.status.replaceAll("_", " ")}</span></td><td>{money(invoice.currency, invoice.outstanding)}</td><td>{invoice.forecast ? `${Math.round(invoice.forecast.probabilities["14d"] * 100)}%` : "—"}</td><td>{invoice.decision.action.replaceAll("_", " ")}</td></tr>)}</tbody></table></div> : <div className="empty-box">This client has no invoices.</div>}
+      <section className="grid-panel"><div className="grid-toolbar"><div><label>Invoice status <select aria-label="Client invoice status" value={statusFilter} onChange={event => setFilter("status", event.target.value)}><option value="all">All</option><option value="open">Open</option><option value="PAID">Paid</option><option value="OVERDUE">Overdue</option></select></label><div className="grid-title">Client invoices <span className="fine-print">{filteredInvoices.length} filtered records · all pages</span></div><div className="fine-print" style={{ marginTop: 5 }}>Forecast and next-action facts are shown per invoice.</div></div></div>
+        {data.invoices.length ? <div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th>Outstanding</th><th>Paid in 14d</th><th>Next action</th></tr></thead><tbody>{pageInvoices.map(invoice => <tr key={invoice.id}><td><Link className="table-link" href={`/invoices/${encodeURIComponent(invoice.id)}?view=all&client_id=${encodeURIComponent(data.client.id)}&page=1&page_size=25&sort=action&direction=asc`}>{invoice.invoice_number}</Link></td><td>{formatDate(invoice.issue_date)}</td><td>{formatDate(invoice.due_date)}</td><td><span className={`status-pill ${invoice.status.toLowerCase()}`}>{invoice.status.replaceAll("_", " ")}</span></td><td>{money(invoice.currency, invoice.outstanding)}</td><td>{invoice.forecast ? `${Math.round(invoice.forecast.probabilities["14d"] * 100)}%` : "—"}</td><td>{invoice.decision.action.replaceAll("_", " ")}</td></tr>)}</tbody></table></div> : <div className="empty-box">This client has no invoices.</div>}
+      <div className="grid-footer"><button className="btn" disabled={page <= 1} onClick={() => setFilter("page", String(page-1))}>Previous</button><span>Page {page} of {pageCount}</span><button className="btn" disabled={page >= pageCount} onClick={() => setFilter("page", String(page+1))}>Next</button></div>
       </section>
     </main>
   </div>;

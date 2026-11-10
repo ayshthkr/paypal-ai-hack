@@ -48,3 +48,104 @@ def test_risk_row_balance_does_not_leak_final_settlement():
                "partial_at":None, "partial_amount":0}
     values = _row_features([invoice], invoice, today-timedelta(days=5))
     assert values[FEATURES.index("log_outstanding")] == pytest.approx(__import__('math').log1p(100))
+
+
+def test_pagination_filters_export_and_cache_contracts(api):
+    import csv
+    import io
+    from decimal import Decimal
+    from app.models import Client, Invoice
+    client, Session = api
+    today = date.today()
+    with Session() as db:
+        db.add(Client(id="contract-client", display_name="Contract", source="demo", drift={}))
+        db.flush()
+        for index in range(31):
+            db.add(Invoice(id=f"contract-{index}", invoice_number=f"TEST-{index:03}", client_id="contract-client",
+                issue_date=today-timedelta(days=30), due_date=today+timedelta(days=index-15), total=Decimal(100),
+                paid=Decimal(0), outstanding=Decimal(100), currency="USD", status="SENT", source="demo", material_version=1))
+        db.commit()
+    for size in (0, 1000):
+        assert client.get(f"/invoices?page_size={size}").status_code == 422
+    page = client.get('/portfolio?page_size=25').json()
+    assert page['count'] == 31 and page['page_count'] == 2 and len(page['items']) == 25
+    assert 'curve' not in page['items'][0]['forecast']
+    assert client.get('/invoices?page=999').json()['items'] == []
+    assert client.get('/invoices?q=not-a-match').json()['count'] == 0
+    assert client.get('/invoices/does-not-exist').status_code == 404
+    assert client.get('/facts/clients/does-not-exist').status_code == 404
+    assert client.get('/invoices?statuses=PAID').json()['count'] == 0
+    assert client.get(f'/invoices?due_from={today.isoformat()}').json()['count'] == 16
+    rows = list(csv.reader(io.StringIO(client.get('/exports/invoices.csv').text)))
+    assert len(rows) == 32 and rows[0][-3:] == ['p10','p50','p90']
+    first = client.get('/clients')
+    assert first.headers['cache-control'] == 'private, max-age=30, stale-while-revalidate=120'
+    assert client.get('/clients', headers={'If-None-Match':first.headers['etag']}).status_code == 304
+    detail = client.get('/invoices/contract-0').json()
+    assert 'curve' in detail['forecast']
+    assert client.post('/demo/invoices/contract-0/payment', json={}).status_code == 200
+    assert client.get('/invoices/contract-0').json()['status'] == 'PAID'
+
+
+def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch):
+    from time import perf_counter
+    from scripts import seed_demo
+    from app.services import forecast
+    from app.services.demo_snapshot import restore
+    from app.models import Invoice
+    from app.http_cache import invalidate
+    client, Session = api
+    monkeypatch.setattr(seed_demo, 'SessionLocal', Session)
+    result = seed_demo.seed(date.today())
+    assert result['expected_drifting_clients'] == 8
+    # Projection existence is tested by making every estimator unavailable.
+    load_artifacts = forecast._load_artifacts
+    monkeypatch.setattr(forecast, '_load_artifacts', lambda: (_ for _ in ()).throw(AssertionError('Scoring on a read')))
+    for path in ['/portfolio', '/invoices?view=all', '/clients', '/action-queue', '/facts/clients/demo-client-01']:
+        invalidate()
+        start = perf_counter()
+        response = client.get(path)
+        assert response.status_code == 200, response.text[:200]
+        assert perf_counter()-start < 2, path
+    invoice_id = client.get('/invoices').json()['items'][0]['id']
+    invalidate()
+    start = perf_counter()
+    assert client.get(f'/invoices/{invoice_id}').status_code == 200
+    assert perf_counter()-start < .5
+    monkeypatch.setattr(forecast, '_load_artifacts', load_artifacts)
+    with Session() as db:
+        row = db.get(Invoice, invoice_id)
+        original_balance = row.outstanding
+        row.outstanding = 0
+        row.status = 'PAID'
+        db.commit()
+    with Session() as db:
+        start = perf_counter()
+        restored = restore(db, date.today())
+        assert perf_counter()-start < 5
+        assert restored['open_count'] == 50
+    with Session() as db:
+        assert db.get(Invoice, invoice_id).outstanding == original_balance
+
+
+def test_skip_undo_and_draft_persistence(api):
+    from decimal import Decimal
+    from app.models import Client, Invoice, Recommendation
+    client, Session = api
+    today = date.today()
+    with Session() as db:
+        db.add(Client(id='draft-owner',display_name='Draft owner',source='demo',drift={}))
+        db.flush()
+        db.add(Invoice(id='draft-invoice',invoice_number='DRAFT-1',client_id='draft-owner',issue_date=today-timedelta(days=40),
+            due_date=today-timedelta(days=10),total=Decimal(100),paid=Decimal(0),outstanding=Decimal(100),currency='USD',status='OVERDUE',source='demo',material_version=1))
+        db.flush()
+        db.add(Recommendation(id='draft-rec',invoice_id='draft-invoice',action='friendly',tone='friendly',reason='Review',
+            draft_text='Original draft',edited_text='Original draft',invoice_version=1,state='proposed'))
+        db.commit()
+    assert client.post('/recommendations/draft-rec/draft',json={'text':'Saved human edit'}).status_code == 200
+    assert client.post('/recommendations/draft-rec/skip').status_code == 200
+    assert client.post('/recommendations/draft-rec/undo-skip').status_code == 200
+    with Session() as db:
+        row = db.get(Recommendation,'draft-rec')
+        assert row.state == 'proposed' and row.edited_text == 'Saved human edit'
+        assert db.get(Invoice,'draft-invoice').reminder_step == 0

@@ -39,6 +39,8 @@ def rescore_and_report() -> dict:
         bucket_counts = Counter(_age_bucket((row.due_date - as_of).days) for row in open_invoices)
         forecasts = [forecast_invoice(db, row, today=as_of, persist=True) for row in open_invoices]
         db.commit()
+        from app.services.demo_snapshot import capture
+        capture(db)
 
         synthetic_records = generate_records(observation_cutoff=as_of)
         by_client: dict[str, list[dict]] = {}

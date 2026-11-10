@@ -4104,5 +4104,15 @@
     "converged": true,
     "iterations": 21
   },
-  "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy."
+  "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy.",
+  "policy_simulation": {
+    "label": "Simulation \u00b7 assumed effects, not observed uplift",
+    "invoice_count": 300,
+    "eligible_invoice_count": 213,
+    "simulated_accelerated_count": 22,
+    "no_reminder_weighted_dso_days": 36.06,
+    "policy_weighted_dso_days": 35.73,
+    "simulated_dso_saved_days": 0.33,
+    "assumption": "At due+3, eligible friendly/firm reminders have a 10% chance of advancing settlement by up to five days. No causal effect is estimated from synthetic outcomes."
+  }
 }
