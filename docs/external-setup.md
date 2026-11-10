@@ -34,7 +34,8 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 - [x] Render GitHub connection and free Blueprint from `render.yaml` are configured. The API is at `https://latepayer-api.onrender.com`; Postgres is configured.
 - [x] API environment contains a generated `SESSION_SECRET`, generated operator username/password, Sandbox credentials, the controlled-recipient allowlist, and the registered webhook ID. The ignored local `.env.render` holds the generated operator login (mode `0600`). Keep `PAYPAL_MODE=sandbox` for acceptance.
 - [x] Confirm the API `/ready` endpoint returns HTTP 200 with its database, operator, Sandbox credentials, model artifact, and webhook ID configured; the web root returns HTTP 200.
-- [ ] Deploy the first-boot synthetic fixture loader, then complete the hosted journey: demo invoice → forecast → edit reminder → operator login → approve/send → Sandbox buyer payment → refreshed status.
+- [x] Deploy the first-boot-only synthetic fixture loader. Hosted dashboard verified with 400 invoice records, LightGBM forecasts, and client drift; simulated actions are labeled and do not call PayPal.
+- [ ] Complete the operator-authenticated hosted journey and the Sandbox buyer payment/webhook-delivery check after PayPal grants the missing Invoicing API scope.
 
 ## AG Grid
 
@@ -43,4 +44,4 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 ## Not configured in this workspace
 
 - [ ] PayPal Sandbox Invoicing API scope is still denied despite the app feature being enabled; the end-to-end Sandbox invoice/payment and webhook delivery run is pending.
-- [ ] Deploy the first-boot synthetic fixture loader and complete the hosted browser journey.
+- [ ] Complete the PayPal Sandbox invoice/payment/webhook journey after Developer Support resolves the missing Invoicing API scope.
