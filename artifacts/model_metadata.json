@@ -41,19 +41,19 @@
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-10T15:54:43.867702+00:00",
+  "trained_at": "2026-11-10T16:26:02.929567+00:00",
   "as_of_date": "2026-11-10",
   "history_cutoff": "2026-11-10",
   "training_date_range": [
-    "2023-11-28",
+    "2023-11-13",
     "2025-11-15"
   ],
   "training_cutoff": "2025-11-15",
-  "train_rows": 34103,
-  "train_event_rows": 1303,
-  "train_invoices": 1374,
-  "validation_invoices": 445,
-  "validation_event_count": 445,
+  "train_rows": 30612,
+  "train_event_rows": 1295,
+  "train_invoices": 1349,
+  "validation_invoices": 446,
+  "validation_event_count": 446,
   "validation_horizons": [
     7,
     14,
@@ -61,8 +61,8 @@
     60,
     90
   ],
-  "validation_ibs_lightgbm": 0.016561472185464457,
-  "validation_ibs_km": 0.07058129714882137,
+  "validation_ibs_lightgbm": 0.009570403102259251,
+  "validation_ibs_km": 0.06943011843157512,
   "active_model": "lightgbm",
   "validation_cohort": [
     "2025-11-16",
@@ -74,8 +74,8 @@
     "2026-11-10"
   ],
   "test_observation_cutoff": "2026-11-10",
-  "test_invoices": 399,
-  "test_event_count": 349,
+  "test_invoices": 351,
+  "test_event_count": 301,
   "test_horizons": [
     7,
     14,
@@ -84,13 +84,13 @@
     90,
     120
   ],
-  "test_integrated_brier_lightgbm": 0.033131800525420224,
-  "test_integrated_brier_km": 0.07412091139061541,
-  "test_uno_concordance_lightgbm": 0.8641062977018568,
+  "test_integrated_brier_lightgbm": 0.027289390480540538,
+  "test_integrated_brier_km": 0.0744496463810182,
+  "test_uno_concordance_lightgbm": 0.8690913812158867,
   "test_uno_concordance_km": 0.5,
-  "test_uno_concordance_cox": 0.8145391135096699,
-  "test_paid_only_date_mae_days": 4.641833810888252,
-  "test_paid_only_invoice_count": 349,
-  "test_p10_p90_coverage": 0.8653295128939829,
+  "test_uno_concordance_cox": 0.8578943578291639,
+  "test_paid_only_date_mae_days": 2.4053156146179404,
+  "test_paid_only_invoice_count": 301,
+  "test_p10_p90_coverage": 0.9269102990033222,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices."
 }

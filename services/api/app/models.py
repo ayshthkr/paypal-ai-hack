@@ -53,6 +53,7 @@ class Invoice(Base):
     partial_payment_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     payment_term_type: Mapped[str | None] = mapped_column(String(32))
     reminder_events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    reminder_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     provider_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     material_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -117,6 +118,7 @@ class Recommendation(Base):
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
     edited_text: Mapped[str] = mapped_column(Text, nullable=False)
     invoice_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_step: Mapped[int | None] = mapped_column(Integer)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed", index=True)
     approved_hash: Mapped[str | None] = mapped_column(String(64))
     approved_text: Mapped[str | None] = mapped_column(Text)
@@ -139,3 +141,19 @@ class ActionAttempt(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     recommendation: Mapped[Recommendation] = relationship(back_populates="attempts")
+
+
+class PolicyDecisionLog(Base):
+    __tablename__ = "policy_decision_logs"
+    __table_args__ = (UniqueConstraint("fingerprint"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), index=True)
+    decision_date: Mapped[date] = mapped_column(Date, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    features: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    chosen_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    alternatives: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    assigned_holdback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    outcome: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)

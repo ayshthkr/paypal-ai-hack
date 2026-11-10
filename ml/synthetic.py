@@ -31,6 +31,9 @@ CHURNED_CLIENT_INDEXES = {2, 16, 43}
 OPEN_BUCKET_COUNTS = {"not_due": 20, "late_1_30": 18, "late_31_90": 7, "late_90_plus": 5}
 OPEN_COUNT = sum(OPEN_BUCKET_COUNTS.values())
 PAYMENT_TERMS = (("DUE_ON_RECEIPT", 0), ("NET_15", 15), ("NET_30", 30))
+HISTORY_SETTLEMENT_BUFFER_DAYS = {
+    "prompt": 35, "due_date": 35, "chronic_late": 45, "deteriorating": 100, "erratic": 65,
+}
 
 
 def resolve_as_of(value: str | date | None = None) -> date:
@@ -84,8 +87,8 @@ def _settlement_delay(profile: str, index: int, rng: random.Random) -> int:
     if profile == "chronic_late":
         return 10 + rng.randint(-2, 2)
     if profile == "deteriorating":
-        return min(70, max(0, int(index * 1.6 + rng.gauss(1, 3))))
-    return rng.randint(-8, 42)
+        return min(70, max(0, int(index * 3.1 + rng.gauss(1, 3))))
+    return rng.randint(-2, 20)
 
 
 def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -> list[dict]:
@@ -116,9 +119,10 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
         cadence = client["cadence_days"]
         churned = client["churned"]
         history_start = cutoff - timedelta(days=rng.randint(730, 1095))
+        settlement_buffer = HISTORY_SETTLEMENT_BUFFER_DAYS[profile]
         if churned:
             stop_date = cutoff - timedelta(days=rng.randint(90, 180))
-            final_issue = min(stop_date, cutoff - timedelta(days=90))
+            final_issue = min(stop_date, cutoff - timedelta(days=max(90, settlement_buffer)))
             opens: list[tuple[str, int]] = []
         else:
             opens = open_assignments[c_index]
@@ -143,10 +147,15 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
                 open_issue_dates.append((issue, bucket, lateness, term_type, terms))
             open_issue_dates.sort(key=lambda item: item[0])
             final_issue = open_issue_dates[0][0]
+        history_end = final_issue
+        if not churned and not any(lateness > 120 for _, lateness in opens):
+            # Preserve recent cadence for active clients while reserving the
+            # final 90-day history as a true next-window drift backtest.
+            history_end = max(history_end, cutoff - timedelta(days=settlement_buffer))
 
         issue_dates: list[tuple[date, str | None, int | None]] = []
         issue = history_start
-        while issue < final_issue:
+        while issue < history_end and issue + timedelta(days=settlement_buffer) <= cutoff:
             issue_dates.append((issue, None, None, None, None))
             step = max(7, cadence + rng.randint(-3, 4))
             issue += timedelta(days=step)

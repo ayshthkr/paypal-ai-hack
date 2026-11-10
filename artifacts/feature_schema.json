@@ -45,7 +45,7 @@
   "history_cutoff": "2026-11-10",
   "training_cutoff": "2025-11-15",
   "training_date_range": [
-    "2023-11-28",
+    "2023-11-13",
     "2025-11-15"
   ],
   "validation_cohort": [
@@ -73,7 +73,7 @@
       "deteriorating",
       "erratic"
     ],
-    "invoice_count": 2219,
+    "invoice_count": 2147,
     "clients": 52,
     "horizon_days": 180
   }

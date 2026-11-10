@@ -16,6 +16,7 @@ from ml.features import (
     GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
 )
 from ml.survival_metrics import fit_cox, predict_cox_survival, time_dependent_auc, uno_concordance
+from ml.drift import backtest_drift
 from ml.synthetic import SEED, generate_records, resolve_as_of
 
 HORIZON = 180
@@ -388,6 +389,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             "test_observation_cutoff": history_cutoff.isoformat(), "unit": "invoice",
         },
         "survival_metrics": test_metrics,
+        "drift_backtest": backtest_drift(records, history_cutoff),
         "calibration_14d": test_calibration_metrics | {"validation_deciles": calibration_deciles},
         "backtest": {
             "paid_invoice_count": len(backtest_rows), "p50_median_absolute_error_days": float(np.median(p50_errors)) if p50_errors else None,

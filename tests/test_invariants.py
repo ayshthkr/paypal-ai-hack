@@ -9,14 +9,15 @@ import pytest
 
 from app import main
 from app.config import Settings
-from app.models import Client, Invoice, InvoiceEvent, Recommendation
+from app.models import Client, Invoice, InvoiceEvent, PolicyDecisionLog, Recommendation
 from app.security import COOKIE_NAME, create_session
-from app.services.drift import client_drift, theil_sen_slope
+from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
 from app.services.policy import decide
 from app.services import sync as sync_service
 from ml.features import features
 from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
+from ml.activity import fit_bgnbd
 from ml.train import _duration, _survival_from_hazards, km_hazards
 
 
@@ -98,23 +99,88 @@ def test_drift_cold_start_and_theil_sen_evidence():
     thin = client_drift([], date.today())
     assert thin["available"] is False
     assert thin["settled_count"] == 0
+    assert thin["signal"] == "insufficient_history"
     today = date.today()
-    records = [{"status": "PAID", "settled_at": today - timedelta(days=(5 - index) * 30),
-                "due_date": today - timedelta(days=(5 - index) * 30 + index * 4)} for index in range(5)]
+    records = [{"status": "PAID", "issue_date": today - timedelta(days=(6 - index) * 30),
+                "settled_at": today - timedelta(days=(6 - index) * 30),
+                "due_date": today - timedelta(days=(6 - index) * 30 + index * 4)} for index in range(6)]
     drift = client_drift(records, today, cadence_days=30)
     assert drift["available"] is True
-    assert drift["signal"] in {"increasing_delay", "recent_late"}
+    assert drift["signal_type"] in {"paying_later", "later_than_usual"}
+    assert drift["signal_strength"] > 0
+
+
+def test_drift_requires_four_settlements_and_uses_client_cadence_for_quiet_signal():
+    today = date(2026, 11, 10)
+    sparse = [{"status": "PAID", "issue_date": today - timedelta(days=30 * index),
+               "settled_at": today - timedelta(days=30 * index),
+               "due_date": today - timedelta(days=30 * index)} for index in range(3)]
+    result = client_drift(sparse, today, cadence_days=30)
+    assert result["available"] is False
+    assert result["signal_type"] == "insufficient_history"
+
+    seven_day_client = [{"status": "PAID", "issue_date": today - timedelta(days=16 + 7 * index),
+                         "settled_at": today - timedelta(days=16 + 7 * index),
+                         "due_date": today - timedelta(days=16 + 7 * index)} for index in range(3)]
+    quiet = client_drift(seven_day_client, today, cadence_days=7, activity_probability=0.2)
+    assert quiet["signal_type"] == "gone_quiet"
+    assert quiet["days_since_last_invoice"] == 16
+
+
+def test_bgnbd_activity_and_drift_backtest_are_bounded_and_compare_recency():
+    rows = generate_records(observation_cutoff=date(2026, 11, 10))
+    by_client: dict[str, list[dict]] = {}
+    for row in rows:
+        by_client.setdefault(row["client_id"], []).append(row)
+    activity = fit_bgnbd({key: [row["issue_date"] for row in values] for key, values in by_client.items()}, date(2026, 11, 10))
+    assert activity["available"] is True
+    assert activity["model"] == "BG/NBD"
+    assert all(0 <= probability <= 1 for probability in activity["probabilities"].values())
+    report = backtest_drift(rows, date(2026, 11, 10))
+    assert report["outcome_horizon_days"] == 90
+    assert report["flagged_client_count"] == report["recency_only_flagged_client_count"]
+    assert report["precision"] is not None
+    assert report["recency_only_precision"] is not None
 
 
 def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():
     today = date.today()
-    invoice = SimpleNamespace(disputed=False, status="SENT", outstanding=Decimal("50.00"), due_date=today + timedelta(days=2))
-    assert decide(invoice, 0.2, today=today)["action"] == "friendly"
-    assert decide(invoice, 0.8, today=today)["action"] == "wait"
-    invoice.due_date = today - timedelta(days=1)
-    assert decide(invoice, None, today=today)["action"] == "firm"
+    invoice = SimpleNamespace(disputed=False, status="SENT", outstanding=Decimal("50.00"),
+                              due_date=today + timedelta(days=2), reminder_step=0, partial_payment_allowed=False)
+    assert decide(invoice, 0.2, today=today, probability_14d=0.2)["action"] == "friendly"
+    assert decide(invoice, 0.8, today=today, probability_14d=0.2)["action"] == "wait"
+    invoice.due_date = today - timedelta(days=10)
+    assert decide(invoice, 0, today=today, probability_14d=0.2)["action"] == "friendly"
+    invoice.reminder_step = 1
+    assert decide(invoice, 0, today=today, probability_14d=0.2)["action"] == "firm"
     invoice.status = "PAID"
     assert decide(invoice, 0.0, today=today)["action"] == "wait"
+
+
+def test_policy_ladder_cooldown_payment_pause_and_cash_gain():
+    today = date(2026, 11, 10)
+    invoice = SimpleNamespace(
+        id="ladder", disputed=False, status="OVERDUE", outstanding=Decimal("3000.00"),
+        due_date=today - timedelta(days=21), reminder_step=2, partial_payment_allowed=False,
+    )
+    partial = decide(invoice, 0, today=today, probability_14d=0.25, has_partial_history=True)
+    assert partial["action"] == "offer_partial_payment"
+    assert partial["probability_if_wait"] == 0.25
+    assert partial["probability_if_sent"] == 0.35
+    assert partial["expected_cash_gain"] == 300
+
+    invoice.due_date = today - timedelta(days=45)
+    invoice.reminder_step = 3
+    call = decide(invoice, 0, today=today, probability_14d=0.25)
+    assert call["action"] == "personal_call"
+
+    recent_reminder = datetime(2026, 11, 7, tzinfo=timezone.utc)
+    cooled = decide(invoice, 0, last_attempt_at=recent_reminder, last_attempt_tone="friendly",
+                    today=today, probability_14d=0.25)
+    assert cooled["action"] == "wait"
+    recent_payment = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+    paid_recently = decide(invoice, 0, today=today, probability_14d=0.25, last_payment_at=recent_payment)
+    assert paid_recently["action"] == "wait"
 
 
 def test_signed_operator_session_rejects_tampering(api):
@@ -149,6 +215,9 @@ def test_public_routes_only_expose_demo_and_demo_payment_partial_then_full(api):
     response = client.get("/invoices")
     assert response.status_code == 200
     assert [row["source"] for row in response.json()["items"]] == ["demo"]
+    assert response.json()["ready_for_review_count"] == 0
+    with Session() as db:
+        assert db.query(PolicyDecisionLog).count() == 1
     assert client.get("/invoices/live-one").status_code == 401
     partial = client.post("/demo/invoices/demo-one/payment", json={"amount": "30.00"})
     assert partial.status_code == 200
@@ -208,8 +277,11 @@ def test_evaluation_api_exposes_survival_metrics_and_feature_importance(api):
     assert "feature" in payload["feature_importance"][0]
 
 
-def test_demo_send_is_idempotent_and_does_not_call_paypal(api):
+def test_demo_send_is_idempotent_and_does_not_call_paypal(api, monkeypatch):
     client, Session = api
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1},
+    })
     with Session() as db:
         owner = Client(id="demo-owner", display_name="Demo", source="demo", drift={})
         db.add(owner)
@@ -225,7 +297,8 @@ def test_demo_send_is_idempotent_and_does_not_call_paypal(api):
     path = f"/demo/recommendations/{recommendation_id}/send"
     first = client.post(path, json={"text": "Approved reminder"})
     second = client.post(path, json={"text": "Approved reminder"})
-    assert first.status_code == 200 and first.json()["simulated"] is True
+    assert first.status_code == 200, first.text
+    assert first.json()["simulated"] is True
     assert second.status_code == 409
 
 

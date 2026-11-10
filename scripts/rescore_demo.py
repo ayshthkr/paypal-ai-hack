@@ -8,6 +8,8 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import DemoState, Invoice
 from app.services.forecast import forecast_invoice
+from app.services.drift import client_drift
+from ml.activity import fit_bgnbd
 from app.services.policy import CLOSED_STATUSES
 from ml.synthetic import OPEN_BUCKET_COUNTS, OPEN_COUNT, generate_records
 
@@ -37,7 +39,19 @@ def rescore_and_report() -> dict:
         db.commit()
 
         synthetic_records = generate_records(observation_cutoff=as_of)
-        drifting_clients = {row["client_id"] for row in synthetic_records if row["profile"] == "deteriorating"}
+        by_client: dict[str, list[dict]] = {}
+        for row in synthetic_records:
+            by_client.setdefault(row["client_id"], []).append(row)
+        activity = fit_bgnbd({key: [row["issue_date"] for row in values if not row["cancelled"]]
+                              for key, values in by_client.items()}, as_of)
+        drift_results = []
+        for values in by_client.values():
+            issued = sorted(row["issue_date"] for row in values)
+            gaps = sorted((issued[index] - issued[index - 1]).days for index in range(1, len(issued)))
+            cadence = float(gaps[len(gaps) // 2]) if gaps else None
+            drift_results.append(client_drift(values, as_of, cadence, activity.get("probabilities", {}).get(values[0]["client_id"])))
+        signal_counts = Counter(row["signal_type"] for row in drift_results)
+        drifting_clients = sum(signal_counts[name] for name in ("paying_later", "later_than_usual"))
         in_horizon = sum(item["quantiles"].get("p50") is not None for item in forecasts)
         share_in_horizon = in_horizon / len(forecasts) if forecasts else 0.0
         invoice_age_days = [(as_of - row.issue_date).days for row in open_invoices]
@@ -47,7 +61,10 @@ def rescore_and_report() -> dict:
             "invoice_count": len(invoices),
             "open_count": len(open_invoices),
             "open_age_buckets": {name: bucket_counts.get(name, 0) for name in OPEN_BUCKET_COUNTS},
-            "drifting_client_count": len(drifting_clients),
+            "drifting_client_count": drifting_clients,
+            "gone_quiet_client_count": signal_counts.get("gone_quiet", 0),
+            "drift_signal_counts": dict(sorted(signal_counts.items())),
+            "activity_model": activity.get("model", "BG/NBD"),
             "forecasts_with_p50_inside_180_days": in_horizon,
             "forecast_inside_horizon_share": round(share_in_horizon, 4),
             "oldest_open_invoice_age_days": max(invoice_age_days, default=0),
@@ -64,8 +81,8 @@ def rescore_and_report() -> dict:
             raise RuntimeError(f"Open invoice count outside target: {len(open_invoices)}")
         if not age_mix_ok:
             raise RuntimeError(f"Open invoice age mix outside target: {dict(bucket_counts)}")
-        if not 3 <= len(drifting_clients) <= 5:
-            raise RuntimeError(f"Synthetic drifting profile count outside target: {len(drifting_clients)}")
+        if not 3 <= drifting_clients <= 5:
+            raise RuntimeError(f"Synthetic paying-later signal count outside target: {drifting_clients}")
         if not 1500 <= len(invoices) <= 3000:
             raise RuntimeError(f"Invoice count outside target: {len(invoices)}")
         if share_in_horizon <= 0.5:

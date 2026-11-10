@@ -3,127 +3,131 @@
   "features": [
     {
       "feature": "days_until_due",
-      "gain": 28207.046430528164
-    },
-    {
-      "feature": "history_late_rate",
-      "gain": 10510.355130791664
-    },
-    {
-      "feature": "delay_std_days",
-      "gain": 5520.167045116425
-    },
-    {
-      "feature": "age_days",
-      "gain": 4156.8417810201645
-    },
-    {
-      "feature": "days_since_last_reminder",
-      "gain": 4136.468054771423
+      "gain": 30867.62119847536
     },
     {
       "feature": "recent_delay_days",
-      "gain": 4088.2176837921143
+      "gain": 10148.10069066286
     },
     {
-      "feature": "other_open_exposure_log",
-      "gain": 1062.9339069128036
+      "feature": "history_late_rate",
+      "gain": 6919.39524435997
     },
     {
-      "feature": "reminder_count",
-      "gain": 1030.899177312851
+      "feature": "days_since_last_reminder",
+      "gain": 5311.207761526108
     },
     {
-      "feature": "amount_vs_client_median_log",
-      "gain": 533.7609194517136
+      "feature": "delay_std_days",
+      "gain": 5240.710062503815
     },
     {
-      "feature": "history_count",
-      "gain": 528.0740329027176
-    },
-    {
-      "feature": "terms_days",
-      "gain": 503.9466403722763
-    },
-    {
-      "feature": "overdue_days",
-      "gain": 492.9574030637741
-    },
-    {
-      "feature": "days_since_viewed",
-      "gain": 428.36265218257904
-    },
-    {
-      "feature": "term_due_on_receipt",
-      "gain": 331.1629943847656
-    },
-    {
-      "feature": "weekday_sin",
-      "gain": 235.2589434981346
-    },
-    {
-      "feature": "issue_month_sin",
-      "gain": 177.27140069007874
-    },
-    {
-      "feature": "weekday_cos",
-      "gain": 170.37382984161377
-    },
-    {
-      "feature": "issue_month_cos",
-      "gain": 164.28312933444977
-    },
-    {
-      "feature": "as_of_month_sin",
-      "gain": 158.0691111087799
-    },
-    {
-      "feature": "as_of_month_cos",
-      "gain": 124.32880008220673
-    },
-    {
-      "feature": "prior_paid_invoice_count",
-      "gain": 103.05737030506134
-    },
-    {
-      "feature": "term_net_15",
-      "gain": 96.50234079360962
-    },
-    {
-      "feature": "currency_is_eur",
-      "gain": 88.11993026733398
-    },
-    {
-      "feature": "days_since_last_partial_payment",
-      "gain": 57.05007064342499
-    },
-    {
-      "feature": "currency_is_usd",
-      "gain": 55.95303010940552
-    },
-    {
-      "feature": "client_open_balance_log",
-      "gain": 53.7956805229187
-    },
-    {
-      "feature": "currency_is_gbp",
-      "gain": 36.436129570007324
-    },
-    {
-      "feature": "overdue_1_7",
-      "gain": 24.085930347442627
-    },
-    {
-      "feature": "partial_share",
-      "gain": 17.83732008934021
+      "feature": "age_days",
+      "gain": 2766.4320751428604
     },
     {
       "feature": "overdue_8_30",
-      "gain": 10.122700214385986
+      "gain": 1173.833984375
+    },
+    {
+      "feature": "other_open_exposure_log",
+      "gain": 656.2479241490364
+    },
+    {
+      "feature": "overdue_days",
+      "gain": 655.16061013937
+    },
+    {
+      "feature": "terms_days",
+      "gain": 588.0835476517677
+    },
+    {
+      "feature": "amount_vs_client_median_log",
+      "gain": 580.8837442994118
+    },
+    {
+      "feature": "history_count",
+      "gain": 494.2934499979019
+    },
+    {
+      "feature": "term_due_on_receipt",
+      "gain": 424.7956337928772
+    },
+    {
+      "feature": "days_since_viewed",
+      "gain": 424.42869198322296
+    },
+    {
+      "feature": "weekday_sin",
+      "gain": 327.95160949230194
+    },
+    {
+      "feature": "issue_month_cos",
+      "gain": 270.8159199953079
+    },
+    {
+      "feature": "weekday_cos",
+      "gain": 178.8230800628662
+    },
+    {
+      "feature": "overdue_1_7",
+      "gain": 174.36761116981506
+    },
+    {
+      "feature": "issue_month_sin",
+      "gain": 139.67545080184937
+    },
+    {
+      "feature": "as_of_month_cos",
+      "gain": 110.56734955310822
+    },
+    {
+      "feature": "as_of_month_sin",
+      "gain": 105.25817012786865
     },
     {
       "feature": "term_net_30",
-      "gain": 7.712279796600342
+      "gain": 100.60700225830078
+    },
+    {
+      "feature": "client_open_balance_log",
+      "gain": 56.91874980926514
+    },
+    {
+      "feature": "days_since_last_partial_payment",
+      "gain": 54.28221035003662
+    },
+    {
+      "feature": "currency_is_gbp",
+      "gain": 47.93504047393799
+    },
+    {
+      "feature": "currency_is_usd",
+      "gain": 46.64938986301422
+    },
+    {
+      "feature": "prior_paid_invoice_count",
+      "gain": 38.75240087509155
+    },
+    {
+      "feature": "currency_is_eur",
+      "gain": 15.28311038017273
+    },
+    {
+      "feature": "reminder_count",
+      "gain": 14.246130228042603
+    },
+    {
+      "feature": "partial_share",
+      "gain": 6.917629957199097
+    },
+    {
+      "feature": "viewed_by_recipient",
+      "gain": 4.9806599617004395
+    },
+    {
+      "feature": "term_net_15",
+      "gain": 4.4963297843933105
     },
     {
       "feature": "log_outstanding",
@@ -139,10 +143,6 @@
     },
     {
       "feature": "history_missing",
-      "gain": 0.0
-    },
-    {
-      "feature": "viewed_by_recipient",
       "gain": 0.0
     }
   ]

@@ -8,15 +8,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-type Drift = { signal: string; available: boolean; settled_count: number; message: string };
+type Drift = { signal: string; signal_type: string; available: boolean; settled_count: number; message: string; severity_score: number; signal_strength: number; recent_median_delay_days?: number | null; usual_delay_days?: number | null; days_since_last_invoice?: number | null; cadence_days?: number | null; activity_probability?: number | null; money_at_risk_by_currency?: Record<string, number> };
 type InvoiceRow = {
   id: string; invoice_number: string; client_name: string; due_date: string; days_to_due: number;
   outstanding: string; currency: string; status: string; source: string;
   forecast: null | { quantiles: Record<string, { days: number; date: string } | null>; probabilities: Record<string, number>; model: string };
   drift: Drift; decision: { action: string; tone: string; reason: string };
 };
-type InvoiceResult = { items: InvoiceRow[]; count: number; currency_totals: Record<string, string>; synthetic_demo: boolean; models: string[] };
-type ClientRow = { drift: Drift };
+type InvoiceResult = { items: InvoiceRow[]; count: number; currency_totals: Record<string, string>; synthetic_demo: boolean; models: string[]; ready_for_review_count: number };
+type ClientRow = { id: string; name: string; drift: Drift };
 
 const modules = [AllCommunityModule];
 const gridTheme = themeQuartz.withParams({ accentColor: "#155eef", backgroundColor: "#ffffff", borderColor: "#e6ebee", fontFamily: "Arial, sans-serif", fontSize: "12px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f5f8fc" });
@@ -94,8 +94,13 @@ export default function HomePage() {
   ], []);
 
   const overdue = data?.items.filter(row => row.days_to_due < 0 && Number(row.outstanding) > 0 && !["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"].includes(row.status)).length || 0;
-  const recommendationCount = data?.items.filter(row => ["friendly", "firm"].includes(row.decision.action)).length || 0;
-  const drifting = clients.filter(client => ["increasing_delay", "recent_late", "invoice_cadence_gap"].includes(client.drift.signal));
+  const recommendationCount = data?.ready_for_review_count || 0;
+  const drifting = clients.filter(client => ["paying_later", "later_than_usual", "gone_quiet"].includes(client.drift.signal_type));
+  const driftCounts = {
+    payingLater: drifting.filter(client => client.drift.signal_type === "paying_later").length,
+    laterThanUsual: drifting.filter(client => client.drift.signal_type === "later_than_usual").length,
+    goneQuiet: drifting.filter(client => client.drift.signal_type === "gone_quiet").length,
+  };
   const rowData = useMemo(() => data?.items || [], [data]);
   const updateVisibleRows = useCallback((event: ModelUpdatedEvent<InvoiceRow> | { api: GridApi<InvoiceRow> }) => {
     const visible: InvoiceRow[] = [];
@@ -123,9 +128,17 @@ export default function HomePage() {
             <div className="stat-card"><div className="stat-label">Open invoices</div><div className="stat-value">{data.items.filter(row => Number(row.outstanding) > 0 && !["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"].includes(row.status)).length}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></div>
             <div className="stat-card"><div className="stat-label">Past due</div><div className="stat-value">{overdue}</div><div className="stat-note">Invoices with a remaining balance</div></div>
             <div className="stat-card"><div className="stat-label">Ready for review</div><div className="stat-value">{recommendationCount}</div><div className="stat-note">Rule-based reminder suggestions</div></div>
-            <div className="stat-card"><div className="stat-label">Drifting clients</div><div className="stat-value">{drifting.length}</div><div className="stat-note">Heuristic delay trend signals</div></div>
+            <div className="stat-card"><div className="stat-label">Client timing signals</div><div className="stat-value">{drifting.length}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet}</div></div>
           </section>
-          <section className="insight-strip"><div className="insight-copy"><span className="insight-icon">↗</span><div><div className="insight-title">Client payment timing</div><div className="insight-text">{drifting.length ? `${drifting.length} client${drifting.length === 1 ? " shows" : "s show"} a recent delay signal. ${drifting.slice(0, 3).map(client => client.drift.message).join(" ")}` : "No client has enough recent evidence to show a worsening delay trend."}</div></div></div><span className="fine-print">Heuristic trend · not a churn score</span></section>
+          <section className="insight-strip"><div className="drift-strip-head"><div><div className="insight-title">Client payment timing</div><div className="insight-text">Signals sorted by money at risk and signal strength.</div></div><span className="fine-print">Activity signal · not a churn score</span></div>
+            {drifting.length ? <div className="drift-signal-grid">{drifting.slice(0, 5).map(client => {
+              const drift = client.drift;
+              const trigger = drift.signal_type === "gone_quiet"
+                ? `${drift.days_since_last_invoice ?? 0} days since last invoice · usual gap ${Math.round(drift.cadence_days || 0)} days`
+                : `${Math.round(drift.recent_median_delay_days || 0)}d recent delay · ${Math.round(drift.usual_delay_days || 0)}d usual`;
+              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong>{client.name}</strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
+            })}</div> : <div className="insight-text">No client has a current delay or cadence signal.</div>}
+          </section>
           <section className="grid-panel"><div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count} records</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div><div className="toolbar-tools"><input className="search" aria-label="Search invoices" placeholder="Search client, invoice, status" value={query} onChange={event => setQuery(event.target.value)} /></div></div>
             <div className="grid-wrap"><AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} quickFilterText={query} defaultColDef={{ sortable: true, filter: true, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={updateVisibleRows} onModelUpdated={updateVisibleRows} /></div>
             <div className="currency-total-row">{Object.entries(visibleTotals).map(([currency, amount]) => <span key={currency}>Filtered open {currency} <strong>{amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>

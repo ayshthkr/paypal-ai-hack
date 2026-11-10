@@ -91,7 +91,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const isDemo = data.source === "demo";
   const p50 = data.forecast?.quantiles.p50;
   const actionUrl = isDemo ? `/api/demo/recommendations/${rec?.id}/send` : `/api/recommendations/${rec?.id}/send`;
-  const canSend = Boolean(rec && ["proposed", "failed"].includes(rec.state) && data.decision.action !== "wait" && (isDemo || authenticated));
+  const canSend = Boolean(rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
 
   return <div className="app-shell">
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
@@ -141,7 +141,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
                 {rec.state === "unknown" && <span className="fine-print">Delivery is uncertain. Sync PayPal and reconcile before trying again.</span>}
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the request. Review and retry is available.</span>}
               </div>
-            </> : <div className="empty-box">No reminder proposed. {data.decision.action === "wait" ? "The current policy says to wait." : "Open this invoice again to refresh its recommendation."}</div>}
+            </> : <div className="empty-box">No reminder proposed. {data.decision.action === "personal_call" ? "Make a personal call and record the outcome." : data.decision.action === "offer_partial_payment" ? "Review a partial-payment option for this client." : data.decision.action === "wait" ? "The current policy says to wait." : "Open this invoice again to refresh its recommendation."}</div>}
             {notice && <div className="action-message" role="status">{notice}</div>}
           </div>
           {rec && <div className="panel"><div className="panel-head"><div><div className="panel-title">Action history</div><div className="panel-subtitle">Dispatch attempts for this recommendation</div></div></div><div className="history-list">{(data.attempts || []).length ? data.attempts?.map((attempt, index) => <div className="history-row" key={`${attempt.started_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{attempt.state}{attempt.provider_reference ? ` · ${attempt.provider_reference}` : ""}</div><div className="history-meta">{new Date(attempt.started_at).toLocaleString()}</div>{attempt.error && <div className="history-meta">{attempt.error}</div>}</div></div>) : <div className="fine-print">No send attempts recorded.</div>}</div></div>}
