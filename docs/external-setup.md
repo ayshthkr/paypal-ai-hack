@@ -15,11 +15,12 @@ PayPal account/KYC and Render account setup are marked done based on your latest
 - [x] New US Sandbox Business merchant and `Late Payer Sandbox` REST app created; corrected Client ID and Secret saved in local `.env`; OAuth verification passed. `PAYPAL_MODE=sandbox`.
 - [x] Add the existing controlled Sandbox Personal buyer email to `PAYPAL_ALLOWED_RECIPIENT_EMAILS` in local `.env`.
 - [x] Existing controlled Sandbox Personal account selected for testing; the email is stored locally in the allowlist, not shown here.
-- [ ] In PayPal Developer, open **Apps & Credentials → Late Payer Sandbox → Features**, enable **Invoicing**, then save. This is an app-level Sandbox permission; the API currently returns HTTP 403 and no invoice was created or sent.
-- [ ] After deploying the API, register `https://<API_HOST>/webhooks/paypal` in that PayPal app for `INVOICING.INVOICE.PAID`, `INVOICING.INVOICE.CANCELLED`, `INVOICING.INVOICE.REFUNDED`, and `INVOICING.INVOICE.SENT`; copy its Webhook ID to `PAYPAL_WEBHOOK_ID`.
-- [ ] Seed/send a controlled USD Sandbox invoice, complete its Sandbox payment, and confirm the webhook delivery and invoice refresh.
+- [x] In PayPal Developer, enable and save **Invoicing** for the `Late Payer Sandbox` app.
+- [ ] Resolve the Sandbox Invoicing API permission: the app toggle is enabled, but a fresh OAuth token omits `https://api.paypal.com/v1/invoicing:*`, and invoice list/create requests return HTTP 403 `NOT_AUTHORIZED`. Ask PayPal Developer Support to enable the Sandbox Invoicing scope/entitlement for this app/account, then retry `make sync` and `make seed-sandbox`.
+- [x] Register `https://latepayer-api.onrender.com/webhooks/paypal` in that app for invoice paid, cancelled, refunded, and sent events; the webhook ID is stored in Render and ignored local `.env.render`.
+- [ ] Seed/send one controlled USD Sandbox invoice, complete its Sandbox payment, and confirm the webhook delivery and invoice refresh after the Invoicing API permission is fixed.
 
-The remaining PayPal items are enabling app-level Invoicing, completing the controlled Sandbox invoice/payment check, and deployed webhook registration—not account verification or KYC. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle.
+The remaining PayPal action is resolving the missing Sandbox API scope, then completing the controlled invoice/payment and webhook-delivery check—not account verification or KYC. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle.
 
 ### PayPal India KYC
 
@@ -30,11 +31,10 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 - [x] Render account setup: done per your note.
 - [x] Code pushed to private GitHub repository `ayshthkr/paypal-ai-hack` on branch `codex/late-payer-v1`.
 - [x] GitHub sign-in completed; Render's GitHub App is restricted to the single private `ayshthkr/paypal-ai-hack` repository.
-- [ ] In the open Render Account Settings page, choose **Git Deployment Credentials → Add credential → GitHub** and finish the authorization. GitHub sign-in is done, but Render still has no deployment credential; the GitHub App installation is already restricted to this one repository.
-- [ ] Deploy the repository Blueprint from `render.yaml`.
-- [ ] In the API service, set a generated `SESSION_SECRET`, operator username/password, corrected Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
-- [ ] Set the API service's `WEB_ORIGIN` to the deployed web URL and `PAYPAL_WEBHOOK_ID` after registering the webhook.
-- [ ] Confirm the API `/ready` endpoint and complete the browser journey: demo invoice → forecast → edit reminder → operator login → approve/send → Sandbox buyer payment → refreshed status.
+- [x] Render GitHub connection and free Blueprint from `render.yaml` are configured. The API is at `https://latepayer-api.onrender.com`; Postgres is configured.
+- [x] API environment contains a generated `SESSION_SECRET`, generated operator username/password, Sandbox credentials, the controlled-recipient allowlist, and the registered webhook ID. The ignored local `.env.render` holds the generated operator login (mode `0600`). Keep `PAYPAL_MODE=sandbox` for acceptance.
+- [x] Confirm the API `/ready` endpoint returns HTTP 200 with its database, operator, Sandbox credentials, model artifact, and webhook ID configured; the web root returns HTTP 200.
+- [ ] Deploy the first-boot synthetic fixture loader, then complete the hosted journey: demo invoice → forecast → edit reminder → operator login → approve/send → Sandbox buyer payment → refreshed status.
 
 ## AG Grid
 
@@ -42,5 +42,5 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 
 ## Not configured in this workspace
 
-- [ ] Render Git deployment credential, service deployment, and hosted environment values are not configured yet.
-- [ ] PayPal app-level Invoicing permission, webhook registration, and a Sandbox delivery remain to be completed.
+- [ ] PayPal Sandbox Invoicing API scope is still denied despite the app feature being enabled; the end-to-end Sandbox invoice/payment and webhook delivery run is pending.
+- [ ] Deploy the first-boot synthetic fixture loader and complete the hosted browser journey.

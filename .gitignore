@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 coverage/
 *.tsbuildinfo
+.env.render
+.env.render.*
+!.env.render.example
