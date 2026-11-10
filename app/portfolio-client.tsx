@@ -6,6 +6,7 @@ import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -34,6 +35,13 @@ type InvoiceResult = {
   synthetic_demo: boolean; models: string[]; ready_for_review_count: number; drifting_client_count: number;
 };
 type ClientRow = { id: string; name: string; drift: Drift };
+type MorningBrief = {
+  as_of: string; week_end: string;
+  expected_cash_this_week: { currency: string; amount: string; invoice_count: number }[];
+  top_candidates: { invoice_id: string; invoice_number: string; client_name: string; currency: string; outstanding: string; action: string; reason: string; expected_cash_gain: number }[];
+  clients_slowing_down: { client_id: string; client_name: string; signal_type: string; message: string; severity_score: number }[];
+};
+type AskResult = { intent: string; answer: string; data: unknown };
 
 const modules = [AllCommunityModule];
 const gridTheme = themeQuartz.withParams({ accentColor: "#155eef", backgroundColor: "#ffffff", borderColor: "#e6ebee", fontFamily: "Arial, sans-serif", fontSize: "12px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f5f8fc" });
@@ -91,6 +99,12 @@ export default function PortfolioClient() {
   const [error, setError] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [brief, setBrief] = useState<MorningBrief | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askResult, setAskResult] = useState<AskResult | null>(null);
+  const [askLoading, setAskLoading] = useState(false);
   const gridApi = useRef<GridApi<InvoiceRow> | null>(null);
   const refreshInFlight = useRef(new Map<string, Promise<void>>());
   const latestQuery = useRef(searchKey);
@@ -159,6 +173,30 @@ export default function PortfolioClient() {
     finally { setBusy(false); }
   };
 
+  const openBrief = async () => {
+    if (briefOpen) { setBriefOpen(false); return; }
+    setBriefOpen(true);
+    if (briefLoading) return;
+    setBriefLoading(true);
+    try { setBrief(await getJson<MorningBrief>("/api/facts/morning-brief")); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load the morning brief."); }
+    finally { setBriefLoading(false); }
+  };
+
+  const ask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!askQuestion.trim()) return;
+    setAskLoading(true); setAskResult(null); setError("");
+    try {
+      const response = await fetch("/api/ask", { method: "POST", cache: "no-store", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: askQuestion }) });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
+      setAskResult(value as AskResult);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Receivables question failed."); }
+    finally { setAskLoading(false); }
+  };
+
   const baseColumns = useMemo<ColDef<InvoiceRow>[]>(() => [
     { colId: "invoice_number", field: "invoice_number", headerName: "Invoice", pinned: "left", minWidth: 140, flex: .8,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={`/invoices/${cell.data?.id}`}>{cell.value}</Link> },
@@ -216,6 +254,17 @@ export default function PortfolioClient() {
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
         {error && <div className="error-box" role="alert">{error}</div>}
+        <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
+          <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>
+          {askResult && <div className="action-message" role="status" style={{ marginTop: 12 }}>{askResult.answer}</div>}
+        </section>
+        <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
+          {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
+            <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>{item.invoice_count} p50 settlement{item.invoice_count === 1 ? "" : "s"}</small></div>) : <div className="empty-inline">No p50 settlements fall this week.</div>}</div>
+            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={`/invoices/${item.invoice_id}`}>{item.invoice_number}</Link><span className="drift-badge">{item.action.replaceAll("_", " ")}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
+            <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${client.signal_type.replaceAll("_", " ")})`).join(" · ") || "none"}</div>
+          </> : null)}
+        </section>
         {loading && !data && <div className="empty-box">Loading invoice portfolio…</div>}
         {data && <>
           <section className="stats-grid">

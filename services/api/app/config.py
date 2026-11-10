@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     reminder_days_before_due: int = 3
     reminder_cooldown_days: int = 7
     friendly_payment_probability_threshold: float = 0.5
+    gemini_api_key: str = ""
     model_path: str = "artifacts/payment_hazard.txt"
     feature_schema_path: str = "artifacts/feature_schema.json"
 

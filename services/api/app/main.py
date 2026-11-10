@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
+import statistics
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -19,7 +21,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Recommendation
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Recommendation, ReplyTriage
+from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice
@@ -51,6 +54,14 @@ class SendInput(BaseModel):
 
 class PaymentInput(BaseModel):
     amount: Decimal | None = None
+
+
+class ReplyInput(BaseModel):
+    reply: str = Field(min_length=1, max_length=4000)
+
+
+class AskInput(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
 
 
 def _today(db: Session | None = None, source: str | None = None) -> date:
@@ -154,6 +165,67 @@ def _client_has_partial_history(db: Session, client_id: str) -> bool:
     return any(count > 1 for _, count in counts)
 
 
+def _client_history_facts(db: Session, client_id: str) -> dict:
+    records = _client_records(db, client_id)
+    settled = [row for row in records if row.get("settled_at")]
+    delays = [(row["settled_at"] - row["due_date"]).days for row in settled]
+    median_amounts: dict[str, float] = {}
+    for currency in {row["currency"] for row in settled}:
+        amounts = sorted(float(row["total"]) for row in settled if row["currency"] == currency)
+        if amounts:
+            median_amounts[currency] = round(float(statistics.median(amounts)), 2)
+    invoice_ids = [row["id"] for row in records]
+    payment_counts = db.execute(select(Payment.invoice_id, func.count(Payment.id)).where(
+        Payment.invoice_id.in_(invoice_ids)
+    ).group_by(Payment.invoice_id)).all() if invoice_ids else []
+    partial_invoice_count = sum(count > 1 for _, count in payment_counts)
+    return {
+        "invoice_count": len(records),
+        "settled_invoice_count": len(settled),
+        "median_days_late": round(float(statistics.median(delays)), 1) if delays else None,
+        "partial_payment_invoice_count": partial_invoice_count,
+        "median_invoice_amount_by_currency": median_amounts,
+    }
+
+
+def _draft_facts(invoice: Invoice, client: Client, forecast: dict | None, drift: dict, action: dict,
+                 payment_url: str | None, history: dict) -> dict:
+    return {
+        "invoice": {
+            "client_name": client.display_name,
+            "invoice_number": invoice.invoice_number,
+            "outstanding": f"{invoice.outstanding:.2f}",
+            "currency": invoice.currency,
+            "due_date": invoice.due_date.isoformat(),
+            "payment_term_type": invoice.payment_term_type,
+            "partial_payment_allowed": invoice.partial_payment_allowed,
+            "payment_url": payment_url,
+        },
+        "tone": action["tone"],
+        "policy_reason": action["reason"],
+        "forecast_reasons": (forecast or {}).get("reasons", [])[:4],
+        "client_signal": {
+            "signal_type": drift.get("signal_type"),
+            "message": drift.get("message"),
+            "usual_delay_days": drift.get("usual_delay_days"),
+            "recent_median_delay_days": drift.get("recent_median_delay_days"),
+        },
+        "client_history": history,
+    }
+
+
+def _why_line(forecast: dict | None, drift: dict) -> str:
+    if drift.get("available") and drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+        message = str(drift.get("message") or "").strip()
+        if message:
+            return message if message.endswith((".", "!", "?")) else f"{message}."
+    reasons = (forecast or {}).get("reasons") or []
+    if reasons:
+        sentence = str(reasons[0]).strip()
+        return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+    return "This forecast uses the portfolio baseline because no invoice-specific driver is available."
+
+
 def _invoice_dict(
     db: Session,
     invoice: Invoice,
@@ -162,6 +234,7 @@ def _invoice_dict(
     activity_scores: dict[str, float] | None = None,
     daily_candidate_ids: set[str] | None = None,
     forecast_cache: dict[str, dict] | None = None,
+    create_recommendation: bool = True,
 ) -> dict:
     client = invoice.client or db.get(Client, invoice.client_id)
     today = _today(db, invoice.source)
@@ -200,14 +273,16 @@ def _invoice_dict(
         action["tone"] = "none"
         action["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
     recommendation = _latest_recommendation(db, invoice.id)
-    if include_detail and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed"}) and action["action"] in {"friendly", "firm"}:
+    if invoice.disputed or (invoice.promised_payment_date and today <= invoice.promised_payment_date):
+        recommendation = None
+    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed"}) and action["action"] in {"friendly", "firm"}:
         provider_url = ((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")
         if not isinstance(provider_url, str) or urlparse(provider_url).scheme != "https" or not urlparse(provider_url).hostname or not urlparse(provider_url).hostname.endswith("paypal.com"):
             provider_url = None
         body = render_message(client.display_name, invoice.outstanding, invoice.currency, invoice.due_date, action["tone"], provider_url)
         recommendation = Recommendation(
             invoice_id=invoice.id, action=action["action"], tone=action["tone"], reason=action["reason"],
-            draft_text=body, edited_text=body, invoice_version=invoice.material_version,
+            draft_text=body, draft_source="template", edited_text=body, invoice_version=invoice.material_version,
             policy_step=action.get("policy_step"),
         )
         db.add(recommendation)
@@ -220,6 +295,7 @@ def _invoice_dict(
         "days_to_due": (invoice.due_date - today).days,
         "total": str(invoice.total), "paid": str(invoice.paid), "outstanding": str(outstanding),
         "currency": invoice.currency, "status": invoice.status, "disputed": invoice.disputed,
+        "promised_payment_date": invoice.promised_payment_date.isoformat() if invoice.promised_payment_date else None,
         "reminder_step": invoice.reminder_step,
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,
@@ -229,6 +305,7 @@ def _invoice_dict(
         "reminder_events": invoice.reminder_events or [],
         "payment_url": (((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")) if invoice.source == "paypal" else None,
         "forecast": forecast, "drift": drift, "decision": action,
+        "why": _why_line(forecast, drift),
         "recommendation": _recommendation_dict(recommendation),
         "days_until_due_nonnegative": currency_due,
     }
@@ -255,6 +332,8 @@ def _recommendation_dict(recommendation: Recommendation | None) -> dict | None:
     return {
         "id": recommendation.id, "action": recommendation.action, "tone": recommendation.tone,
         "reason": recommendation.reason, "draft_text": recommendation.draft_text,
+        "draft_source": recommendation.draft_source,
+        "drafted_at": recommendation.drafted_at.isoformat() if recommendation.drafted_at else None,
         "edited_text": recommendation.edited_text, "invoice_version": recommendation.invoice_version,
         "state": recommendation.state, "approved_text": recommendation.approved_text,
         "approved_at": recommendation.approved_at.isoformat() if recommendation.approved_at else None,
@@ -637,6 +716,82 @@ def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_
     return payload
 
 
+@app.post("/invoices/{invoice_id}/draft")
+def draft_invoice_reminder(invoice_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    invoice = _get_invoice_or_404(db, invoice_id)
+    operator = _authorize_invoice(request, invoice)
+    if invoice.source == "paypal" and not operator:
+        raise HTTPException(status_code=401, detail="Operator login required to draft PayPal reminders.")
+    activity = _activity_for_source(db, invoice.source)
+    summary = _invoice_dict(db, invoice, include_detail=True, activity_scores=activity,
+                            daily_candidate_ids=_top_policy_candidates(db, invoice.source))
+    if summary["decision"]["action"] not in {"friendly", "firm"} or not summary["recommendation"]:
+        raise HTTPException(status_code=409, detail="There is no pending reminder recommendation to draft.")
+    recommendation = db.get(Recommendation, summary["recommendation"]["id"])
+    if not recommendation or recommendation.state != "proposed" or recommendation.invoice_version != invoice.material_version:
+        raise HTTPException(status_code=409, detail="The reminder recommendation is no longer editable.")
+    provider_url = summary.get("payment_url")
+    parsed_url = urlparse(provider_url) if isinstance(provider_url, str) else None
+    if not parsed_url or parsed_url.scheme != "https" or not parsed_url.hostname or not parsed_url.hostname.endswith("paypal.com"):
+        provider_url = None
+    fallback = render_message(invoice.client.display_name, invoice.outstanding, invoice.currency, invoice.due_date,
+                              recommendation.tone, provider_url)
+    facts = _draft_facts(invoice, invoice.client, summary.get("forecast"), summary.get("drift", {}),
+                         summary["decision"], provider_url, _client_history_facts(db, invoice.client_id))
+    body, source = generate_reminder_draft(facts, fallback)
+    recommendation.draft_text = body
+    recommendation.draft_source = source
+    recommendation.drafted_at = datetime.now(timezone.utc)
+    recommendation.edited_text = body
+    db.commit()
+    return {
+        "recommendation": _recommendation_dict(recommendation),
+        "note": "Gemini draft created. Review and edit it before approval." if source == "gemini" else "Gemini was unavailable or its draft failed validation; the grounded template is shown instead.",
+    }
+
+
+@app.post("/invoices/{invoice_id}/reply")
+def triage_invoice_reply(invoice_id: str, payload: ReplyInput, request: Request, db: Session = Depends(get_db)) -> dict:
+    invoice = _get_invoice_or_404(db, invoice_id)
+    operator = _authorize_invoice(request, invoice)
+    reply = payload.reply.strip()
+    if not reply:
+        raise HTTPException(status_code=422, detail="Paste the client's reply first.")
+    if invoice.source == "paypal" and not operator:
+        raise HTTPException(status_code=401, detail="Operator login required to record PayPal client replies.")
+    classification, classifier = classify_reply(reply)
+    promised_date = extract_promised_date(reply, _today(db, invoice.source)) if classification == "promise_to_pay" else None
+    changed = False
+    if classification == "dispute" and not invoice.disputed:
+        invoice.disputed = True
+        invoice.promised_payment_date = None
+        changed = True
+    elif classification == "promise_to_pay" and promised_date != invoice.promised_payment_date:
+        invoice.promised_payment_date = promised_date
+        changed = True
+    if changed:
+        invoice.material_version += 1
+    triage = ReplyTriage(
+        invoice_id=invoice.id, reply_text=reply, classification=classification,
+        promised_payment_date=promised_date, classifier=classifier,
+    )
+    db.add(triage)
+    db.commit()
+    db.refresh(triage)
+    paused = invoice.disputed or bool(promised_date and _today(db, invoice.source) <= promised_date)
+    return {
+        "id": triage.id,
+        "classification": classification,
+        "classifier": classifier,
+        "promised_payment_date": promised_date.isoformat() if promised_date else None,
+        "reminders_paused": paused,
+        "note": "Reminders are paused while this invoice is disputed." if invoice.disputed else (
+            f"Reminders are paused until {promised_date.isoformat()}." if paused and promised_date else
+            "Reply recorded; no reminder pause is active."
+        ),
+    }
+
+
 @app.get("/clients")
 def clients(request: Request, db: Session = Depends(get_db)) -> dict:
     user = session_user(request)
@@ -654,6 +809,200 @@ def clients(request: Request, db: Session = Depends(get_db)) -> dict:
     counts = {name: sum(row["drift"].get("signal_type") == name for row in output)
               for name in ("paying_later", "later_than_usual", "gone_quiet", "insufficient_history")}
     return {"items": output, "signal_counts": counts}
+
+
+def _scoped_invoice_rows(request: Request, db: Session) -> list[Invoice]:
+    query = select(Invoice).options(joinedload(Invoice.client)).order_by(Invoice.due_date.asc())
+    if not session_user(request):
+        query = query.where(Invoice.source == "demo")
+    return list(db.scalars(query).all())
+
+
+def _scoped_clients(request: Request, db: Session) -> list[Client]:
+    query = select(Client).order_by(Client.display_name.asc())
+    if not session_user(request):
+        query = query.where(Client.source == "demo")
+    return list(db.scalars(query).all())
+
+
+@app.get("/facts/invoices/{invoice_id}")
+def invoice_facts(invoice_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    invoice = _get_invoice_or_404(db, invoice_id)
+    _authorize_invoice(request, invoice)
+    activity = _activity_for_source(db, invoice.source)
+    summary = _invoice_dict(db, invoice, drift_cache={}, activity_scores=activity,
+                            daily_candidate_ids=_top_policy_candidates(db, invoice.source), create_recommendation=False)
+    recommendation = summary["recommendation"]
+    if (not recommendation or recommendation["state"] != "proposed"
+            or recommendation["invoice_version"] != invoice.material_version
+            or recommendation["action"] != summary["decision"]["action"]):
+        recommendation = None
+    return {
+        "as_of": _today(db, invoice.source).isoformat(),
+        "invoice": {key: summary[key] for key in (
+            "id", "invoice_number", "client_id", "client_name", "issue_date", "due_date", "days_to_due",
+            "total", "paid", "outstanding", "currency", "status", "disputed", "promised_payment_date",
+            "source", "viewed_at", "partial_payment_allowed", "payment_term_type", "reminder_events",
+        )},
+        "forecast": summary["forecast"],
+        "why": summary["why"],
+        "client": {"id": invoice.client.id, "name": invoice.client.display_name,
+                   "history": _client_history_facts(db, invoice.client_id), "drift": summary["drift"]},
+        "policy": summary["decision"],
+        "recommendation": recommendation,
+    }
+
+
+@app.get("/facts/clients/{client_id}")
+def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    client = db.get(Client, client_id)
+    if not client or (client.source != "demo" and not session_user(request)):
+        raise HTTPException(status_code=404, detail="Client not found.")
+    query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.client_id == client.id).order_by(Invoice.issue_date.desc())
+    rows = list(db.scalars(query).all())
+    history = _client_history_facts(db, client.id)
+    activity = _activity_for_source(db, client.source)
+    drift = _drift_for(db, client, activity.get(client.id))
+    cache: dict[str, dict] = {}
+    candidates = _top_policy_candidates(db, client.source)
+    invoice_facts = []
+    for row in rows:
+        item = _invoice_dict(db, row, drift_cache={client.id: drift}, activity_scores=activity,
+                             daily_candidate_ids=candidates, forecast_cache=cache, create_recommendation=False)
+        invoice_facts.append({key: item[key] for key in (
+            "id", "invoice_number", "issue_date", "due_date", "days_to_due", "total", "paid", "outstanding",
+            "currency", "status", "forecast", "why", "decision",
+        )})
+    return {
+        "as_of": _today(db, client.source).isoformat(),
+        "client": {"id": client.id, "name": client.display_name, "source": client.source},
+        "history": history,
+        "drift": drift,
+        "invoices": invoice_facts,
+    }
+
+
+@app.get("/facts/morning-brief")
+def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
+    rows = _scoped_invoice_rows(request, db)
+    open_rows = [row for row in rows if _payable(row)]
+    candidate_ids = _top_policy_candidates(db, None if session_user(request) else "demo")
+    forecast_cache: dict[str, dict] = {}
+    totals: dict[str, Decimal] = {}
+    invoice_counts: dict[str, int] = {}
+    candidates = []
+    today = _today(db, "demo" if not session_user(request) else None)
+    week_end = today + timedelta(days=6 - today.weekday())
+    for row in open_rows:
+        item = _invoice_dict(db, row, daily_candidate_ids=candidate_ids, forecast_cache=forecast_cache,
+                             create_recommendation=False)
+        p50 = (item.get("forecast") or {}).get("quantiles", {}).get("p50")
+        if p50 and p50.get("date"):
+            settlement = date.fromisoformat(p50["date"])
+            row_today = _today(db, row.source)
+            row_week_end = row_today + timedelta(days=6 - row_today.weekday())
+            if row_today <= settlement <= row_week_end:
+                totals[row.currency] = totals.get(row.currency, Decimal("0")) + Decimal(item["outstanding"])
+                invoice_counts[row.currency] = invoice_counts.get(row.currency, 0) + 1
+        if item["decision"]["action"] in {"friendly", "firm", "offer_partial_payment"}:
+            candidates.append({
+                "invoice_id": row.id, "invoice_number": row.invoice_number, "client_id": row.client_id,
+                "client_name": row.client.display_name, "currency": row.currency,
+                "outstanding": item["outstanding"], "action": item["decision"]["action"],
+                "reason": item["decision"]["reason"], "expected_cash_gain": item["decision"]["expected_cash_gain"],
+                "p14": (item.get("forecast") or {}).get("probabilities", {}).get("14d"),
+            })
+    candidates.sort(key=lambda item: (-float(item["expected_cash_gain"]), item["invoice_number"]))
+    drifting = []
+    for client in _scoped_clients(request, db):
+        signal = _drift_for(db, client)
+        if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+            drifting.append({"client_id": client.id, "client_name": client.display_name, **signal})
+    drifting.sort(key=lambda item: (-float(item.get("severity_score", 0)), item["client_name"].casefold()))
+    return {
+        "as_of": today.isoformat(), "week_end": week_end.isoformat(),
+        "expected_cash_this_week": [
+            {"currency": currency, "amount": str(amount), "invoice_count": invoice_counts[currency]}
+            for currency, amount in sorted(totals.items())
+        ],
+        "top_candidates": candidates[:3],
+        "clients_slowing_down": drifting[:5],
+    }
+
+
+@app.post("/ask")
+def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(get_db)) -> dict:
+    question = " ".join(payload.question.split())
+    lowered = question.casefold()
+    rows = _scoped_invoice_rows(request, db)
+    currency_match = re.search(r"\bin\s+(usd|eur|gbp|cad|aud|dollars?|euros?|pounds?)\b", lowered)
+    currency = None
+    if currency_match:
+        currency = currency_match.group(1).upper()
+        currency = {"DOLLAR": "USD", "DOLLARS": "USD", "EURO": "EUR", "EUROS": "EUR", "POUND": "GBP", "POUNDS": "GBP"}.get(currency, currency)
+
+    if re.search(r"\b(most|highest|largest)\b", lowered) and re.search(r"\b(owe|owes|owed|balance|receivable)\b", lowered) and currency:
+        balances: dict[str, Decimal] = {}
+        counts: dict[str, int] = {}
+        names: dict[str, str] = {}
+        for row in rows:
+            if row.currency == currency and _payable(row):
+                balances[row.client_id] = balances.get(row.client_id, Decimal("0")) + row.outstanding
+                counts[row.client_id] = counts.get(row.client_id, 0) + 1
+                names[row.client_id] = row.client.display_name
+        winner = max(balances, key=balances.get) if balances else None
+        data = None if winner is None else {
+            "client_id": winner, "client_name": names[winner], "currency": currency,
+            "outstanding": str(balances[winner]), "open_invoice_count": counts[winner],
+        }
+        answer = f"{data['client_name']} has the largest open {currency} balance: {currency} {Decimal(data['outstanding']):,.2f} across {data['open_invoice_count']} invoices." if data else f"There are no open {currency} balances."
+        return {"intent": "largest_client_balance", "answer": answer, "data": data}
+
+    if re.search(r"\b(slow|slowing|drift|later than usual|gone quiet)\b", lowered) and re.search(r"\b(client|customer|who|which)\b", lowered):
+        clients_by_id = {client.id: client for client in _scoped_clients(request, db)}
+        signals = []
+        for client in clients_by_id.values():
+            signal = _drift_for(db, client)
+            if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+                signals.append({"client_id": client.id, "client_name": client.display_name,
+                                "signal_type": signal["signal_type"], "message": signal["message"],
+                                "severity_score": signal.get("severity_score", 0)})
+        signals.sort(key=lambda item: (-float(item["severity_score"]), item["client_name"].casefold()))
+        names = ", ".join(item["client_name"] for item in signals[:5])
+        answer = f"Clients with timing signals: {names}." if names else "No client has a current delay or cadence signal."
+        return {"intent": "clients_slowing_down", "answer": answer, "data": signals[:5]}
+
+    if re.search(r"\b(cash|payments?|settlements?)\b", lowered) and re.search(r"\b(this week|next 7 days)\b", lowered):
+        totals: dict[str, Decimal] = {}
+        counts: dict[str, int] = {}
+        for row in rows:
+            if not _payable(row):
+                continue
+            today = _today(db, row.source)
+            forecast = forecast_invoice(db, row, today=today, persist=False)
+            p50 = forecast.get("quantiles", {}).get("p50") or {}
+            if p50.get("date"):
+                expected = date.fromisoformat(p50["date"])
+                if today <= expected <= today + timedelta(days=7):
+                    totals[row.currency] = totals.get(row.currency, Decimal("0")) + row.outstanding
+                    counts[row.currency] = counts.get(row.currency, 0) + 1
+        data = [{"currency": key, "amount": str(value), "invoice_count": counts[key]} for key, value in sorted(totals.items())]
+        answer = "Expected p50 settlement balances in the next week: " + (", ".join(f"{item['currency']} {Decimal(item['amount']):,.2f}" for item in data) if data else "none.")
+        return {"intent": "expected_cash_this_week", "answer": answer, "data": data}
+
+    if "overdue" in lowered:
+        overdue = [row for row in rows if _payable(row) and row.due_date < _today(db, row.source) and (not currency or row.currency == currency)]
+        overdue.sort(key=lambda row: (-row.outstanding, row.due_date))
+        data = [{"invoice_id": row.id, "invoice_number": row.invoice_number, "client_name": row.client.display_name,
+                 "currency": row.currency, "outstanding": str(row.outstanding), "due_date": row.due_date.isoformat()}
+                for row in overdue[:5]]
+        answer = f"There are {len(overdue)} overdue open invoices" + (f" in {currency}" if currency else "") + "."
+        return {"intent": "overdue_invoices", "answer": answer, "data": data}
+
+    return {
+        "intent": "unsupported", "answer": "I can answer largest open balance by currency, clients with timing signals, expected cash this week, or overdue invoices.",
+        "data": None,
+    }
 
 
 @app.post("/sync")

@@ -64,6 +64,10 @@ def decide(
 
     if invoice.disputed or invoice.status in CLOSED_STATUSES or Decimal(str(invoice.outstanding)) <= 0:
         return result(reason="Invoice is closed, disputed, or has no outstanding balance.")
+    promised_payment_date = getattr(invoice, "promised_payment_date", None)
+    if promised_payment_date and today <= promised_payment_date:
+        return result(reason=f"The client promised payment by {promised_payment_date.isoformat()}; wait until that date before another reminder.",
+                      promised_payment_date=promised_payment_date.isoformat())
     if unresolved:
         return result(reason="A previous delivery is unresolved; reconcile it before another reminder.")
     if last_payment_at and (today - last_payment_at.date()).total_seconds() < 48 * 60 * 60:

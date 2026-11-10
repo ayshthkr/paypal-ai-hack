@@ -9,12 +9,13 @@ import pytest
 
 from app import main
 from app.config import Settings
-from app.models import Client, Invoice, InvoiceEvent, PolicyDecisionLog, Recommendation
+from app.models import Client, Invoice, InvoiceEvent, PolicyDecisionLog, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
 from app.services.policy import decide
 from app.services import sync as sync_service
+from app.services import ai as ai_service
 from ml.features import features
 from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
 from ml.activity import fit_bgnbd
@@ -376,6 +377,131 @@ def test_paypal_marked_as_paid_normalizes_to_closed_paid_state():
     assert invoice["status"] == "PAID"
     assert invoice["paid"] == Decimal("1.00")
     assert invoice["outstanding"] == Decimal("0.00")
+
+
+def test_ai_draft_rejects_unverified_numbers_and_composes_transaction_facts(monkeypatch):
+    facts = {
+        "invoice": {"client_name": "Avery", "invoice_number": "LP-204", "outstanding": "125.00",
+                    "currency": "EUR", "due_date": "2026-11-10", "payment_url": None},
+        "tone": "friendly", "policy_reason": "Friendly follow-up", "forecast_reasons": ["Usual pattern"],
+        "client_signal": {}, "client_history": {"settled_invoice_count": 6},
+    }
+    monkeypatch.setattr(ai_service, "_gemini_json", lambda _: {"body": "Please pay by 2026-11-12."})
+    assert ai_service.generate_reminder_body(facts) is None
+
+    monkeypatch.setattr(ai_service, "_gemini_json", lambda _: {"body": "I hope things are going well. Please review this invoice when convenient."})
+    draft, source = ai_service.generate_reminder_draft(facts, "Fallback")
+    assert source == "gemini"
+    assert draft.startswith("Hello Avery,\nI hope things are going well.")
+    assert "EUR 125.00" in draft and "LP-204" in draft and "2026-11-10" in draft
+
+
+def test_reply_classifier_extracts_promise_dates_and_flags_disputes(monkeypatch):
+    monkeypatch.setattr(ai_service, "_gemini_json", lambda _: None)
+    today = date(2026, 11, 10)
+    label, classifier = ai_service.classify_reply("We will pay Friday.")
+    assert (label, classifier) == ("promise_to_pay", "rules")
+    assert ai_service.extract_promised_date("We will pay Friday.", today) == date(2026, 11, 13)
+    assert ai_service.classify_reply("We dispute this invoice.")[0] == "dispute"
+    assert ai_service.classify_reply("Could you send a receipt?")[0] == "question"
+
+
+def test_reply_triage_pauses_promised_invoice_and_dispute(api, monkeypatch):
+    client, Session = api
+    fixed_today = date(2026, 11, 10)
+    monkeypatch.setattr(main, "_today", lambda db=None, source=None: fixed_today)
+    monkeypatch.setattr(main, "classify_reply", lambda reply: ("promise_to_pay", "rules") if "Friday" in reply else ("dispute", "rules"))
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1}, "reasons": [],
+        "quantiles": {"p50": None}, "curve": [], "model": "test", "model_version": "test",
+    })
+    with Session() as db:
+        owner = Client(id="reply-owner", display_name="Reply Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("reply-invoice", owner.id))
+        db.commit()
+
+    promised = client.post("/invoices/reply-invoice/reply", json={"reply": "We will pay Friday."})
+    assert promised.status_code == 200, promised.text
+    assert promised.json()["classification"] == "promise_to_pay"
+    assert promised.json()["promised_payment_date"] == "2026-11-13"
+    assert promised.json()["reminders_paused"] is True
+    detail = client.get("/invoices/reply-invoice").json()
+    assert detail["decision"]["action"] == "wait"
+    assert "promised payment" in detail["decision"]["reason"]
+
+    disputed = client.post("/invoices/reply-invoice/reply", json={"reply": "We dispute this."})
+    assert disputed.status_code == 200
+    assert disputed.json()["classification"] == "dispute"
+    assert disputed.json()["reminders_paused"] is True
+    with Session() as db:
+        invoice = db.get(Invoice, "reply-invoice")
+        assert invoice.disputed is True
+        assert db.query(ReplyTriage).filter_by(invoice_id=invoice.id).count() == 2
+
+
+def test_facts_endpoints_and_receivables_questions_are_structured_and_scoped(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "_today", lambda db=None, source=None: date(2026, 11, 10))
+    monkeypatch.setattr(main, "_top_policy_candidates", lambda db, source=None: set())
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.3, "probabilities": {"14d": 0.4},
+        "quantiles": {"p10": None, "p50": {"date": "2026-11-13", "days": 3}, "p90": None},
+        "reasons": ["Recent client payment history is limited."], "curve": [],
+        "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    with Session() as db:
+        owner = Client(id="facts-owner", display_name="Facts Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("facts-invoice", owner.id))
+        db.commit()
+
+    invoice_facts = client.get("/facts/invoices/facts-invoice")
+    assert invoice_facts.status_code == 200
+    assert invoice_facts.json()["forecast"]["model_version"] == "test"
+    assert invoice_facts.json()["client"]["history"]["invoice_count"] == 1
+    client_facts_response = client.get("/facts/clients/facts-owner")
+    assert client_facts_response.status_code == 200
+    assert client_facts_response.json()["invoices"][0]["invoice_number"] == "LP-facts-invoice"
+    brief = client.get("/facts/morning-brief")
+    assert brief.status_code == 200
+    assert brief.json()["as_of"] == "2026-11-10"
+    answer = client.post("/ask", json={"question": "Who owes me the most in USD?"})
+    assert answer.status_code == 200
+    assert answer.json()["intent"] == "largest_client_balance"
+    assert answer.json()["data"]["client_name"] == "Facts Client"
+    unsupported = client.post("/ask", json={"question": "Tell me what I should do next year."})
+    assert unsupported.json()["intent"] == "unsupported"
+
+
+def test_reminder_draft_endpoint_persists_model_and_fallback_audit(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "_top_policy_candidates", lambda db, source=None: {"draft-invoice"})
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1}, "reasons": ["A grounded forecast reason."],
+        "quantiles": {"p10": None, "p50": None, "p90": None}, "curve": [],
+        "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    monkeypatch.setattr(main, "generate_reminder_draft", lambda facts, fallback: ("AI generated draft", "gemini"))
+    with Session() as db:
+        owner = Client(id="draft-owner", display_name="Draft Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("draft-invoice", owner.id))
+        db.commit()
+    detail = client.get("/invoices/draft-invoice")
+    assert detail.status_code == 200 and detail.json()["recommendation"]["draft_source"] == "template"
+    generated = client.post("/invoices/draft-invoice/draft")
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["recommendation"]["draft_text"] == "AI generated draft"
+    assert generated.json()["recommendation"]["draft_source"] == "gemini"
+    with Session() as db:
+        recommendation = db.query(Recommendation).filter_by(invoice_id="draft-invoice").one()
+        assert recommendation.draft_text == "AI generated draft"
+        assert recommendation.approved_text is None
 
 
 def test_paypal_cancelled_invoice_never_keeps_a_due_balance():

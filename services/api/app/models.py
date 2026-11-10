@@ -48,6 +48,7 @@ class Invoice(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     disputed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    promised_payment_date: Mapped[date | None] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="demo", index=True)
     viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     partial_payment_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -116,6 +117,8 @@ class Recommendation(Base):
     tone: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_source: Mapped[str] = mapped_column(String(24), nullable=False, default="template")
+    drafted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
     edited_text: Mapped[str] = mapped_column(Text, nullable=False)
     invoice_version: Mapped[int] = mapped_column(Integer, nullable=False)
     policy_step: Mapped[int | None] = mapped_column(Integer)
@@ -156,4 +159,16 @@ class PolicyDecisionLog(Base):
     alternatives: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     assigned_holdback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     outcome: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
+class ReplyTriage(Base):
+    __tablename__ = "reply_triages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), index=True)
+    reply_text: Mapped[str] = mapped_column(Text, nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False)
+    promised_payment_date: Mapped[date | None] = mapped_column(Date)
+    classifier: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
