@@ -6,6 +6,7 @@ import os
 import random
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 
 SEED = 20261110
@@ -42,7 +43,8 @@ def resolve_as_of(value: str | date | None = None) -> date:
         return value
     raw = value or os.getenv("AS_OF", "today")
     if raw.casefold() == "today":
-        return date.today()
+        zone = os.getenv("MERCHANT_TIMEZONE")
+        return datetime.now(ZoneInfo(zone)).date() if zone else datetime.now().astimezone().date()
     return date.fromisoformat(raw)
 
 
