@@ -13,6 +13,8 @@ from app import models  # noqa: F401
 
 @pytest.fixture
 def api(tmp_path):
+    from app.http_cache import invalidate
+    invalidate()
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

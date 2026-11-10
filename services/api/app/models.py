@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Index, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -36,6 +36,7 @@ class DemoState(Base):
 
 class Invoice(Base):
     __tablename__ = "invoices"
+    __table_args__ = (Index("ix_invoices_status_due_date", "status", "due_date"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     paypal_id: Mapped[str | None] = mapped_column(String(255), unique=True)
@@ -69,6 +70,7 @@ class Invoice(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+    __table_args__ = (Index("ix_payments_invoice_occurred", "invoice_id", "occurred_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     provider_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
@@ -192,3 +194,13 @@ class SyncRun(Base):
     event_refreshes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     retry_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     errors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+
+class ReadModel(Base):
+    """Durable, versioned projection; no estimators run on a warm read."""
+    __tablename__ = "read_models"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    as_of: Mapped[date] = mapped_column(Date, primary_key=True)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

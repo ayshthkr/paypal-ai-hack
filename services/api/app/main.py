@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -25,14 +26,15 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.http_cache import PrivateReadCache
 from app.telemetry import metrics, timed
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun, ReadModel
 from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
-from app.services.forecast import _as_record, forecast_invoice
+from app.services.forecast import _as_record, forecast_invoice, warm_model
 from app.services.paypal import PayPalAdapter, PayPalError, webhook_invoice_id
 from app.services.policy import DAILY_SUGGESTION_CAP, CLOSED_STATUSES, decide, holdback_assignment, render_message
 from app.services.sync import refresh_paypal_invoice, sync_paypal, upsert_paypal_invoice
@@ -44,7 +46,13 @@ ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELET
 PORTFOLIO_CONTEXT_KEY = "latepayer_portfolio_context"
 _ACTIVITY_CACHE: dict[tuple, dict] = {}
 _ACTIVITY_CACHE_LOCK = Lock()
-app = FastAPI(title="Late Payer", version="1.0.0", description="Invoice payment forecasts and approved PayPal reminders.")
+@asynccontextmanager
+async def lifespan(app):
+    warm_model()
+    yield
+
+
+app = FastAPI(lifespan=lifespan, title="Late Payer", version="1.0.0", description="Invoice payment forecasts and approved PayPal reminders.")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -75,6 +83,9 @@ async def demo_time_travel_context(request: Request, call_next):
     finally:
         metrics.reset(timing_token)
         _REQUEST_DEMO_AS_OF.reset(token)
+
+
+app.add_middleware(PrivateReadCache)
 
 
 class LoginInput(BaseModel):
@@ -218,6 +229,7 @@ def _prepare_portfolio_context(
         }
 
     context = {
+        "read_models": {(row.key, row.as_of): row for row in db.scalars(select(ReadModel).where(ReadModel.as_of.in_(scoring_dates))).all()},
         "invoices": invoice_rows,
         "invoices_by_client": invoices_by_client,
         "payments_by_invoice": payments_by_invoice,
@@ -253,6 +265,12 @@ def _activity_for_source(db: Session, source: str) -> dict[str, float]:
 
 @timed("drift")
 def _drift_for(db: Session, client: Client, activity_probability: float | None = None) -> dict:
+    as_of = _today(db, client.source)
+    if not db.info.get("precomputing"):
+        context = db.info.get(PORTFOLIO_CONTEXT_KEY)
+        cached = context["read_models"].get((f"drift:{client.id}", as_of)) if context else db.get(ReadModel, (f"drift:{client.id}", as_of))
+        if cached:
+            return cached.payload
     cadence = None
     records = _client_records(db, client.id)
     issued = sorted(row["issue_date"] for row in records)
@@ -639,6 +657,9 @@ def _invoice_dict(
             if invoice.source == "demo"
             else "PayPal sends its built-in invoice reminder; the approved editable copy is retained for review/audit and is not transmitted as the reminder body."
         )
+    if not include_detail and summary["forecast"]:
+        summary["forecast"] = {key: value for key, value in summary["forecast"].items()
+                               if key in {"quantiles", "probabilities", "model", "model_version", "limited_history", "display_label", "collection_probability"}}
     return summary
 
 
@@ -907,6 +928,7 @@ def _sort_invoice_items(items: list[dict], sort: str, direction: str) -> None:
     items.sort(key=key, reverse=reverse if sort != "action" else False)
 
 
+@app.get("/portfolio")
 @app.get("/invoices")
 def invoices(
     request: Request,

@@ -873,7 +873,7 @@ def test_forecast_cache_reuses_same_day_prediction_and_invalidates_on_invoice_ch
     model_calls = []
 
     class CountingModel:
-        def predict(self, matrix):
+        def predict(self, matrix, **kwargs):
             model_calls.append(len(matrix))
             return [0.01] * len(matrix)
 

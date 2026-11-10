@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.telemetry import timed
 from app.config import get_settings
-from app.models import Invoice, Payment, Prediction
+from app.models import Invoice, Payment, Prediction, ReadModel
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
 
 HORIZON = 180
@@ -138,6 +138,11 @@ def forecast_invoice(
     scenario: dict | None = None,
 ) -> dict:
     today = today or date.today()
+    if persist and not scenario and not db.info.get("precomputing"):
+        context = db.info.get("latepayer_portfolio_context")
+        snapshot = context["read_models"].get((f"forecast:{invoice.id}", today)) if context else db.get(ReadModel, (f"forecast:{invoice.id}", today))
+        if snapshot and snapshot.version == str(invoice.material_version):
+            return snapshot.payload
     portfolio = db.info.get("latepayer_portfolio_context")
     if portfolio is not None:
         client_invoices = portfolio["invoices_by_client"].get(invoice.client_id, [])
@@ -205,7 +210,7 @@ def forecast_invoice(
             row = features(target, today + timedelta(days=offset), history, records)
             matrix.append([row[name] for name in FEATURES])
         try:
-            hazards = np.asarray(model.predict(np.asarray(matrix, dtype=np.float32)), dtype=float).tolist()
+            hazards = np.asarray(model.predict(np.asarray(matrix, dtype=np.float32), num_threads=1), dtype=float).tolist()
         except (ValueError, RuntimeError):
             use_model = False
     if not existing and not use_model:
@@ -276,3 +281,9 @@ def forecast_invoice(
         "history_count": history_count,
         "limited_history": history_count < 3,
     }
+
+
+def warm_model() -> None:
+    model, *_ = _load_artifacts()
+    if model is not None:
+        model.predict(np.zeros((1, len(FEATURES)), dtype=np.float32), num_threads=1)

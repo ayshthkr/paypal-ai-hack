@@ -48,3 +48,20 @@ def _after_query(conn, cursor, statement, parameters, context, executemany):
     timings = metrics.get()
     if timings is not None:
         timings["db"] = timings.get("db", 0.0) + (perf_counter() - context._latepayer_started) * 1000
+
+# Register transactional projection invalidation after model definitions exist.
+@event.listens_for(Session, "before_flush")
+def _collect_projection_changes(db, context, instances):
+    from app.services.projections import collect_changed_clients
+    collect_changed_clients(db, context, instances)
+
+
+@event.listens_for(Session, "before_commit")
+def _refresh_projections(db):
+    from app.services.projections import update_projections
+    update_projections(db)
+
+
+@event.listens_for(Session, "after_rollback")
+def _clear_projection_changes(db):
+    db.info.pop("projection_clients", None)
