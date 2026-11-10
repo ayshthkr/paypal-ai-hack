@@ -1,0 +1,3728 @@
+{
+  "as_of_date": "2026-11-10",
+  "seed": 20261110,
+  "split": {
+    "train_cutoff": "2025-11-15",
+    "training_date_range": [
+      "2023-11-28",
+      "2025-11-15"
+    ],
+    "validation_cohort": [
+      "2025-11-16",
+      "2026-05-13"
+    ],
+    "validation_observation_cutoff": "2026-11-10",
+    "test_cohort": [
+      "2026-05-14",
+      "2026-11-10"
+    ],
+    "test_observation_cutoff": "2026-11-10",
+    "unit": "invoice"
+  },
+  "survival_metrics": {
+    "lightgbm": {
+      "uno_concordance": 0.8641062977018568,
+      "integrated_brier_score": 0.033131800525420224,
+      "brier_scores": {
+        "7": 0.046060504968967686,
+        "14": 0.08018153420728708,
+        "30": 0.11005671915762943,
+        "60": 0.05387620133651542,
+        "90": 0.02684450626111509,
+        "120": 0.006587133978970438
+      },
+      "time_dependent_auc": {
+        "due_date": 0.8648640101201771,
+        "due_plus_14_days": 0.9527342389411355,
+        "due_plus_30_days": 0.9046361046361047
+      }
+    },
+    "kaplan_meier": {
+      "uno_concordance": 0.5,
+      "integrated_brier_score": 0.07412091139061541,
+      "brier_scores": {
+        "7": 0.1326996787324356,
+        "14": 0.2091972206492185,
+        "30": 0.24939281742068392,
+        "60": 0.09067914310661478,
+        "90": 0.03214597647772793,
+        "120": 0.006587133978970438
+      },
+      "time_dependent_auc": {
+        "due_date": 0.49816571790006325,
+        "due_plus_14_days": 0.5199407871821665,
+        "due_plus_30_days": 0.556047656047656
+      }
+    },
+    "cox": {
+      "uno_concordance": 0.8145391135096699,
+      "integrated_brier_score": 0.04525048929654405,
+      "brier_scores": {
+        "7": 0.07291125060674218,
+        "14": 0.11993358233986193,
+        "30": 0.13996274148966634,
+        "60": 0.06582014880521887,
+        "90": 0.029277781122438864,
+        "120": 0.009147983397622742
+      },
+      "time_dependent_auc": {
+        "due_date": 0.8191334598355471,
+        "due_plus_14_days": 0.888854057819575,
+        "due_plus_30_days": 0.8373996373996374
+      }
+    }
+  },
+  "calibration_14d": {
+    "count": 378,
+    "raw_brier": 0.07887386451056154,
+    "calibrated_brier": 0.07694502737082347,
+    "deciles": [
+      {
+        "decile": 1,
+        "count": 38,
+        "predicted": 0.0015126492914280896,
+        "calibrated": 0.0,
+        "observed": 0.02631578947368421
+      },
+      {
+        "decile": 2,
+        "count": 38,
+        "predicted": 0.0019099931695843832,
+        "calibrated": 0.0,
+        "observed": 0.02631578947368421
+      },
+      {
+        "decile": 3,
+        "count": 38,
+        "predicted": 0.002066095951527271,
+        "calibrated": 0.0,
+        "observed": 0.02631578947368421
+      },
+      {
+        "decile": 4,
+        "count": 38,
+        "predicted": 0.009911501713012227,
+        "calibrated": 0.0,
+        "observed": 0.02631578947368421
+      },
+      {
+        "decile": 5,
+        "count": 38,
+        "predicted": 0.033060220699744174,
+        "calibrated": 0.08,
+        "observed": 0.05263157894736842
+      },
+      {
+        "decile": 6,
+        "count": 38,
+        "predicted": 0.11100849295168654,
+        "calibrated": 0.09523809523809523,
+        "observed": 0.15789473684210525
+      },
+      {
+        "decile": 7,
+        "count": 38,
+        "predicted": 0.2113517259331916,
+        "calibrated": 0.1,
+        "observed": 0.23684210526315788
+      },
+      {
+        "decile": 8,
+        "count": 38,
+        "predicted": 0.4241774983897364,
+        "calibrated": 1.0,
+        "observed": 0.5263157894736842
+      },
+      {
+        "decile": 9,
+        "count": 37,
+        "predicted": 0.9068807748652098,
+        "calibrated": 1.0,
+        "observed": 0.8918918918918919
+      },
+      {
+        "decile": 10,
+        "count": 37,
+        "predicted": 0.9991005109639648,
+        "calibrated": 1.0,
+        "observed": 0.972972972972973
+      }
+    ],
+    "validation_deciles": [
+      {
+        "decile": 1,
+        "count": 45,
+        "predicted": 0.0015125530427675172,
+        "calibrated": 0.0,
+        "observed": 0.0
+      },
+      {
+        "decile": 2,
+        "count": 45,
+        "predicted": 0.0018773663562594578,
+        "calibrated": 0.0,
+        "observed": 0.0
+      },
+      {
+        "decile": 3,
+        "count": 45,
+        "predicted": 0.002032049242923141,
+        "calibrated": 0.0,
+        "observed": 0.0
+      },
+      {
+        "decile": 4,
+        "count": 45,
+        "predicted": 0.007971051660180632,
+        "calibrated": 0.0,
+        "observed": 0.0
+      },
+      {
+        "decile": 5,
+        "count": 45,
+        "predicted": 0.03150368643020404,
+        "calibrated": 0.08,
+        "observed": 0.1111111111111111
+      },
+      {
+        "decile": 6,
+        "count": 44,
+        "predicted": 0.11368810563899066,
+        "calibrated": 0.09523809523809523,
+        "observed": 0.045454545454545456
+      },
+      {
+        "decile": 7,
+        "count": 44,
+        "predicted": 0.20728149689503575,
+        "calibrated": 0.1,
+        "observed": 0.20454545454545456
+      },
+      {
+        "decile": 8,
+        "count": 44,
+        "predicted": 0.4142024248523835,
+        "calibrated": 1.0,
+        "observed": 0.5909090909090909
+      },
+      {
+        "decile": 9,
+        "count": 44,
+        "predicted": 0.9221925824554777,
+        "calibrated": 1.0,
+        "observed": 1.0
+      },
+      {
+        "decile": 10,
+        "count": 44,
+        "predicted": 0.9994325875677269,
+        "calibrated": 1.0,
+        "observed": 1.0
+      }
+    ]
+  },
+  "backtest": {
+    "paid_invoice_count": 349,
+    "p50_median_absolute_error_days": 2.0,
+    "p10_p90_coverage": 0.8653295128939829,
+    "coverage_invoice_count": 349,
+    "target_coverage": 0.8,
+    "invoices": [
+      {
+        "invoice_id": "demo-invoice-01-075",
+        "issue_date": "2026-05-17",
+        "predicted_p50_date": "2026-05-18",
+        "actual_paid_date": "2026-05-18",
+        "p10_date": "2026-05-18",
+        "p90_date": "2026-05-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-076",
+        "issue_date": "2026-05-24",
+        "predicted_p50_date": "2026-06-09",
+        "actual_paid_date": "2026-06-10",
+        "p10_date": "2026-06-07",
+        "p90_date": "2026-06-11",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-077",
+        "issue_date": "2026-06-04",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-06",
+        "p10_date": "2026-07-03",
+        "p90_date": "2026-07-08",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-078",
+        "issue_date": "2026-06-11",
+        "predicted_p50_date": "2026-06-12",
+        "actual_paid_date": "2026-06-13",
+        "p10_date": "2026-06-12",
+        "p90_date": "2026-06-16",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-079",
+        "issue_date": "2026-06-18",
+        "predicted_p50_date": "2026-07-03",
+        "actual_paid_date": "2026-06-30",
+        "p10_date": "2026-07-02",
+        "p90_date": "2026-07-06",
+        "absolute_error_days": 3,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-01-080",
+        "issue_date": "2026-06-28",
+        "predicted_p50_date": "2026-07-29",
+        "actual_paid_date": "2026-07-25",
+        "p10_date": "2026-07-27",
+        "p90_date": "2026-08-01",
+        "absolute_error_days": 4,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-01-081",
+        "issue_date": "2026-07-05",
+        "predicted_p50_date": "2026-07-06",
+        "actual_paid_date": "2026-07-06",
+        "p10_date": "2026-07-06",
+        "p90_date": "2026-07-12",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-082",
+        "issue_date": "2026-07-12",
+        "predicted_p50_date": "2026-07-28",
+        "actual_paid_date": "2026-07-29",
+        "p10_date": "2026-07-25",
+        "p90_date": "2026-07-31",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-084",
+        "issue_date": "2026-07-29",
+        "predicted_p50_date": "2026-07-30",
+        "actual_paid_date": "2026-07-30",
+        "p10_date": "2026-07-30",
+        "p90_date": "2026-08-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-085",
+        "issue_date": "2026-08-05",
+        "predicted_p50_date": "2026-08-21",
+        "actual_paid_date": "2026-08-21",
+        "p10_date": "2026-08-19",
+        "p90_date": "2026-08-25",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-086",
+        "issue_date": "2026-08-12",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-10",
+        "p10_date": "2026-09-10",
+        "p90_date": "2026-09-18",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-087",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-08-22",
+        "actual_paid_date": "2026-08-22",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-08-27",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-088",
+        "issue_date": "2026-08-28",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-14",
+        "p10_date": "2026-09-11",
+        "p90_date": "2026-09-15",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-089",
+        "issue_date": "2026-09-06",
+        "predicted_p50_date": "2026-10-07",
+        "actual_paid_date": "2026-10-06",
+        "p10_date": "2026-10-05",
+        "p90_date": "2026-10-10",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-090",
+        "issue_date": "2026-09-15",
+        "predicted_p50_date": "2026-09-16",
+        "actual_paid_date": "2026-09-16",
+        "p10_date": "2026-09-16",
+        "p90_date": "2026-09-19",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-091",
+        "issue_date": "2026-09-26",
+        "predicted_p50_date": "2026-10-11",
+        "actual_paid_date": "2026-10-11",
+        "p10_date": "2026-10-09",
+        "p90_date": "2026-10-14",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-092",
+        "issue_date": "2026-10-06",
+        "predicted_p50_date": "2026-11-06",
+        "actual_paid_date": "2026-11-04",
+        "p10_date": "2026-11-04",
+        "p90_date": "2026-11-10",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-093",
+        "issue_date": "2026-10-16",
+        "predicted_p50_date": "2026-10-17",
+        "actual_paid_date": "2026-10-17",
+        "p10_date": "2026-10-17",
+        "p90_date": "2026-10-19",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-01-094",
+        "issue_date": "2026-10-23",
+        "predicted_p50_date": "2026-11-08",
+        "actual_paid_date": "2026-11-09",
+        "p10_date": "2026-11-05",
+        "p90_date": "2026-11-09",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-02-026",
+        "issue_date": "2026-05-19",
+        "predicted_p50_date": "2026-05-20",
+        "actual_paid_date": "2026-05-20",
+        "p10_date": "2026-05-20",
+        "p90_date": "2026-05-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-02-027",
+        "issue_date": "2026-06-21",
+        "predicted_p50_date": "2026-07-06",
+        "actual_paid_date": "2026-07-03",
+        "p10_date": "2026-07-04",
+        "p90_date": "2026-07-09",
+        "absolute_error_days": 3,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-02-028",
+        "issue_date": "2026-07-20",
+        "predicted_p50_date": "2026-08-19",
+        "actual_paid_date": "2026-08-20",
+        "p10_date": "2026-08-17",
+        "p90_date": "2026-08-22",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-02-029",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-08-22",
+        "actual_paid_date": "2026-08-22",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-08-26",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-02-030",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-10-01",
+        "actual_paid_date": "2026-10-03",
+        "p10_date": "2026-09-29",
+        "p90_date": "2026-10-04",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-03-026",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-06-15",
+        "actual_paid_date": "2026-06-17",
+        "p10_date": "2026-06-13",
+        "p90_date": "2026-06-17",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-03-027",
+        "issue_date": "2026-06-22",
+        "predicted_p50_date": "2026-07-22",
+        "actual_paid_date": "2026-07-20",
+        "p10_date": "2026-07-20",
+        "p90_date": "2026-07-24",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-028",
+        "issue_date": "2026-05-20",
+        "predicted_p50_date": "2026-06-04",
+        "actual_paid_date": "2026-06-02",
+        "p10_date": "2026-06-02",
+        "p90_date": "2026-06-07",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-029",
+        "issue_date": "2026-06-09",
+        "predicted_p50_date": "2026-07-10",
+        "actual_paid_date": "2026-07-08",
+        "p10_date": "2026-07-08",
+        "p90_date": "2026-07-12",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-030",
+        "issue_date": "2026-07-04",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-05",
+        "p10_date": "2026-07-05",
+        "p90_date": "2026-07-07",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-031",
+        "issue_date": "2026-07-27",
+        "predicted_p50_date": "2026-08-11",
+        "actual_paid_date": "2026-08-12",
+        "p10_date": "2026-08-09",
+        "p90_date": "2026-08-14",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-032",
+        "issue_date": "2026-08-23",
+        "predicted_p50_date": "2026-09-23",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-09-20",
+        "p90_date": "2026-09-25",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-033",
+        "issue_date": "2026-09-19",
+        "predicted_p50_date": "2026-09-20",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-09-20",
+        "p90_date": "2026-09-21",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-034",
+        "issue_date": "2026-10-11",
+        "predicted_p50_date": "2026-10-26",
+        "actual_paid_date": "2026-10-24",
+        "p10_date": "2026-10-24",
+        "p90_date": "2026-10-29",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-04-035",
+        "issue_date": "2026-11-03",
+        "predicted_p50_date": "2026-12-04",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-12-02",
+        "p90_date": "2026-12-07",
+        "absolute_error_days": 24,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-05-024",
+        "issue_date": "2026-05-21",
+        "predicted_p50_date": "2026-06-05",
+        "actual_paid_date": "2026-06-05",
+        "p10_date": "2026-06-03",
+        "p90_date": "2026-06-07",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-05-025",
+        "issue_date": "2026-06-19",
+        "predicted_p50_date": "2026-07-19",
+        "actual_paid_date": "2026-07-21",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-07-21",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-05-026",
+        "issue_date": "2026-07-21",
+        "predicted_p50_date": "2026-07-22",
+        "actual_paid_date": "2026-07-22",
+        "p10_date": "2026-07-22",
+        "p90_date": "2026-07-25",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-050",
+        "issue_date": "2026-05-25",
+        "predicted_p50_date": "2026-06-09",
+        "actual_paid_date": "2026-06-10",
+        "p10_date": "2026-06-07",
+        "p90_date": "2026-06-13",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-051",
+        "issue_date": "2026-06-07",
+        "predicted_p50_date": "2026-07-08",
+        "actual_paid_date": "2026-07-09",
+        "p10_date": "2026-07-06",
+        "p90_date": "2026-07-12",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-052",
+        "issue_date": "2026-06-21",
+        "predicted_p50_date": "2026-06-22",
+        "actual_paid_date": "2026-06-23",
+        "p10_date": "2026-06-22",
+        "p90_date": "2026-06-24",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-053",
+        "issue_date": "2026-07-08",
+        "predicted_p50_date": "2026-07-23",
+        "actual_paid_date": "2026-07-24",
+        "p10_date": "2026-07-21",
+        "p90_date": "2026-07-26",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-054",
+        "issue_date": "2026-07-23",
+        "predicted_p50_date": "2026-08-23",
+        "actual_paid_date": "2026-08-22",
+        "p10_date": "2026-08-20",
+        "p90_date": "2026-08-25",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-055",
+        "issue_date": "2026-08-08",
+        "predicted_p50_date": "2026-08-09",
+        "actual_paid_date": "2026-08-09",
+        "p10_date": "2026-08-09",
+        "p90_date": "2026-08-11",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-056",
+        "issue_date": "2026-08-22",
+        "predicted_p50_date": "2026-09-07",
+        "actual_paid_date": "2026-09-04",
+        "p10_date": "2026-09-04",
+        "p90_date": "2026-09-09",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-057",
+        "issue_date": "2026-09-06",
+        "predicted_p50_date": "2026-10-07",
+        "actual_paid_date": "2026-10-05",
+        "p10_date": "2026-10-04",
+        "p90_date": "2026-10-10",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-058",
+        "issue_date": "2026-09-23",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-09-24",
+        "p10_date": "2026-09-24",
+        "p90_date": "2026-09-27",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-059",
+        "issue_date": "2026-10-12",
+        "predicted_p50_date": "2026-10-27",
+        "actual_paid_date": "2026-10-27",
+        "p10_date": "2026-10-25",
+        "p90_date": "2026-10-30",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-06-060",
+        "issue_date": "2026-10-30",
+        "predicted_p50_date": "2026-11-29",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-28",
+        "p90_date": "2026-12-01",
+        "absolute_error_days": 19,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-07-033",
+        "issue_date": "2026-05-25",
+        "predicted_p50_date": "2026-05-26",
+        "actual_paid_date": "2026-05-26",
+        "p10_date": "2026-05-26",
+        "p90_date": "2026-05-29",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-034",
+        "issue_date": "2026-06-13",
+        "predicted_p50_date": "2026-06-29",
+        "actual_paid_date": "2026-06-30",
+        "p10_date": "2026-06-27",
+        "p90_date": "2026-07-01",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-035",
+        "issue_date": "2026-07-01",
+        "predicted_p50_date": "2026-08-01",
+        "actual_paid_date": "2026-07-30",
+        "p10_date": "2026-07-30",
+        "p90_date": "2026-08-04",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-036",
+        "issue_date": "2026-07-25",
+        "predicted_p50_date": "2026-07-26",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-07-29",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-037",
+        "issue_date": "2026-08-17",
+        "predicted_p50_date": "2026-09-02",
+        "actual_paid_date": "2026-08-29",
+        "p10_date": "2026-08-30",
+        "p90_date": "2026-09-05",
+        "absolute_error_days": 4,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-07-038",
+        "issue_date": "2026-09-10",
+        "predicted_p50_date": "2026-10-11",
+        "actual_paid_date": "2026-10-09",
+        "p10_date": "2026-10-08",
+        "p90_date": "2026-10-14",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-039",
+        "issue_date": "2026-10-04",
+        "predicted_p50_date": "2026-10-05",
+        "actual_paid_date": "2026-10-06",
+        "p10_date": "2026-10-05",
+        "p90_date": "2026-10-10",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-07-040",
+        "issue_date": "2026-10-21",
+        "predicted_p50_date": "2026-11-06",
+        "actual_paid_date": "2026-11-07",
+        "p10_date": "2026-11-03",
+        "p90_date": "2026-11-09",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-08-024",
+        "issue_date": "2026-06-01",
+        "predicted_p50_date": "2026-06-17",
+        "actual_paid_date": "2026-06-15",
+        "p10_date": "2026-06-15",
+        "p90_date": "2026-06-22",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-08-025",
+        "issue_date": "2026-07-06",
+        "predicted_p50_date": "2026-08-06",
+        "actual_paid_date": "2026-08-06",
+        "p10_date": "2026-08-03",
+        "p90_date": "2026-08-09",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-08-026",
+        "issue_date": "2026-08-12",
+        "predicted_p50_date": "2026-08-13",
+        "actual_paid_date": "2026-08-14",
+        "p10_date": "2026-08-13",
+        "p90_date": "2026-08-16",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-08-027",
+        "issue_date": "2026-09-18",
+        "predicted_p50_date": "2026-10-04",
+        "actual_paid_date": "2026-10-03",
+        "p10_date": "2026-10-01",
+        "p90_date": "2026-10-07",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-08-028",
+        "issue_date": "2026-10-25",
+        "predicted_p50_date": "2026-11-25",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-22",
+        "p90_date": "2026-11-28",
+        "absolute_error_days": 15,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-09-022",
+        "issue_date": "2026-05-25",
+        "predicted_p50_date": "2026-05-26",
+        "actual_paid_date": "2026-05-27",
+        "p10_date": "2026-05-26",
+        "p90_date": "2026-05-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-09-023",
+        "issue_date": "2026-06-25",
+        "predicted_p50_date": "2026-07-10",
+        "actual_paid_date": "2026-07-08",
+        "p10_date": "2026-07-08",
+        "p90_date": "2026-07-13",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-09-024",
+        "issue_date": "2026-07-27",
+        "predicted_p50_date": "2026-08-26",
+        "actual_paid_date": "2026-08-27",
+        "p10_date": "2026-08-24",
+        "p90_date": "2026-08-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-09-025",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-08-22",
+        "actual_paid_date": "2026-08-22",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-08-25",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-09-026",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-10-02",
+        "actual_paid_date": "2026-10-02",
+        "p10_date": "2026-09-30",
+        "p90_date": "2026-10-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-09-027",
+        "issue_date": "2026-10-12",
+        "predicted_p50_date": "2026-11-11",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-10",
+        "p90_date": "2026-11-14",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-031",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-05-30",
+        "actual_paid_date": "2026-05-30",
+        "p10_date": "2026-05-28",
+        "p90_date": "2026-06-02",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-032",
+        "issue_date": "2026-06-05",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-06",
+        "p10_date": "2026-07-03",
+        "p90_date": "2026-07-07",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-033",
+        "issue_date": "2026-06-27",
+        "predicted_p50_date": "2026-06-28",
+        "actual_paid_date": "2026-06-28",
+        "p10_date": "2026-06-28",
+        "p90_date": "2026-06-30",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-034",
+        "issue_date": "2026-07-23",
+        "predicted_p50_date": "2026-08-07",
+        "actual_paid_date": "2026-08-07",
+        "p10_date": "2026-08-05",
+        "p90_date": "2026-08-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-035",
+        "issue_date": "2026-08-17",
+        "predicted_p50_date": "2026-09-17",
+        "actual_paid_date": "2026-09-15",
+        "p10_date": "2026-09-15",
+        "p90_date": "2026-09-19",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-036",
+        "issue_date": "2026-09-07",
+        "predicted_p50_date": "2026-09-08",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-09-08",
+        "p90_date": "2026-09-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-037",
+        "issue_date": "2026-09-27",
+        "predicted_p50_date": "2026-10-12",
+        "actual_paid_date": "2026-10-11",
+        "p10_date": "2026-10-11",
+        "p90_date": "2026-10-14",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-10-038",
+        "issue_date": "2026-10-19",
+        "predicted_p50_date": "2026-11-18",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-17",
+        "p90_date": "2026-11-20",
+        "absolute_error_days": 8,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-11-098",
+        "issue_date": "2026-05-16",
+        "predicted_p50_date": "2026-05-17",
+        "actual_paid_date": "2026-05-17",
+        "p10_date": "2026-05-17",
+        "p90_date": "2026-05-18",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-099",
+        "issue_date": "2026-05-24",
+        "predicted_p50_date": "2026-06-08",
+        "actual_paid_date": "2026-06-08",
+        "p10_date": "2026-06-07",
+        "p90_date": "2026-06-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-100",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-07-01",
+        "actual_paid_date": "2026-06-29",
+        "p10_date": "2026-06-29",
+        "p90_date": "2026-07-02",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-101",
+        "issue_date": "2026-06-12",
+        "predicted_p50_date": "2026-06-13",
+        "actual_paid_date": "2026-06-13",
+        "p10_date": "2026-06-13",
+        "p90_date": "2026-06-15",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-102",
+        "issue_date": "2026-06-19",
+        "predicted_p50_date": "2026-07-04",
+        "actual_paid_date": "2026-07-04",
+        "p10_date": "2026-07-03",
+        "p90_date": "2026-07-06",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-103",
+        "issue_date": "2026-06-27",
+        "predicted_p50_date": "2026-07-27",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-07-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-104",
+        "issue_date": "2026-07-04",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-05",
+        "p10_date": "2026-07-05",
+        "p90_date": "2026-07-06",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-105",
+        "issue_date": "2026-07-14",
+        "predicted_p50_date": "2026-07-29",
+        "actual_paid_date": "2026-07-29",
+        "p10_date": "2026-07-28",
+        "p90_date": "2026-07-31",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-106",
+        "issue_date": "2026-07-25",
+        "predicted_p50_date": "2026-08-24",
+        "actual_paid_date": "2026-08-25",
+        "p10_date": "2026-08-23",
+        "p90_date": "2026-08-26",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-107",
+        "issue_date": "2026-08-03",
+        "predicted_p50_date": "2026-08-04",
+        "actual_paid_date": "2026-08-04",
+        "p10_date": "2026-08-04",
+        "p90_date": "2026-08-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-108",
+        "issue_date": "2026-08-12",
+        "predicted_p50_date": "2026-08-27",
+        "actual_paid_date": "2026-08-26",
+        "p10_date": "2026-08-26",
+        "p90_date": "2026-08-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-109",
+        "issue_date": "2026-08-19",
+        "predicted_p50_date": "2026-09-18",
+        "actual_paid_date": "2026-09-19",
+        "p10_date": "2026-09-17",
+        "p90_date": "2026-09-20",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-110",
+        "issue_date": "2026-08-27",
+        "predicted_p50_date": "2026-08-28",
+        "actual_paid_date": "2026-08-28",
+        "p10_date": "2026-08-28",
+        "p90_date": "2026-08-29",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-111",
+        "issue_date": "2026-09-03",
+        "predicted_p50_date": "2026-09-18",
+        "actual_paid_date": "2026-09-17",
+        "p10_date": "2026-09-17",
+        "p90_date": "2026-09-20",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-112",
+        "issue_date": "2026-09-10",
+        "predicted_p50_date": "2026-10-11",
+        "actual_paid_date": "2026-10-09",
+        "p10_date": "2026-10-09",
+        "p90_date": "2026-10-12",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-113",
+        "issue_date": "2026-09-20",
+        "predicted_p50_date": "2026-09-21",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-09-21",
+        "p90_date": "2026-09-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-11-114",
+        "issue_date": "2026-09-29",
+        "predicted_p50_date": "2026-10-14",
+        "actual_paid_date": "2026-10-14",
+        "p10_date": "2026-10-13",
+        "p90_date": "2026-10-16",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-024",
+        "issue_date": "2026-05-17",
+        "predicted_p50_date": "2026-06-16",
+        "actual_paid_date": "2026-06-15",
+        "p10_date": "2026-06-15",
+        "p90_date": "2026-06-18",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-025",
+        "issue_date": "2026-06-20",
+        "predicted_p50_date": "2026-06-21",
+        "actual_paid_date": "2026-06-21",
+        "p10_date": "2026-06-21",
+        "p90_date": "2026-06-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-026",
+        "issue_date": "2026-07-21",
+        "predicted_p50_date": "2026-08-05",
+        "actual_paid_date": "2026-08-05",
+        "p10_date": "2026-08-04",
+        "p90_date": "2026-08-07",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-027",
+        "issue_date": "2026-08-25",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-09-25",
+        "p10_date": "2026-09-23",
+        "p90_date": "2026-09-26",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-028",
+        "issue_date": "2026-09-26",
+        "predicted_p50_date": "2026-09-27",
+        "actual_paid_date": "2026-09-27",
+        "p10_date": "2026-09-27",
+        "p90_date": "2026-09-29",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-12-029",
+        "issue_date": "2026-10-24",
+        "predicted_p50_date": "2026-11-08",
+        "actual_paid_date": "2026-11-07",
+        "p10_date": "2026-11-07",
+        "p90_date": "2026-11-10",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-044",
+        "issue_date": "2026-05-30",
+        "predicted_p50_date": "2026-06-29",
+        "actual_paid_date": "2026-06-29",
+        "p10_date": "2026-06-28",
+        "p90_date": "2026-07-01",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-045",
+        "issue_date": "2026-06-19",
+        "predicted_p50_date": "2026-06-20",
+        "actual_paid_date": "2026-06-20",
+        "p10_date": "2026-06-20",
+        "p90_date": "2026-06-21",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-046",
+        "issue_date": "2026-07-13",
+        "predicted_p50_date": "2026-07-28",
+        "actual_paid_date": "2026-07-28",
+        "p10_date": "2026-07-27",
+        "p90_date": "2026-07-30",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-047",
+        "issue_date": "2026-08-04",
+        "predicted_p50_date": "2026-09-03",
+        "actual_paid_date": "2026-09-03",
+        "p10_date": "2026-09-02",
+        "p90_date": "2026-09-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-048",
+        "issue_date": "2026-08-22",
+        "predicted_p50_date": "2026-08-23",
+        "actual_paid_date": "2026-08-23",
+        "p10_date": "2026-08-23",
+        "p90_date": "2026-08-24",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-049",
+        "issue_date": "2026-09-15",
+        "predicted_p50_date": "2026-09-30",
+        "actual_paid_date": "2026-09-30",
+        "p10_date": "2026-09-29",
+        "p90_date": "2026-10-02",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-13-050",
+        "issue_date": "2026-10-09",
+        "predicted_p50_date": "2026-11-09",
+        "actual_paid_date": "2026-11-07",
+        "p10_date": "2026-11-07",
+        "p90_date": "2026-11-10",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-14-026",
+        "issue_date": "2026-06-03",
+        "predicted_p50_date": "2026-06-04",
+        "actual_paid_date": "2026-06-04",
+        "p10_date": "2026-06-04",
+        "p90_date": "2026-06-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-14-027",
+        "issue_date": "2026-07-06",
+        "predicted_p50_date": "2026-07-21",
+        "actual_paid_date": "2026-07-22",
+        "p10_date": "2026-07-20",
+        "p90_date": "2026-07-23",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-14-028",
+        "issue_date": "2026-08-09",
+        "predicted_p50_date": "2026-09-08",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-09-07",
+        "p90_date": "2026-09-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-14-029",
+        "issue_date": "2026-09-14",
+        "predicted_p50_date": "2026-09-15",
+        "actual_paid_date": "2026-09-15",
+        "p10_date": "2026-09-15",
+        "p90_date": "2026-09-16",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-14-030",
+        "issue_date": "2026-10-14",
+        "predicted_p50_date": "2026-10-30",
+        "actual_paid_date": "2026-10-30",
+        "p10_date": "2026-10-28",
+        "p90_date": "2026-11-01",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-15-017",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-05-30",
+        "actual_paid_date": "2026-05-30",
+        "p10_date": "2026-05-29",
+        "p90_date": "2026-06-01",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-15-018",
+        "issue_date": "2026-06-16",
+        "predicted_p50_date": "2026-07-16",
+        "actual_paid_date": "2026-07-16",
+        "p10_date": "2026-07-15",
+        "p90_date": "2026-07-17",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-15-019",
+        "issue_date": "2026-07-18",
+        "predicted_p50_date": "2026-07-19",
+        "actual_paid_date": "2026-07-19",
+        "p10_date": "2026-07-19",
+        "p90_date": "2026-07-20",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-15-020",
+        "issue_date": "2026-08-23",
+        "predicted_p50_date": "2026-09-07",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-09-06",
+        "p90_date": "2026-09-08",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-15-021",
+        "issue_date": "2026-09-25",
+        "predicted_p50_date": "2026-10-25",
+        "actual_paid_date": "2026-10-25",
+        "p10_date": "2026-10-24",
+        "p90_date": "2026-10-27",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-16-039",
+        "issue_date": "2026-05-23",
+        "predicted_p50_date": "2026-05-24",
+        "actual_paid_date": "2026-05-24",
+        "p10_date": "2026-05-24",
+        "p90_date": "2026-05-25",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-16-040",
+        "issue_date": "2026-06-11",
+        "predicted_p50_date": "2026-06-26",
+        "actual_paid_date": "2026-06-26",
+        "p10_date": "2026-06-25",
+        "p90_date": "2026-06-28",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-16-041",
+        "issue_date": "2026-06-27",
+        "predicted_p50_date": "2026-07-27",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-07-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-17-029",
+        "issue_date": "2026-05-19",
+        "predicted_p50_date": "2026-05-20",
+        "actual_paid_date": "2026-05-20",
+        "p10_date": "2026-05-20",
+        "p90_date": "2026-05-21",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-17-030",
+        "issue_date": "2026-06-16",
+        "predicted_p50_date": "2026-07-01",
+        "actual_paid_date": "2026-06-30",
+        "p10_date": "2026-06-30",
+        "p90_date": "2026-07-03",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-17-031",
+        "issue_date": "2026-06-26",
+        "predicted_p50_date": "2026-07-26",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-25",
+        "p90_date": "2026-07-28",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-18-023",
+        "issue_date": "2026-06-02",
+        "predicted_p50_date": "2026-06-17",
+        "actual_paid_date": "2026-06-17",
+        "p10_date": "2026-06-15",
+        "p90_date": "2026-06-20",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-18-024",
+        "issue_date": "2026-07-05",
+        "predicted_p50_date": "2026-08-05",
+        "actual_paid_date": "2026-08-03",
+        "p10_date": "2026-08-03",
+        "p90_date": "2026-08-07",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-18-025",
+        "issue_date": "2026-08-06",
+        "predicted_p50_date": "2026-08-07",
+        "actual_paid_date": "2026-08-07",
+        "p10_date": "2026-08-07",
+        "p90_date": "2026-08-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-18-026",
+        "issue_date": "2026-09-01",
+        "predicted_p50_date": "2026-09-17",
+        "actual_paid_date": "2026-09-15",
+        "p10_date": "2026-09-14",
+        "p90_date": "2026-09-20",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-042",
+        "issue_date": "2026-05-30",
+        "predicted_p50_date": "2026-05-31",
+        "actual_paid_date": "2026-05-31",
+        "p10_date": "2026-05-31",
+        "p90_date": "2026-06-01",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-043",
+        "issue_date": "2026-06-18",
+        "predicted_p50_date": "2026-07-03",
+        "actual_paid_date": "2026-07-03",
+        "p10_date": "2026-07-02",
+        "p90_date": "2026-07-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-044",
+        "issue_date": "2026-07-05",
+        "predicted_p50_date": "2026-08-04",
+        "actual_paid_date": "2026-08-05",
+        "p10_date": "2026-08-03",
+        "p90_date": "2026-08-06",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-045",
+        "issue_date": "2026-07-25",
+        "predicted_p50_date": "2026-07-26",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-07-27",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-046",
+        "issue_date": "2026-08-15",
+        "predicted_p50_date": "2026-08-30",
+        "actual_paid_date": "2026-08-30",
+        "p10_date": "2026-08-29",
+        "p90_date": "2026-09-01",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-047",
+        "issue_date": "2026-09-07",
+        "predicted_p50_date": "2026-10-07",
+        "actual_paid_date": "2026-10-08",
+        "p10_date": "2026-10-06",
+        "p90_date": "2026-10-09",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-19-048",
+        "issue_date": "2026-09-27",
+        "predicted_p50_date": "2026-09-28",
+        "actual_paid_date": "2026-09-28",
+        "p10_date": "2026-09-28",
+        "p90_date": "2026-09-29",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-20-025",
+        "issue_date": "2026-06-13",
+        "predicted_p50_date": "2026-07-13",
+        "actual_paid_date": "2026-07-13",
+        "p10_date": "2026-07-12",
+        "p90_date": "2026-07-15",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-20-026",
+        "issue_date": "2026-07-13",
+        "predicted_p50_date": "2026-07-14",
+        "actual_paid_date": "2026-07-14",
+        "p10_date": "2026-07-14",
+        "p90_date": "2026-07-15",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-20-027",
+        "issue_date": "2026-08-13",
+        "predicted_p50_date": "2026-08-28",
+        "actual_paid_date": "2026-08-29",
+        "p10_date": "2026-08-27",
+        "p90_date": "2026-08-30",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-20-028",
+        "issue_date": "2026-09-14",
+        "predicted_p50_date": "2026-10-14",
+        "actual_paid_date": "2026-10-14",
+        "p10_date": "2026-10-13",
+        "p90_date": "2026-10-16",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-20-029",
+        "issue_date": "2026-10-16",
+        "predicted_p50_date": "2026-10-17",
+        "actual_paid_date": "2026-10-17",
+        "p10_date": "2026-10-17",
+        "p90_date": "2026-10-18",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-076",
+        "issue_date": "2026-05-22",
+        "predicted_p50_date": "2026-06-03",
+        "actual_paid_date": "2026-06-02",
+        "p10_date": "2026-05-31",
+        "p90_date": "2026-06-07",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-077",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-06-27",
+        "actual_paid_date": "2026-06-27",
+        "p10_date": "2026-06-23",
+        "p90_date": "2026-06-30",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-078",
+        "issue_date": "2026-06-07",
+        "predicted_p50_date": "2026-07-19",
+        "actual_paid_date": "2026-07-16",
+        "p10_date": "2026-07-15",
+        "p90_date": "2026-07-22",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-079",
+        "issue_date": "2026-06-14",
+        "predicted_p50_date": "2026-06-26",
+        "actual_paid_date": "2026-06-25",
+        "p10_date": "2026-06-22",
+        "p90_date": "2026-06-30",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-080",
+        "issue_date": "2026-06-24",
+        "predicted_p50_date": "2026-07-21",
+        "actual_paid_date": "2026-07-21",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-07-23",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-081",
+        "issue_date": "2026-07-03",
+        "predicted_p50_date": "2026-08-14",
+        "actual_paid_date": "2026-08-11",
+        "p10_date": "2026-08-10",
+        "p90_date": "2026-08-17",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-082",
+        "issue_date": "2026-07-14",
+        "predicted_p50_date": "2026-07-26",
+        "actual_paid_date": "2026-07-25",
+        "p10_date": "2026-07-22",
+        "p90_date": "2026-07-31",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-083",
+        "issue_date": "2026-07-23",
+        "predicted_p50_date": "2026-08-19",
+        "actual_paid_date": "2026-08-15",
+        "p10_date": "2026-08-15",
+        "p90_date": "2026-08-22",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-084",
+        "issue_date": "2026-08-01",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-12",
+        "p10_date": "2026-09-08",
+        "p90_date": "2026-09-15",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-085",
+        "issue_date": "2026-08-14",
+        "predicted_p50_date": "2026-08-26",
+        "actual_paid_date": "2026-08-25",
+        "p10_date": "2026-08-23",
+        "p90_date": "2026-08-30",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-086",
+        "issue_date": "2026-08-27",
+        "predicted_p50_date": "2026-09-23",
+        "actual_paid_date": "2026-09-20",
+        "p10_date": "2026-09-19",
+        "p90_date": "2026-09-25",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-087",
+        "issue_date": "2026-09-03",
+        "predicted_p50_date": "2026-10-15",
+        "actual_paid_date": "2026-10-12",
+        "p10_date": "2026-10-11",
+        "p90_date": "2026-10-17",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-088",
+        "issue_date": "2026-09-14",
+        "predicted_p50_date": "2026-09-26",
+        "actual_paid_date": "2026-09-24",
+        "p10_date": "2026-09-23",
+        "p90_date": "2026-09-30",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-089",
+        "issue_date": "2026-09-21",
+        "predicted_p50_date": "2026-10-18",
+        "actual_paid_date": "2026-10-14",
+        "p10_date": "2026-10-14",
+        "p90_date": "2026-10-21",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-090",
+        "issue_date": "2026-09-29",
+        "predicted_p50_date": "2026-11-10",
+        "actual_paid_date": "2026-11-06",
+        "p10_date": "2026-11-06",
+        "p90_date": "2026-11-12",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-091",
+        "issue_date": "2026-10-07",
+        "predicted_p50_date": "2026-10-19",
+        "actual_paid_date": "2026-10-19",
+        "p10_date": "2026-10-16",
+        "p90_date": "2026-10-25",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-092",
+        "issue_date": "2026-10-14",
+        "predicted_p50_date": "2026-11-10",
+        "actual_paid_date": "2026-11-07",
+        "p10_date": "2026-11-06",
+        "p90_date": "2026-11-13",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-21-093",
+        "issue_date": "2026-10-22",
+        "predicted_p50_date": "2026-12-03",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-29",
+        "p90_date": "2026-12-10",
+        "absolute_error_days": 23,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-22-029",
+        "issue_date": "2026-05-23",
+        "predicted_p50_date": "2026-07-03",
+        "actual_paid_date": "2026-07-04",
+        "p10_date": "2026-06-30",
+        "p90_date": "2026-07-06",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-030",
+        "issue_date": "2026-06-19",
+        "predicted_p50_date": "2026-07-01",
+        "actual_paid_date": "2026-06-30",
+        "p10_date": "2026-06-27",
+        "p90_date": "2026-07-03",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-031",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-08-04",
+        "actual_paid_date": "2026-08-03",
+        "p10_date": "2026-08-01",
+        "p90_date": "2026-08-06",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-032",
+        "issue_date": "2026-08-01",
+        "predicted_p50_date": "2026-09-11",
+        "actual_paid_date": "2026-09-09",
+        "p10_date": "2026-09-08",
+        "p90_date": "2026-09-14",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-033",
+        "issue_date": "2026-08-28",
+        "predicted_p50_date": "2026-09-09",
+        "actual_paid_date": "2026-09-09",
+        "p10_date": "2026-09-05",
+        "p90_date": "2026-09-11",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-034",
+        "issue_date": "2026-09-17",
+        "predicted_p50_date": "2026-10-14",
+        "actual_paid_date": "2026-10-10",
+        "p10_date": "2026-10-10",
+        "p90_date": "2026-10-16",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-22-035",
+        "issue_date": "2026-10-10",
+        "predicted_p50_date": "2026-11-20",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-17",
+        "p90_date": "2026-11-25",
+        "absolute_error_days": 10,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-22-036",
+        "issue_date": "2026-11-03",
+        "predicted_p50_date": "2026-11-15",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-12",
+        "p90_date": "2026-11-19",
+        "absolute_error_days": 5,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-23-021",
+        "issue_date": "2026-05-20",
+        "predicted_p50_date": "2026-06-15",
+        "actual_paid_date": "2026-06-14",
+        "p10_date": "2026-06-12",
+        "p90_date": "2026-06-17",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-23-022",
+        "issue_date": "2026-06-26",
+        "predicted_p50_date": "2026-08-05",
+        "actual_paid_date": "2026-08-04",
+        "p10_date": "2026-08-03",
+        "p90_date": "2026-08-08",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-23-023",
+        "issue_date": "2026-07-30",
+        "predicted_p50_date": "2026-08-11",
+        "actual_paid_date": "2026-08-09",
+        "p10_date": "2026-08-07",
+        "p90_date": "2026-08-13",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-23-024",
+        "issue_date": "2026-08-30",
+        "predicted_p50_date": "2026-09-25",
+        "actual_paid_date": "2026-09-26",
+        "p10_date": "2026-09-22",
+        "p90_date": "2026-09-28",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-23-025",
+        "issue_date": "2026-10-04",
+        "predicted_p50_date": "2026-11-15",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-11",
+        "p90_date": "2026-11-17",
+        "absolute_error_days": 5,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-24-026",
+        "issue_date": "2026-05-30",
+        "predicted_p50_date": "2026-06-25",
+        "actual_paid_date": "2026-06-24",
+        "p10_date": "2026-06-22",
+        "p90_date": "2026-06-28",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-24-027",
+        "issue_date": "2026-07-08",
+        "predicted_p50_date": "2026-08-18",
+        "actual_paid_date": "2026-08-19",
+        "p10_date": "2026-08-15",
+        "p90_date": "2026-08-20",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-24-028",
+        "issue_date": "2026-08-15",
+        "predicted_p50_date": "2026-08-27",
+        "actual_paid_date": "2026-08-24",
+        "p10_date": "2026-08-24",
+        "p90_date": "2026-08-31",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-24-029",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-10-13",
+        "actual_paid_date": "2026-10-12",
+        "p10_date": "2026-10-09",
+        "p90_date": "2026-10-15",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-032",
+        "issue_date": "2026-05-16",
+        "predicted_p50_date": "2026-06-26",
+        "actual_paid_date": "2026-06-26",
+        "p10_date": "2026-06-23",
+        "p90_date": "2026-06-28",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-033",
+        "issue_date": "2026-06-05",
+        "predicted_p50_date": "2026-06-17",
+        "actual_paid_date": "2026-06-13",
+        "p10_date": "2026-06-13",
+        "p90_date": "2026-06-19",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-034",
+        "issue_date": "2026-06-29",
+        "predicted_p50_date": "2026-07-25",
+        "actual_paid_date": "2026-07-24",
+        "p10_date": "2026-07-22",
+        "p90_date": "2026-07-28",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-035",
+        "issue_date": "2026-07-21",
+        "predicted_p50_date": "2026-08-31",
+        "actual_paid_date": "2026-09-01",
+        "p10_date": "2026-08-28",
+        "p90_date": "2026-09-02",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-036",
+        "issue_date": "2026-08-07",
+        "predicted_p50_date": "2026-08-19",
+        "actual_paid_date": "2026-08-18",
+        "p10_date": "2026-08-16",
+        "p90_date": "2026-08-23",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-037",
+        "issue_date": "2026-08-28",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-09-23",
+        "p10_date": "2026-09-20",
+        "p90_date": "2026-09-26",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-038",
+        "issue_date": "2026-09-15",
+        "predicted_p50_date": "2026-10-26",
+        "actual_paid_date": "2026-10-25",
+        "p10_date": "2026-10-23",
+        "p90_date": "2026-10-28",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-25-039",
+        "issue_date": "2026-10-03",
+        "predicted_p50_date": "2026-10-15",
+        "actual_paid_date": "2026-10-13",
+        "p10_date": "2026-10-11",
+        "p90_date": "2026-10-18",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-050",
+        "issue_date": "2026-05-25",
+        "predicted_p50_date": "2026-06-06",
+        "actual_paid_date": "2026-06-02",
+        "p10_date": "2026-06-02",
+        "p90_date": "2026-06-10",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-051",
+        "issue_date": "2026-06-10",
+        "predicted_p50_date": "2026-07-07",
+        "actual_paid_date": "2026-07-07",
+        "p10_date": "2026-07-03",
+        "p90_date": "2026-07-09",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-052",
+        "issue_date": "2026-06-29",
+        "predicted_p50_date": "2026-08-10",
+        "actual_paid_date": "2026-08-07",
+        "p10_date": "2026-08-06",
+        "p90_date": "2026-08-12",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-053",
+        "issue_date": "2026-07-17",
+        "predicted_p50_date": "2026-07-29",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-08-02",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-054",
+        "issue_date": "2026-08-05",
+        "predicted_p50_date": "2026-09-01",
+        "actual_paid_date": "2026-08-29",
+        "p10_date": "2026-08-28",
+        "p90_date": "2026-09-03",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-055",
+        "issue_date": "2026-08-19",
+        "predicted_p50_date": "2026-09-30",
+        "actual_paid_date": "2026-09-27",
+        "p10_date": "2026-09-26",
+        "p90_date": "2026-10-02",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-056",
+        "issue_date": "2026-09-07",
+        "predicted_p50_date": "2026-09-19",
+        "actual_paid_date": "2026-09-16",
+        "p10_date": "2026-09-16",
+        "p90_date": "2026-09-24",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-057",
+        "issue_date": "2026-09-24",
+        "predicted_p50_date": "2026-10-21",
+        "actual_paid_date": "2026-10-20",
+        "p10_date": "2026-10-17",
+        "p90_date": "2026-10-23",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-058",
+        "issue_date": "2026-10-10",
+        "predicted_p50_date": "2026-11-20",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-17",
+        "p90_date": "2026-11-26",
+        "absolute_error_days": 10,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-26-059",
+        "issue_date": "2026-10-24",
+        "predicted_p50_date": "2026-11-05",
+        "actual_paid_date": "2026-11-05",
+        "p10_date": "2026-11-02",
+        "p90_date": "2026-11-10",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-26-060",
+        "issue_date": "2026-11-06",
+        "predicted_p50_date": "2026-12-04",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-30",
+        "p90_date": "2026-12-10",
+        "absolute_error_days": 24,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-27-023",
+        "issue_date": "2026-06-11",
+        "predicted_p50_date": "2026-07-07",
+        "actual_paid_date": "2026-07-04",
+        "p10_date": "2026-07-04",
+        "p90_date": "2026-07-09",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-27-024",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-08-19",
+        "actual_paid_date": "2026-08-19",
+        "p10_date": "2026-08-16",
+        "p90_date": "2026-08-21",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-27-025",
+        "issue_date": "2026-08-05",
+        "predicted_p50_date": "2026-08-17",
+        "actual_paid_date": "2026-08-14",
+        "p10_date": "2026-08-13",
+        "p90_date": "2026-08-19",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-27-026",
+        "issue_date": "2026-09-06",
+        "predicted_p50_date": "2026-10-03",
+        "actual_paid_date": "2026-09-30",
+        "p10_date": "2026-09-29",
+        "p90_date": "2026-10-05",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-27-027",
+        "issue_date": "2026-10-06",
+        "predicted_p50_date": "2026-11-17",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-13",
+        "p90_date": "2026-11-19",
+        "absolute_error_days": 7,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-27-028",
+        "issue_date": "2026-11-04",
+        "predicted_p50_date": "2026-11-16",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-12",
+        "p90_date": "2026-11-19",
+        "absolute_error_days": 6,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-28-040",
+        "issue_date": "2026-05-29",
+        "predicted_p50_date": "2026-06-24",
+        "actual_paid_date": "2026-06-21",
+        "p10_date": "2026-06-21",
+        "p90_date": "2026-06-27",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-28-041",
+        "issue_date": "2026-06-22",
+        "predicted_p50_date": "2026-08-02",
+        "actual_paid_date": "2026-08-03",
+        "p10_date": "2026-07-30",
+        "p90_date": "2026-08-04",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-28-042",
+        "issue_date": "2026-07-15",
+        "predicted_p50_date": "2026-07-27",
+        "actual_paid_date": "2026-07-23",
+        "p10_date": "2026-07-23",
+        "p90_date": "2026-07-30",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-28-043",
+        "issue_date": "2026-08-08",
+        "predicted_p50_date": "2026-09-04",
+        "actual_paid_date": "2026-08-31",
+        "p10_date": "2026-08-31",
+        "p90_date": "2026-09-06",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-28-044",
+        "issue_date": "2026-09-01",
+        "predicted_p50_date": "2026-10-13",
+        "actual_paid_date": "2026-10-09",
+        "p10_date": "2026-10-09",
+        "p90_date": "2026-10-15",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-28-045",
+        "issue_date": "2026-09-28",
+        "predicted_p50_date": "2026-10-10",
+        "actual_paid_date": "2026-10-06",
+        "p10_date": "2026-10-06",
+        "p90_date": "2026-10-13",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-29-027",
+        "issue_date": "2026-06-02",
+        "predicted_p50_date": "2026-06-29",
+        "actual_paid_date": "2026-06-25",
+        "p10_date": "2026-06-25",
+        "p90_date": "2026-07-01",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-29-028",
+        "issue_date": "2026-07-04",
+        "predicted_p50_date": "2026-08-14",
+        "actual_paid_date": "2026-08-11",
+        "p10_date": "2026-08-11",
+        "p90_date": "2026-08-16",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-29-029",
+        "issue_date": "2026-08-09",
+        "predicted_p50_date": "2026-08-21",
+        "actual_paid_date": "2026-08-20",
+        "p10_date": "2026-08-17",
+        "p90_date": "2026-08-24",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-29-030",
+        "issue_date": "2026-09-10",
+        "predicted_p50_date": "2026-10-07",
+        "actual_paid_date": "2026-10-04",
+        "p10_date": "2026-10-03",
+        "p90_date": "2026-10-09",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-29-031",
+        "issue_date": "2026-10-11",
+        "predicted_p50_date": "2026-11-22",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-17",
+        "p90_date": "2026-11-28",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-30-021",
+        "issue_date": "2026-05-26",
+        "predicted_p50_date": "2026-07-06",
+        "actual_paid_date": "2026-07-04",
+        "p10_date": "2026-07-03",
+        "p90_date": "2026-07-08",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-30-022",
+        "issue_date": "2026-06-29",
+        "predicted_p50_date": "2026-07-11",
+        "actual_paid_date": "2026-07-11",
+        "p10_date": "2026-07-07",
+        "p90_date": "2026-07-13",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-30-023",
+        "issue_date": "2026-08-01",
+        "predicted_p50_date": "2026-08-27",
+        "actual_paid_date": "2026-08-25",
+        "p10_date": "2026-08-24",
+        "p90_date": "2026-08-29",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-091",
+        "issue_date": "2026-05-20",
+        "predicted_p50_date": "2026-08-13",
+        "actual_paid_date": "2026-08-13",
+        "p10_date": "2026-08-01",
+        "p90_date": "2026-08-13",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-092",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-09-08",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-09-09",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-093",
+        "issue_date": "2026-06-07",
+        "predicted_p50_date": "2026-08-16",
+        "actual_paid_date": "2026-08-16",
+        "p10_date": "2026-08-08",
+        "p90_date": "2026-08-17",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-094",
+        "issue_date": "2026-06-14",
+        "predicted_p50_date": "2026-09-07",
+        "actual_paid_date": "2026-09-07",
+        "p10_date": "2026-08-26",
+        "p90_date": "2026-09-08",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-095",
+        "issue_date": "2026-06-24",
+        "predicted_p50_date": "2026-10-02",
+        "actual_paid_date": "2026-10-02",
+        "p10_date": "2026-09-01",
+        "p90_date": "2026-10-03",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-096",
+        "issue_date": "2026-07-04",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-12",
+        "p10_date": "2026-08-14",
+        "p90_date": "2026-09-13",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-097",
+        "issue_date": "2026-07-11",
+        "predicted_p50_date": "2026-10-04",
+        "actual_paid_date": "2026-10-04",
+        "p10_date": "2026-09-05",
+        "p90_date": "2026-10-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-098",
+        "issue_date": "2026-07-22",
+        "predicted_p50_date": "2026-10-30",
+        "actual_paid_date": "2026-10-30",
+        "p10_date": "2026-09-28",
+        "p90_date": "2026-10-31",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-099",
+        "issue_date": "2026-08-01",
+        "predicted_p50_date": "2026-10-10",
+        "actual_paid_date": "2026-10-10",
+        "p10_date": "2026-09-11",
+        "p90_date": "2026-10-11",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-100",
+        "issue_date": "2026-08-11",
+        "predicted_p50_date": "2026-11-04",
+        "actual_paid_date": "2026-11-04",
+        "p10_date": "2026-10-05",
+        "p90_date": "2026-11-05",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-101",
+        "issue_date": "2026-08-18",
+        "predicted_p50_date": "2026-11-26",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-24",
+        "p90_date": "2026-11-27",
+        "absolute_error_days": 16,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-102",
+        "issue_date": "2026-08-25",
+        "predicted_p50_date": "2026-11-03",
+        "actual_paid_date": "2026-11-03",
+        "p10_date": "2026-10-05",
+        "p90_date": "2026-11-04",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-103",
+        "issue_date": "2026-09-02",
+        "predicted_p50_date": "2026-11-26",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-27",
+        "p90_date": "2026-11-27",
+        "absolute_error_days": 16,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-31-104",
+        "issue_date": "2026-09-12",
+        "predicted_p50_date": "2026-12-21",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-20",
+        "p90_date": "2026-12-22",
+        "absolute_error_days": 41,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-31-105",
+        "issue_date": "2026-09-19",
+        "predicted_p50_date": "2026-11-28",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-30",
+        "p90_date": "2026-11-29",
+        "absolute_error_days": 18,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-32-024",
+        "issue_date": "2026-06-10",
+        "predicted_p50_date": "2026-07-24",
+        "actual_paid_date": "2026-08-01",
+        "p10_date": "2026-07-04",
+        "p90_date": "2026-08-05",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-32-025",
+        "issue_date": "2026-07-13",
+        "predicted_p50_date": "2026-09-14",
+        "actual_paid_date": "2026-09-18",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-09-23",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-32-026",
+        "issue_date": "2026-08-18",
+        "predicted_p50_date": "2026-09-22",
+        "actual_paid_date": "2026-09-30",
+        "p10_date": "2026-08-31",
+        "p90_date": "2026-10-03",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-32-027",
+        "issue_date": "2026-09-20",
+        "predicted_p50_date": "2026-11-12",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-20",
+        "p90_date": "2026-11-22",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-32-028",
+        "issue_date": "2026-10-28",
+        "predicted_p50_date": "2026-12-12",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-12-06",
+        "p90_date": "2026-12-28",
+        "absolute_error_days": 32,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-33-025",
+        "issue_date": "2026-05-26",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-05",
+        "p10_date": "2026-06-09",
+        "p90_date": "2026-07-12",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-33-026",
+        "issue_date": "2026-06-27",
+        "predicted_p50_date": "2026-08-20",
+        "actual_paid_date": "2026-08-20",
+        "p10_date": "2026-07-23",
+        "p90_date": "2026-08-26",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-33-027",
+        "issue_date": "2026-07-23",
+        "predicted_p50_date": "2026-09-29",
+        "actual_paid_date": "2026-10-01",
+        "p10_date": "2026-09-01",
+        "p90_date": "2026-10-05",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-33-028",
+        "issue_date": "2026-08-17",
+        "predicted_p50_date": "2026-09-27",
+        "actual_paid_date": "2026-10-02",
+        "p10_date": "2026-09-02",
+        "p90_date": "2026-10-04",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-33-029",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-11-09",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-15",
+        "p90_date": "2026-11-16",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-33-030",
+        "issue_date": "2026-10-14",
+        "predicted_p50_date": "2026-12-12",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-25",
+        "p90_date": "2026-12-26",
+        "absolute_error_days": 32,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-34-030",
+        "issue_date": "2026-05-23",
+        "predicted_p50_date": "2026-07-05",
+        "actual_paid_date": "2026-07-10",
+        "p10_date": "2026-06-08",
+        "p90_date": "2026-07-16",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-34-031",
+        "issue_date": "2026-06-14",
+        "predicted_p50_date": "2026-08-10",
+        "actual_paid_date": "2026-08-08",
+        "p10_date": "2026-07-16",
+        "p90_date": "2026-08-18",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-34-032",
+        "issue_date": "2026-07-05",
+        "predicted_p50_date": "2026-09-14",
+        "actual_paid_date": "2026-09-24",
+        "p10_date": "2026-08-18",
+        "p90_date": "2026-09-21",
+        "absolute_error_days": 10,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-34-033",
+        "issue_date": "2026-08-01",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-24",
+        "p10_date": "2026-08-10",
+        "p90_date": "2026-09-23",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-34-034",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-10-20",
+        "actual_paid_date": "2026-10-26",
+        "p10_date": "2026-09-26",
+        "p90_date": "2026-10-27",
+        "absolute_error_days": 6,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-34-035",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-11-28",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-04",
+        "p90_date": "2026-12-04",
+        "absolute_error_days": 18,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-34-036",
+        "issue_date": "2026-10-06",
+        "predicted_p50_date": "2026-12-08",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-18",
+        "p90_date": "2026-12-15",
+        "absolute_error_days": 28,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-35-019",
+        "issue_date": "2026-05-17",
+        "predicted_p50_date": "2026-07-16",
+        "actual_paid_date": "2026-07-17",
+        "p10_date": "2026-06-20",
+        "p90_date": "2026-07-27",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-35-020",
+        "issue_date": "2026-06-19",
+        "predicted_p50_date": "2026-07-21",
+        "actual_paid_date": "2026-07-09",
+        "p10_date": "2026-06-25",
+        "p90_date": "2026-08-01",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-35-021",
+        "issue_date": "2026-07-18",
+        "predicted_p50_date": "2026-09-03",
+        "actual_paid_date": "2026-09-06",
+        "p10_date": "2026-08-07",
+        "p90_date": "2026-09-14",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-35-022",
+        "issue_date": "2026-08-17",
+        "predicted_p50_date": "2026-10-17",
+        "actual_paid_date": "2026-10-06",
+        "p10_date": "2026-09-21",
+        "p90_date": "2026-10-27",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-35-023",
+        "issue_date": "2026-09-20",
+        "predicted_p50_date": "2026-10-05",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-09-28",
+        "p90_date": "2026-10-23",
+        "absolute_error_days": 14,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-35-024",
+        "issue_date": "2026-10-19",
+        "predicted_p50_date": "2026-12-05",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-09",
+        "p90_date": "2026-12-15",
+        "absolute_error_days": 25,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-040",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-06-14",
+        "actual_paid_date": "2026-06-16",
+        "p10_date": "2026-05-19",
+        "p90_date": "2026-06-27",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-041",
+        "issue_date": "2026-06-05",
+        "predicted_p50_date": "2026-07-02",
+        "actual_paid_date": "2026-06-20",
+        "p10_date": "2026-06-23",
+        "p90_date": "2026-07-11",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-36-042",
+        "issue_date": "2026-06-25",
+        "predicted_p50_date": "2026-08-06",
+        "actual_paid_date": "2026-08-07",
+        "p10_date": "2026-07-28",
+        "p90_date": "2026-08-14",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-043",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-08-08",
+        "actual_paid_date": "2026-07-30",
+        "p10_date": "2026-07-12",
+        "p90_date": "2026-08-21",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-044",
+        "issue_date": "2026-07-24",
+        "predicted_p50_date": "2026-09-06",
+        "actual_paid_date": "2026-09-15",
+        "p10_date": "2026-08-11",
+        "p90_date": "2026-09-19",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-045",
+        "issue_date": "2026-08-12",
+        "predicted_p50_date": "2026-10-08",
+        "actual_paid_date": "2026-10-06",
+        "p10_date": "2026-09-14",
+        "p90_date": "2026-10-21",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-046",
+        "issue_date": "2026-08-27",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-10-01",
+        "p10_date": "2026-08-30",
+        "p90_date": "2026-10-08",
+        "absolute_error_days": 7,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-36-047",
+        "issue_date": "2026-09-10",
+        "predicted_p50_date": "2026-10-07",
+        "actual_paid_date": "2026-09-17",
+        "p10_date": "2026-09-27",
+        "p90_date": "2026-10-14",
+        "absolute_error_days": 20,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-36-048",
+        "issue_date": "2026-09-29",
+        "predicted_p50_date": "2026-11-26",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-31",
+        "p90_date": "2026-12-09",
+        "absolute_error_days": 16,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-37-037",
+        "issue_date": "2026-05-27",
+        "predicted_p50_date": "2026-07-12",
+        "actual_paid_date": "2026-07-03",
+        "p10_date": "2026-06-16",
+        "p90_date": "2026-07-23",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-37-038",
+        "issue_date": "2026-06-13",
+        "predicted_p50_date": "2026-08-11",
+        "actual_paid_date": "2026-08-06",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-08-23",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-37-039",
+        "issue_date": "2026-07-02",
+        "predicted_p50_date": "2026-07-16",
+        "actual_paid_date": "2026-07-05",
+        "p10_date": "2026-07-08",
+        "p90_date": "2026-07-29",
+        "absolute_error_days": 11,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-37-040",
+        "issue_date": "2026-07-20",
+        "predicted_p50_date": "2026-09-02",
+        "actual_paid_date": "2026-08-28",
+        "p10_date": "2026-08-07",
+        "p90_date": "2026-09-15",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-38-029",
+        "issue_date": "2026-06-04",
+        "predicted_p50_date": "2026-06-18",
+        "actual_paid_date": "2026-06-07",
+        "p10_date": "2026-06-11",
+        "p90_date": "2026-07-04",
+        "absolute_error_days": 11,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-38-030",
+        "issue_date": "2026-07-08",
+        "predicted_p50_date": "2026-08-05",
+        "actual_paid_date": "2026-07-27",
+        "p10_date": "2026-07-25",
+        "p90_date": "2026-08-13",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-38-031",
+        "issue_date": "2026-08-14",
+        "predicted_p50_date": "2026-10-10",
+        "actual_paid_date": "2026-10-12",
+        "p10_date": "2026-09-16",
+        "p90_date": "2026-10-23",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-38-032",
+        "issue_date": "2026-09-20",
+        "predicted_p50_date": "2026-10-03",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-09-25",
+        "p90_date": "2026-10-16",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-39-027",
+        "issue_date": "2026-06-13",
+        "predicted_p50_date": "2026-08-11",
+        "actual_paid_date": "2026-08-11",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-08-23",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-39-028",
+        "issue_date": "2026-07-17",
+        "predicted_p50_date": "2026-07-30",
+        "actual_paid_date": "2026-07-26",
+        "p10_date": "2026-07-21",
+        "p90_date": "2026-08-10",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-39-029",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-10-06",
+        "actual_paid_date": "2026-10-17",
+        "p10_date": "2026-09-11",
+        "p90_date": "2026-10-17",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-39-030",
+        "issue_date": "2026-09-21",
+        "predicted_p50_date": "2026-11-04",
+        "actual_paid_date": "2026-10-26",
+        "p10_date": "2026-10-27",
+        "p90_date": "2026-11-14",
+        "absolute_error_days": 9,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-40-035",
+        "issue_date": "2026-05-23",
+        "predicted_p50_date": "2026-07-15",
+        "actual_paid_date": "2026-07-09",
+        "p10_date": "2026-06-22",
+        "p90_date": "2026-07-30",
+        "absolute_error_days": 6,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-036",
+        "issue_date": "2026-06-14",
+        "predicted_p50_date": "2026-06-26",
+        "actual_paid_date": "2026-06-25",
+        "p10_date": "2026-06-15",
+        "p90_date": "2026-07-05",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-037",
+        "issue_date": "2026-07-10",
+        "predicted_p50_date": "2026-08-18",
+        "actual_paid_date": "2026-08-29",
+        "p10_date": "2026-07-25",
+        "p90_date": "2026-09-03",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-038",
+        "issue_date": "2026-08-06",
+        "predicted_p50_date": "2026-10-02",
+        "actual_paid_date": "2026-09-24",
+        "p10_date": "2026-09-06",
+        "p90_date": "2026-10-15",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-039",
+        "issue_date": "2026-08-30",
+        "predicted_p50_date": "2026-09-11",
+        "actual_paid_date": "2026-08-31",
+        "p10_date": "2026-08-31",
+        "p90_date": "2026-09-19",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-040",
+        "issue_date": "2026-09-24",
+        "predicted_p50_date": "2026-10-21",
+        "actual_paid_date": "2026-10-10",
+        "p10_date": "2026-10-10",
+        "p90_date": "2026-10-28",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-40-041",
+        "issue_date": "2026-10-21",
+        "predicted_p50_date": "2026-12-02",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-21",
+        "p90_date": "2026-12-08",
+        "absolute_error_days": 22,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-41-083",
+        "issue_date": "2026-05-14",
+        "predicted_p50_date": "2026-05-27",
+        "actual_paid_date": "2026-05-15",
+        "p10_date": "2026-05-18",
+        "p90_date": "2026-06-05",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-41-084",
+        "issue_date": "2026-05-25",
+        "predicted_p50_date": "2026-07-03",
+        "actual_paid_date": "2026-07-13",
+        "p10_date": "2026-06-12",
+        "p90_date": "2026-07-20",
+        "absolute_error_days": 10,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-41-085",
+        "issue_date": "2026-06-02",
+        "predicted_p50_date": "2026-07-15",
+        "actual_paid_date": "2026-07-15",
+        "p10_date": "2026-07-06",
+        "p90_date": "2026-07-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-41-086",
+        "issue_date": "2026-06-14",
+        "predicted_p50_date": "2026-07-15",
+        "actual_paid_date": "2026-07-10",
+        "p10_date": "2026-06-20",
+        "p90_date": "2026-07-27",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-41-087",
+        "issue_date": "2026-06-26",
+        "predicted_p50_date": "2026-08-07",
+        "actual_paid_date": "2026-08-08",
+        "p10_date": "2026-07-14",
+        "p90_date": "2026-08-21",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-41-088",
+        "issue_date": "2026-07-03",
+        "predicted_p50_date": "2026-08-29",
+        "actual_paid_date": "2026-08-28",
+        "p10_date": "2026-08-05",
+        "p90_date": "2026-09-12",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-41-089",
+        "issue_date": "2026-07-10",
+        "predicted_p50_date": "2026-08-10",
+        "actual_paid_date": "2026-08-19",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-08-22",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-42-031",
+        "issue_date": "2026-06-02",
+        "predicted_p50_date": "2026-06-14",
+        "actual_paid_date": "2026-06-06",
+        "p10_date": "2026-06-03",
+        "p90_date": "2026-06-25",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-42-032",
+        "issue_date": "2026-07-02",
+        "predicted_p50_date": "2026-08-16",
+        "actual_paid_date": "2026-08-20",
+        "p10_date": "2026-07-18",
+        "p90_date": "2026-08-28",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-42-033",
+        "issue_date": "2026-07-28",
+        "predicted_p50_date": "2026-09-21",
+        "actual_paid_date": "2026-10-03",
+        "p10_date": "2026-08-26",
+        "p90_date": "2026-10-06",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-42-034",
+        "issue_date": "2026-08-25",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-09-23",
+        "p10_date": "2026-08-26",
+        "p90_date": "2026-10-09",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-42-035",
+        "issue_date": "2026-09-27",
+        "predicted_p50_date": "2026-11-14",
+        "actual_paid_date": "2026-10-28",
+        "p10_date": "2026-10-18",
+        "p90_date": "2026-11-24",
+        "absolute_error_days": 17,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-43-035",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-07-24",
+        "actual_paid_date": "2026-07-20",
+        "p10_date": "2026-06-30",
+        "p90_date": "2026-08-07",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-43-036",
+        "issue_date": "2026-06-20",
+        "predicted_p50_date": "2026-07-02",
+        "actual_paid_date": "2026-06-24",
+        "p10_date": "2026-06-21",
+        "p90_date": "2026-07-11",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-43-037",
+        "issue_date": "2026-07-14",
+        "predicted_p50_date": "2026-08-10",
+        "actual_paid_date": "2026-07-22",
+        "p10_date": "2026-07-30",
+        "p90_date": "2026-08-17",
+        "absolute_error_days": 19,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-44-027",
+        "issue_date": "2026-06-07",
+        "predicted_p50_date": "2026-07-23",
+        "actual_paid_date": "2026-07-24",
+        "p10_date": "2026-06-27",
+        "p90_date": "2026-08-03",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-44-028",
+        "issue_date": "2026-07-03",
+        "predicted_p50_date": "2026-08-15",
+        "actual_paid_date": "2026-07-28",
+        "p10_date": "2026-08-06",
+        "p90_date": "2026-08-24",
+        "absolute_error_days": 18,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-45-019",
+        "issue_date": "2026-06-08",
+        "predicted_p50_date": "2026-07-01",
+        "actual_paid_date": "2026-07-17",
+        "p10_date": "2026-06-09",
+        "p90_date": "2026-07-20",
+        "absolute_error_days": 16,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-45-020",
+        "issue_date": "2026-07-13",
+        "predicted_p50_date": "2026-08-08",
+        "actual_paid_date": "2026-07-31",
+        "p10_date": "2026-07-26",
+        "p90_date": "2026-08-14",
+        "absolute_error_days": 8,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-45-021",
+        "issue_date": "2026-08-13",
+        "predicted_p50_date": "2026-09-24",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-09-14",
+        "p90_date": "2026-10-01",
+        "absolute_error_days": 16,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-45-022",
+        "issue_date": "2026-09-13",
+        "predicted_p50_date": "2026-10-03",
+        "actual_paid_date": "2026-10-03",
+        "p10_date": "2026-09-14",
+        "p90_date": "2026-10-22",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-45-023",
+        "issue_date": "2026-10-12",
+        "predicted_p50_date": "2026-11-08",
+        "actual_paid_date": "2026-11-07",
+        "p10_date": "2026-10-28",
+        "p90_date": "2026-11-16",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-050",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-07-12",
+        "actual_paid_date": "2026-07-25",
+        "p10_date": "2026-06-18",
+        "p90_date": "2026-07-25",
+        "absolute_error_days": 13,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-051",
+        "issue_date": "2026-05-31",
+        "predicted_p50_date": "2026-07-03",
+        "actual_paid_date": "2026-06-16",
+        "p10_date": "2026-06-07",
+        "p90_date": "2026-07-14",
+        "absolute_error_days": 17,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-052",
+        "issue_date": "2026-06-18",
+        "predicted_p50_date": "2026-07-17",
+        "actual_paid_date": "2026-07-17",
+        "p10_date": "2026-07-10",
+        "p90_date": "2026-08-02",
+        "absolute_error_days": 0,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-053",
+        "issue_date": "2026-07-01",
+        "predicted_p50_date": "2026-09-02",
+        "actual_paid_date": "2026-09-06",
+        "p10_date": "2026-08-06",
+        "p90_date": "2026-09-10",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-054",
+        "issue_date": "2026-07-16",
+        "predicted_p50_date": "2026-08-01",
+        "actual_paid_date": "2026-07-29",
+        "p10_date": "2026-07-24",
+        "p90_date": "2026-08-20",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-055",
+        "issue_date": "2026-07-28",
+        "predicted_p50_date": "2026-09-09",
+        "actual_paid_date": "2026-09-21",
+        "p10_date": "2026-08-16",
+        "p90_date": "2026-09-23",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-056",
+        "issue_date": "2026-08-16",
+        "predicted_p50_date": "2026-10-14",
+        "actual_paid_date": "2026-10-25",
+        "p10_date": "2026-09-20",
+        "p90_date": "2026-10-26",
+        "absolute_error_days": 11,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-057",
+        "issue_date": "2026-08-28",
+        "predicted_p50_date": "2026-09-10",
+        "actual_paid_date": "2026-09-08",
+        "p10_date": "2026-09-03",
+        "p90_date": "2026-09-22",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-46-058",
+        "issue_date": "2026-09-16",
+        "predicted_p50_date": "2026-11-06",
+        "actual_paid_date": "2026-10-17",
+        "p10_date": "2026-10-09",
+        "p90_date": "2026-11-15",
+        "absolute_error_days": 20,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-47-027",
+        "issue_date": "2026-06-01",
+        "predicted_p50_date": "2026-07-15",
+        "actual_paid_date": "2026-07-12",
+        "p10_date": "2026-06-21",
+        "p90_date": "2026-07-28",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-47-028",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-08-21",
+        "actual_paid_date": "2026-08-19",
+        "p10_date": "2026-08-13",
+        "p90_date": "2026-08-31",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-47-029",
+        "issue_date": "2026-08-15",
+        "predicted_p50_date": "2026-08-28",
+        "actual_paid_date": "2026-08-16",
+        "p10_date": "2026-08-18",
+        "p90_date": "2026-09-10",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-48-026",
+        "issue_date": "2026-06-07",
+        "predicted_p50_date": "2026-07-06",
+        "actual_paid_date": "2026-06-30",
+        "p10_date": "2026-06-28",
+        "p90_date": "2026-07-20",
+        "absolute_error_days": 6,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-48-027",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-09-03",
+        "actual_paid_date": "2026-09-13",
+        "p10_date": "2026-08-10",
+        "p90_date": "2026-09-18",
+        "absolute_error_days": 10,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-48-028",
+        "issue_date": "2026-08-13",
+        "predicted_p50_date": "2026-08-27",
+        "actual_paid_date": "2026-08-15",
+        "p10_date": "2026-08-18",
+        "p90_date": "2026-09-09",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-48-029",
+        "issue_date": "2026-09-14",
+        "predicted_p50_date": "2026-10-27",
+        "actual_paid_date": "2026-10-26",
+        "p10_date": "2026-10-02",
+        "p90_date": "2026-11-10",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-48-030",
+        "issue_date": "2026-10-19",
+        "predicted_p50_date": "2026-12-01",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-21",
+        "p90_date": "2026-12-11",
+        "absolute_error_days": 21,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-49-030",
+        "issue_date": "2026-05-21",
+        "predicted_p50_date": "2026-06-22",
+        "actual_paid_date": "2026-06-26",
+        "p10_date": "2026-05-26",
+        "p90_date": "2026-07-03",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-49-031",
+        "issue_date": "2026-06-08",
+        "predicted_p50_date": "2026-07-24",
+        "actual_paid_date": "2026-07-21",
+        "p10_date": "2026-06-29",
+        "p90_date": "2026-08-04",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-49-032",
+        "issue_date": "2026-06-25",
+        "predicted_p50_date": "2026-08-22",
+        "actual_paid_date": "2026-08-18",
+        "p10_date": "2026-07-29",
+        "p90_date": "2026-09-03",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-49-033",
+        "issue_date": "2026-07-13",
+        "predicted_p50_date": "2026-08-18",
+        "actual_paid_date": "2026-08-03",
+        "p10_date": "2026-07-16",
+        "p90_date": "2026-08-28",
+        "absolute_error_days": 15,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-50-021",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-06-25",
+        "actual_paid_date": "2026-07-04",
+        "p10_date": "2026-06-04",
+        "p90_date": "2026-07-10",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-50-022",
+        "issue_date": "2026-06-11",
+        "predicted_p50_date": "2026-07-23",
+        "actual_paid_date": "2026-07-22",
+        "p10_date": "2026-07-14",
+        "p90_date": "2026-07-29",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-50-023",
+        "issue_date": "2026-07-10",
+        "predicted_p50_date": "2026-08-02",
+        "actual_paid_date": "2026-08-19",
+        "p10_date": "2026-07-12",
+        "p90_date": "2026-08-18",
+        "absolute_error_days": 17,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-50-024",
+        "issue_date": "2026-08-05",
+        "predicted_p50_date": "2026-09-01",
+        "actual_paid_date": "2026-08-13",
+        "p10_date": "2026-08-22",
+        "p90_date": "2026-09-06",
+        "absolute_error_days": 19,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-50-025",
+        "issue_date": "2026-09-03",
+        "predicted_p50_date": "2026-10-15",
+        "actual_paid_date": "2026-10-10",
+        "p10_date": "2026-10-06",
+        "p90_date": "2026-10-23",
+        "absolute_error_days": 5,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-50-026",
+        "issue_date": "2026-10-01",
+        "predicted_p50_date": "2026-10-14",
+        "actual_paid_date": "2026-10-02",
+        "p10_date": "2026-10-06",
+        "p90_date": "2026-10-27",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-079",
+        "issue_date": "2026-05-15",
+        "predicted_p50_date": "2026-06-01",
+        "actual_paid_date": "2026-05-28",
+        "p10_date": "2026-05-23",
+        "p90_date": "2026-06-20",
+        "absolute_error_days": 4,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-080",
+        "issue_date": "2026-05-22",
+        "predicted_p50_date": "2026-06-20",
+        "actual_paid_date": "2026-06-04",
+        "p10_date": "2026-06-11",
+        "p90_date": "2026-07-05",
+        "absolute_error_days": 16,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-081",
+        "issue_date": "2026-05-29",
+        "predicted_p50_date": "2026-08-03",
+        "actual_paid_date": "2026-07-27",
+        "p10_date": "2026-07-06",
+        "p90_date": "2026-08-10",
+        "absolute_error_days": 7,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-082",
+        "issue_date": "2026-06-11",
+        "predicted_p50_date": "2026-07-18",
+        "actual_paid_date": "2026-07-15",
+        "p10_date": "2026-06-18",
+        "p90_date": "2026-07-28",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-083",
+        "issue_date": "2026-06-24",
+        "predicted_p50_date": "2026-07-23",
+        "actual_paid_date": "2026-07-16",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-08-08",
+        "absolute_error_days": 7,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-084",
+        "issue_date": "2026-07-02",
+        "predicted_p50_date": "2026-08-14",
+        "actual_paid_date": "2026-08-05",
+        "p10_date": "2026-08-06",
+        "p90_date": "2026-08-26",
+        "absolute_error_days": 9,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-085",
+        "issue_date": "2026-07-09",
+        "predicted_p50_date": "2026-08-16",
+        "actual_paid_date": "2026-08-04",
+        "p10_date": "2026-07-17",
+        "p90_date": "2026-08-25",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-086",
+        "issue_date": "2026-07-20",
+        "predicted_p50_date": "2026-09-07",
+        "actual_paid_date": "2026-08-21",
+        "p10_date": "2026-08-11",
+        "p90_date": "2026-09-17",
+        "absolute_error_days": 17,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-087",
+        "issue_date": "2026-07-31",
+        "predicted_p50_date": "2026-09-12",
+        "actual_paid_date": "2026-09-11",
+        "p10_date": "2026-09-04",
+        "p90_date": "2026-09-25",
+        "absolute_error_days": 1,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-088",
+        "issue_date": "2026-08-12",
+        "predicted_p50_date": "2026-08-27",
+        "actual_paid_date": "2026-08-25",
+        "p10_date": "2026-08-17",
+        "p90_date": "2026-09-13",
+        "absolute_error_days": 2,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-089",
+        "issue_date": "2026-08-21",
+        "predicted_p50_date": "2026-10-06",
+        "actual_paid_date": "2026-09-27",
+        "p10_date": "2026-09-11",
+        "p90_date": "2026-10-18",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-090",
+        "issue_date": "2026-08-28",
+        "predicted_p50_date": "2026-10-10",
+        "actual_paid_date": "2026-09-28",
+        "p10_date": "2026-10-01",
+        "p90_date": "2026-10-22",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-091",
+        "issue_date": "2026-09-05",
+        "predicted_p50_date": "2026-10-12",
+        "actual_paid_date": "2026-09-30",
+        "p10_date": "2026-09-10",
+        "p90_date": "2026-10-22",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-092",
+        "issue_date": "2026-09-14",
+        "predicted_p50_date": "2026-11-04",
+        "actual_paid_date": "2026-10-22",
+        "p10_date": "2026-10-05",
+        "p90_date": "2026-11-14",
+        "absolute_error_days": 13,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-093",
+        "issue_date": "2026-09-21",
+        "predicted_p50_date": "2026-11-27",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-10-27",
+        "p90_date": "2026-12-03",
+        "absolute_error_days": 17,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-094",
+        "issue_date": "2026-09-29",
+        "predicted_p50_date": "2026-11-07",
+        "actual_paid_date": "2026-10-25",
+        "p10_date": "2026-10-07",
+        "p90_date": "2026-11-16",
+        "absolute_error_days": 13,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-51-095",
+        "issue_date": "2026-10-07",
+        "predicted_p50_date": "2026-11-06",
+        "actual_paid_date": "2026-10-14",
+        "p10_date": "2026-10-29",
+        "p90_date": "2026-11-22",
+        "absolute_error_days": 23,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-096",
+        "issue_date": "2026-10-17",
+        "predicted_p50_date": "2026-11-30",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-21",
+        "p90_date": "2026-12-15",
+        "absolute_error_days": 20,
+        "within_p10_p90": false
+      },
+      {
+        "invoice_id": "demo-invoice-51-097",
+        "issue_date": "2026-10-29",
+        "predicted_p50_date": "2026-12-06",
+        "actual_paid_date": "2026-11-10",
+        "p10_date": "2026-11-07",
+        "p90_date": "2026-12-14",
+        "absolute_error_days": 26,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-52-035",
+        "issue_date": "2026-06-06",
+        "predicted_p50_date": "2026-08-08",
+        "actual_paid_date": "2026-07-27",
+        "p10_date": "2026-07-11",
+        "p90_date": "2026-08-17",
+        "absolute_error_days": 12,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-52-036",
+        "issue_date": "2026-07-01",
+        "predicted_p50_date": "2026-07-16",
+        "actual_paid_date": "2026-07-13",
+        "p10_date": "2026-07-06",
+        "p90_date": "2026-08-05",
+        "absolute_error_days": 3,
+        "within_p10_p90": true
+      },
+      {
+        "invoice_id": "demo-invoice-52-037",
+        "issue_date": "2026-07-27",
+        "predicted_p50_date": "2026-09-09",
+        "actual_paid_date": "2026-09-18",
+        "p10_date": "2026-08-16",
+        "p90_date": "2026-09-21",
+        "absolute_error_days": 9,
+        "within_p10_p90": true
+      }
+    ]
+  },
+  "cox_baseline_fit": {
+    "converged": true,
+    "iterations": 14
+  },
+  "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy."
+}

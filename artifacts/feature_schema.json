@@ -1,11 +1,15 @@
 {
-  "version": "latepayer-features-v1",
+  "version": "latepayer-features-v2",
   "features": [
     "log_outstanding",
     "terms_days",
     "age_days",
     "days_until_due",
     "overdue_days",
+    "overdue_1_7",
+    "overdue_8_30",
+    "overdue_31_90",
+    "overdue_91_plus",
     "issue_month_sin",
     "issue_month_cos",
     "as_of_month_sin",
@@ -17,7 +21,19 @@
     "recent_delay_days",
     "delay_std_days",
     "history_missing",
+    "prior_paid_invoice_count",
+    "amount_vs_client_median_log",
     "other_open_exposure_log",
+    "client_open_balance_log",
+    "viewed_by_recipient",
+    "days_since_viewed",
+    "reminder_count",
+    "days_since_last_reminder",
+    "term_due_on_receipt",
+    "term_net_15",
+    "term_net_30",
+    "partial_share",
+    "days_since_last_partial_payment",
     "currency_is_usd",
     "currency_is_eur",
     "currency_is_gbp"
@@ -28,6 +44,10 @@
   "as_of_date": "2026-11-10",
   "history_cutoff": "2026-11-10",
   "training_cutoff": "2025-11-15",
+  "training_date_range": [
+    "2023-11-28",
+    "2025-11-15"
+  ],
   "validation_cohort": [
     "2025-11-16",
     "2026-05-13"
@@ -38,6 +58,13 @@
     "2026-11-10"
   ],
   "test_observation_cutoff": "2026-11-10",
+  "validation_unit": "invoice; all daily risk rows for an invoice stay in the same time cohort",
+  "feature_priors": {
+    "delay_days": 10.0,
+    "late_rate": 0.45,
+    "amount_median": 4000.0,
+    "history_prior_strength": 3
+  },
   "generation_parameters": {
     "client_profiles": [
       "prompt",

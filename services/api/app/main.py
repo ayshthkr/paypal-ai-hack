@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -209,6 +211,24 @@ def _check_policy(db: Session, invoice: Invoice, forecast: dict | None) -> None:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/evaluation")
+def model_evaluation() -> dict:
+    path = Path(settings.model_path).with_name("eval.json")
+    if not path.exists():
+        return {"available": False, "reason": "Model evaluation has not been generated yet."}
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {"available": False, "reason": "Model evaluation artifact could not be read."}
+    importance_path = path.with_name("feature_importance.json")
+    try:
+        payload["feature_importance"] = json.loads(importance_path.read_text()).get("features", [])
+    except (OSError, ValueError, AttributeError):
+        payload["feature_importance"] = []
+    payload["available"] = True
+    return payload
 
 
 @app.get("/ready")

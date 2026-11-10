@@ -41,6 +41,33 @@ def test_feature_history_is_cut_off_at_scoring_date_and_ignores_later_settlement
     assert later["history_count"] == 1
 
 
+def test_feature_inputs_are_point_in_time_and_cold_start_is_shrunk():
+    as_of = date(2026, 6, 1)
+    invoice = {
+        "id": "feature-target", "client_id": "client", "issue_date": as_of - timedelta(days=20),
+        "due_date": as_of + timedelta(days=10), "total": 4000, "outstanding": 3600,
+        "paid": 400, "partial_amount": 400, "partial_at": as_of - timedelta(days=2),
+        "viewed_at": as_of - timedelta(days=1), "payment_term_type": "NET_30", "currency": "USD",
+        "reminder_events": [
+            {"sent_at": (as_of - timedelta(days=4)).isoformat()},
+            {"sent_at": (as_of + timedelta(days=1)).isoformat()},
+        ],
+    }
+    current = features(invoice, as_of, [], [invoice])
+    prior = features(invoice, as_of - timedelta(days=5), [], [invoice])
+    assert current["prior_paid_invoice_count"] == 0
+    assert current["history_missing"] == 1
+    assert current["history_late_rate"] == pytest.approx(0.45)
+    assert current["viewed_by_recipient"] == 1
+    assert current["reminder_count"] == 1
+    assert current["term_net_30"] == 1
+    assert current["partial_share"] == pytest.approx(0.1)
+    assert current["days_since_last_partial_payment"] == 2
+    assert prior["viewed_by_recipient"] == 0
+    assert prior["reminder_count"] == 0
+    assert prior["partial_share"] == 0
+
+
 def test_exposure_from_synthetic_records_uses_as_of_timeline_not_final_balance():
     target = {"id": "target", "client_id": "c", "issue_date": date(2026, 1, 1), "due_date": date(2026, 1, 20), "total": 100, "outstanding": 100, "currency": "EUR"}
     other = {"id": "other", "client_id": "c", "issue_date": date(2025, 12, 1), "due_date": date(2025, 12, 20), "total": 100, "outstanding": 0, "status": "PAID", "settled_at": date(2026, 1, 10), "outcome_paid_at": date(2026, 1, 10), "cancelled_at": None, "partial_at": None, "partial_amount": Decimal("0")}
@@ -150,6 +177,35 @@ def test_cancelled_invoice_with_stale_balance_is_closed_in_api_and_payment_is_bl
     assert detail["forecast"] is None
     assert detail["decision"]["action"] == "wait"
     assert client.post("/demo/invoices/cancelled-stale/payment", json={}).status_code == 409
+
+
+def test_new_client_forecast_marks_limited_history_and_reports_model_metadata(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="cold-start-owner", display_name="New Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("cold-start-invoice", owner.id))
+        db.commit()
+
+    forecast = client.get("/invoices/cold-start-invoice").json()["forecast"]
+    assert forecast["limited_history"] is True
+    assert forecast["history_count"] == 0
+    assert forecast["model_metadata"]["training_seed"] == 20261110
+    assert forecast["model_metadata"]["training_date_range"]
+    assert forecast["model_metadata"]["feature_list"]
+
+
+def test_evaluation_api_exposes_survival_metrics_and_feature_importance(api):
+    client, _ = api
+    response = client.get("/evaluation")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert set(payload["survival_metrics"]) == {"lightgbm", "kaplan_meier", "cox"}
+    assert "uno_concordance" in payload["survival_metrics"]["lightgbm"]
+    assert payload["feature_importance"]
+    assert "feature" in payload["feature_importance"][0]
 
 
 def test_demo_send_is_idempotent_and_does_not_call_paypal(api):
@@ -337,5 +393,5 @@ def test_training_generator_has_current_as_of_age_mix_profiles_and_cadence():
     assert {name: sum(row["open_age_bucket"] == name for row in open_rows) for name in OPEN_BUCKET_COUNTS} == OPEN_BUCKET_COUNTS
     assert sum(row["client_churned"] for row in clients.values()) == 3
     assert all(row["issue_date"] <= as_of for row in first)
-    assert all(row["viewed_at"] is None or row["viewed_at"].date() <= as_of for row in first)
+    assert all(row["viewed_at"] is None or row["viewed_at"] <= as_of for row in first)
     assert all(isinstance(row["partial_payment_allowed"], bool) and isinstance(row["reminder_events"], list) for row in first)

@@ -23,6 +23,15 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         settled_at = max(payment.occurred_at.date() for payment in payments)
     elif invoice.status == "PAID" and invoice.synced_at:
         settled_at = invoice.synced_at.date()
+    ordered_payments = sorted(payments, key=lambda payment: payment.occurred_at)
+    if invoice.status == "PARTIALLY_PAID":
+        partial_payments = ordered_payments
+    elif invoice.status == "PAID" and len(ordered_payments) > 1:
+        partial_payments = ordered_payments[:-1]
+    else:
+        partial_payments = [payment for payment in ordered_payments if payment.provider_payment_id.startswith("demo-partial-")]
+    partial_at = max((payment.occurred_at.date() for payment in partial_payments), default=None)
+    partial_amount = sum((payment.amount for payment in partial_payments), start=invoice.total * 0)
     return {
         "id": invoice.id,
         "client_id": invoice.client_id,
@@ -33,22 +42,31 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         "outstanding": invoice.outstanding,
         "currency": invoice.currency,
         "status": invoice.status,
+        "viewed_at": invoice.viewed_at.date() if invoice.viewed_at else None,
+        "partial_payment_allowed": invoice.partial_payment_allowed,
+        "payment_term_type": invoice.payment_term_type,
+        "reminder_events": invoice.reminder_events or [],
+        "partial_at": partial_at,
+        "partial_amount": partial_amount,
         "settled_at": settled_at,
         "paid_at": settled_at,
         "cancelled_at": invoice.synced_at.date() if invoice.status in {"CANCELLED", "VOIDED", "DELETED"} and invoice.synced_at else None,
     }
 
 
-def _load_artifacts() -> tuple[Booster | None, list[float], str, str]:
+def _load_artifacts() -> tuple[Booster | None, list[float], str, str, dict, dict]:
     settings = get_settings()
     path = Path(settings.model_path)
     metadata_path = path.with_name("model_metadata.json")
     baseline_path = path.with_name("kaplan_meier.json")
+    calibration_path = path.with_name("calibration.json")
     schema_path = Path(settings.feature_schema_path)
     model = None
     baseline = [0.0075] * HORIZON
     active = "kaplan_meier"
     version = "pooled-km-default-v1"
+    metadata = {}
+    calibration = {}
     try:
         if baseline_path.exists():
             loaded = json.loads(baseline_path.read_text())
@@ -58,6 +76,8 @@ def _load_artifacts() -> tuple[Booster | None, list[float], str, str]:
             metadata = json.loads(metadata_path.read_text())
             active = str(metadata.get("active_model", active))
             version = str(metadata.get("model_version", version))
+        if calibration_path.exists():
+            calibration = json.loads(calibration_path.read_text())
         schema = json.loads(schema_path.read_text()) if schema_path.exists() else {}
         schema_compatible = schema.get("version") == FEATURE_SCHEMA_VERSION and schema.get("features") == FEATURES
         if active == "lightgbm" and path.exists() and schema_compatible:
@@ -69,7 +89,7 @@ def _load_artifacts() -> tuple[Booster | None, list[float], str, str]:
         model = None
         active = "kaplan_meier"
         version = "pooled-km-fallback-v1"
-    return model, baseline, active, version
+    return model, baseline, active, version, metadata, calibration
 
 
 def _survival(hazards: list[float]) -> list[float]:
@@ -103,7 +123,7 @@ def forecast_invoice(db: Session, invoice: Invoice, today: date | None = None, p
     target = record_by_id[invoice.id]
     history = [row for row in records if row["settled_at"] and row["settled_at"] <= today]
     base_features = features(target, today, history, records)
-    model, baseline, active_model, model_version = _load_artifacts()
+    model, baseline, active_model, model_version, metadata, calibration = _load_artifacts()
     use_model = model is not None and base_features["history_count"] >= 3
     hazards: list[float] = []
     if use_model:
@@ -139,6 +159,11 @@ def forecast_invoice(db: Session, invoice: Invoice, today: date | None = None, p
         "p90": _quantile(curve, 0.1, today),
     }
     probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30)}
+    if calibration.get("applied") and probabilities.get("14d") is not None:
+        thresholds_x = np.asarray(calibration.get("thresholds_x", [0.0, 1.0]), dtype=float)
+        thresholds_y = np.asarray(calibration.get("thresholds_y", [0.0, 1.0]), dtype=float)
+        if len(thresholds_x) and len(thresholds_x) == len(thresholds_y):
+            probabilities["14d"] = round(float(np.interp(probabilities["14d"], thresholds_x, thresholds_y)), 6)
     fingerprint_raw = json.dumps({
         "invoice_version": invoice.material_version,
         "client_invoices": sorted((item.id, item.material_version, str(item.outstanding), item.status) for item in client_invoices),
@@ -169,8 +194,17 @@ def forecast_invoice(db: Session, invoice: Invoice, today: date | None = None, p
         "model": model_label,
         "model_version": model_version,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "model_metadata": {
+            "model_version": model_version,
+            "feature_list": metadata.get("feature_list", FEATURES),
+            "training_date_range": metadata.get("training_date_range"),
+            "training_cutoff": metadata.get("training_cutoff"),
+            "training_seed": metadata.get("training_seed", metadata.get("seed")),
+            "trained_at": metadata.get("trained_at"),
+        },
         "scoring_date": today.isoformat(),
         "forecast_horizon_days": HORIZON,
         "already_overdue": overdue_days > 0,
         "history_count": history_count,
+        "limited_history": history_count < 3,
     }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import matplotlib
@@ -9,8 +9,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from lightgbm import LGBMClassifier, Booster
+from sklearn.isotonic import IsotonicRegression
 
-from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
+from ml.features import (
+    FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
+    GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
+)
+from ml.survival_metrics import fit_cox, predict_cox_survival, time_dependent_auc, uno_concordance
 from ml.synthetic import SEED, generate_records, resolve_as_of
 
 HORIZON = 180
@@ -150,6 +155,71 @@ def _paid_only_mae(subjects, prediction_days: dict[str, int | None]) -> float | 
     return float(np.mean(errors)) if errors else None
 
 
+def _invoice_feature_matrix(records: list[dict], subjects) -> np.ndarray:
+    by_client: dict[str, list[dict]] = {}
+    for row in records:
+        by_client.setdefault(row["client_id"], []).append(row)
+    return np.asarray([
+        _row_features(records, invoice, invoice["issue_date"], client_records=by_client[invoice["client_id"]])
+        for invoice, _, _ in subjects
+    ], dtype=np.float32)
+
+
+def _integrated_brier(subjects, predictions, censor_g, horizons) -> tuple[float | None, list[float | None]]:
+    scores = [brier_score_at(subjects, predictions, censor_g, horizon) for horizon in horizons]
+    available = [score for score in scores if score is not None]
+    return (float(np.mean(available)) if available else None), scores
+
+
+def _calibration_rows(subjects, predictions):
+    values = []
+    for invoice, duration, event in subjects:
+        curve = predictions.get(invoice["id"])
+        if not curve or len(curve) <= 14 or (not event and duration < 14):
+            continue
+        values.append((1.0 - curve[14], int(event == 1 and duration <= 14)))
+    return values
+
+
+def _calibration_deciles(values, calibrator=None) -> list[dict]:
+    if not values:
+        return []
+    ordered = sorted(values, key=lambda item: item[0])
+    output = []
+    for index, group in enumerate(np.array_split(np.asarray(ordered, dtype=float), min(10, len(ordered))), start=1):
+        if len(group) == 0:
+            continue
+        mean_predicted = float(group[:, 0].mean())
+        output.append({
+            "decile": index, "count": int(len(group)), "predicted": mean_predicted,
+            "calibrated": float(calibrator.predict([mean_predicted])[0]) if calibrator else mean_predicted,
+            "observed": float(group[:, 1].mean()),
+        })
+    return output
+
+
+def _model_metrics(subjects, predictions, censor_g, horizons) -> dict:
+    daily_horizons = list(range(1, HORIZON + 1))
+    ibs, _ = _integrated_brier(subjects, predictions, censor_g, daily_horizons)
+    brier_scores = [brier_score_at(subjects, predictions, censor_g, horizon) for horizon in horizons]
+    risks = {}
+    for invoice, _, _ in subjects:
+        curve = predictions.get(invoice["id"])
+        if curve:
+            p50_day = next((day for day in range(1, min(HORIZON, len(curve) - 1) + 1) if curve[day] <= 0.5), None)
+            risks[invoice["id"]] = float(HORIZON + 1 - p50_day) if p50_day is not None else 0.0
+    return {
+        "uno_concordance": uno_concordance(subjects, risks, censor_g),
+        "integrated_brier_score": ibs,
+        "brier_scores": {str(day): score for day, score in zip(horizons, brier_scores, strict=True)},
+        "time_dependent_auc": {
+            "due_date": time_dependent_auc(subjects, predictions, 0),
+            "due_plus_14_days": time_dependent_auc(subjects, predictions, 14),
+            "due_plus_30_days": time_dependent_auc(subjects, predictions, 30),
+        },
+    }
+
+
 def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str | None = None) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     history_cutoff = resolve_as_of(observation_cutoff)
@@ -176,67 +246,164 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
 
     _, _, val_subjects = make_risk_rows(records, validation_cutoff, lambda r: validation_lo <= r["issue_date"] <= validation_hi)
     _, _, test_subjects = make_risk_rows(records, history_cutoff, lambda r: test_lo <= r["issue_date"] <= test_hi)
-    # Validation is scored on its later observation boundary; model selection is reserved for validation.
+    # Each invoice contributes all of its daily rows to exactly one time cohort.
     val_predictions: dict[str, list[float]] = {}
-    val_days: dict[str, int | None] = {}
     for row, _, _ in val_subjects:
         hazards = predict_hazards(booster, records, row, baseline)
-        survival = _survival_from_hazards(hazards)
-        val_predictions[row["id"]] = survival
-        val_days[row["id"]] = next((day for day in range(1, HORIZON + 1) if survival[day] <= 0.5), None)
-    # Training survival curve uses the training-cohort KM estimate for the same origin-time baseline.
+        val_predictions[row["id"]] = _survival_from_hazards(hazards)
     km_survival = _survival_from_hazards(baseline)
     km_val_predictions = {row["id"]: km_survival for row, _, _ in val_subjects}
     censor_g_val = _censor_survival(train_subjects)
     val_horizons = [h for h in (7, 14, 30, 60, 90, 120, 180) if h <= max((d for _, d, _ in val_subjects), default=0)]
-    val_scores = [brier_score_at(val_subjects, val_predictions, censor_g_val, h) for h in val_horizons]
-    val_km_scores = [brier_score_at(val_subjects, km_val_predictions, censor_g_val, h) for h in val_horizons]
-    val_ibs = float(np.mean([v for v in val_scores if v is not None])) if any(v is not None for v in val_scores) else None
-    val_km_ibs = float(np.mean([v for v in val_km_scores if v is not None])) if any(v is not None for v in val_km_scores) else None
+    val_ibs, _ = _integrated_brier(val_subjects, val_predictions, censor_g_val, list(range(1, HORIZON + 1)))
+    val_km_ibs, _ = _integrated_brier(val_subjects, km_val_predictions, censor_g_val, list(range(1, HORIZON + 1)))
     active_model = "lightgbm" if val_ibs is not None and (val_km_ibs is None or val_ibs <= val_km_ibs) else "kaplan_meier"
 
     test_predictions: dict[str, list[float]] = {}
-    test_days: dict[str, int | None] = {}
     for row, _, _ in test_subjects:
         hazards = predict_hazards(booster, records, row, baseline)
         surv = _survival_from_hazards(hazards)
         test_predictions[row["id"]] = surv
-        test_days[row["id"]] = next((day for day in range(1, HORIZON + 1) if surv[day] <= 0.5), None)
     km_test_predictions = {row["id"]: km_survival for row, _, _ in test_subjects}
     test_censor_g = _censor_survival([s for s in train_subjects + val_subjects])
     test_horizons = [h for h in (7, 14, 30, 60, 90, 120, 180) if h <= max((d for _, d, _ in test_subjects), default=0)]
-    test_scores = [brier_score_at(test_subjects, test_predictions, test_censor_g, h) for h in test_horizons]
-    test_km_scores = [brier_score_at(test_subjects, km_test_predictions, test_censor_g, h) for h in test_horizons]
-    test_ibs = float(np.mean([v for v in test_scores if v is not None])) if any(v is not None for v in test_scores) else None
-    test_km_ibs = float(np.mean([v for v in test_km_scores if v is not None])) if any(v is not None for v in test_km_scores) else None
+    # A Cox PH comparator is fitted only on the training invoice cohort.
+    train_invoice_X = _invoice_feature_matrix(records, train_subjects)
+    cox_model = fit_cox(train_invoice_X, np.asarray([duration for _, duration, _ in train_subjects]),
+                        np.asarray([event for _, _, event in train_subjects]), HORIZON)
+    cox_test_X = _invoice_feature_matrix(records, test_subjects)
+    cox_curves = predict_cox_survival(cox_test_X, cox_model)
+    cox_test_predictions = {row[0]["id"]: curve for row, curve in zip(test_subjects, cox_curves, strict=True)}
+    test_metrics = {
+        "lightgbm": _model_metrics(test_subjects, test_predictions, test_censor_g, test_horizons),
+        "kaplan_meier": _model_metrics(test_subjects, km_test_predictions, test_censor_g, test_horizons),
+        "cox": _model_metrics(test_subjects, cox_test_predictions, test_censor_g, test_horizons),
+    }
 
-    # Calibration plot: predicted and observed payment-by-horizon proportions on the held-out test cohort.
-    calibration_days = [7, 14, 30, 60, 90]
-    predicted = [float(np.mean([1 - test_predictions[row["id"]][d] for row, _, _ in test_subjects])) for d in calibration_days]
-    observed = [float(np.mean([int(event == 1 and duration <= d) for _, duration, event in test_subjects])) for d in calibration_days]
+    # Fit an optional isotonic mapping on the validation fold for the 14-day output.
+    val_calibration = _calibration_rows(val_subjects, val_predictions)
+    calibrator = None
+    raw_val_brier = calibrated_val_brier = None
+    if len(val_calibration) >= 30 and len({round(predicted, 4) for predicted, _ in val_calibration}) >= 5:
+        calibration_x = np.asarray([item[0] for item in val_calibration])
+        calibration_y = np.asarray([item[1] for item in val_calibration])
+        candidate = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+        candidate.fit(calibration_x, calibration_y)
+        raw_val_brier = float(np.mean((calibration_x - calibration_y) ** 2))
+        calibrated_values = candidate.predict(calibration_x)
+        calibrated_val_brier = float(np.mean((calibrated_values - calibration_y) ** 2))
+        if calibrated_val_brier + 1e-4 < raw_val_brier:
+            calibrator = candidate
+    calibration_deciles = _calibration_deciles(val_calibration, calibrator)
+    calibration_artifact = {
+        "applied": calibrator is not None, "target": "P(full settlement within 14 days)",
+        "method": "isotonic regression on validation invoices" if calibrator else "identity",
+        "thresholds_x": [float(value) for value in calibrator.X_thresholds_] if calibrator else [0.0, 1.0],
+        "thresholds_y": [float(value) for value in calibrator.y_thresholds_] if calibrator else [0.0, 1.0],
+        "validation_brier_raw": raw_val_brier, "validation_brier_calibrated": calibrated_val_brier,
+        "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
+    }
+    (output_dir / "calibration.json").write_text(json.dumps(calibration_artifact, indent=2))
+    test_calibration = _calibration_rows(test_subjects, test_predictions)
+    test_p14_raw = [value for value, _ in test_calibration]
+    test_p14_labels = [label for _, label in test_calibration]
+    test_p14_calibrated = calibrator.predict(test_p14_raw).tolist() if calibrator and test_p14_raw else test_p14_raw
+    test_calibration_metrics = {
+        "count": len(test_p14_labels), "raw_brier": float(np.mean((np.asarray(test_p14_raw) - np.asarray(test_p14_labels)) ** 2)) if test_p14_labels else None,
+        "calibrated_brier": float(np.mean((np.asarray(test_p14_calibrated) - np.asarray(test_p14_labels)) ** 2)) if test_p14_labels else None,
+        "deciles": _calibration_deciles(test_calibration, calibrator),
+    }
+
+    # Empirical issue-date forecast backtest for paid invoices in the held-out cohort.
+    backtest_rows = []
+    p50_errors = []
+    covered = 0
+    eligible_for_coverage = 0
+    for invoice, duration, event in test_subjects:
+        if not event:
+            continue
+        curve = test_predictions[invoice["id"]]
+        p10 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.9), None)
+        p50 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.5), None)
+        p90 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.1), None)
+        actual = invoice["issue_date"] + timedelta(days=duration)
+        predicted = invoice["issue_date"] + timedelta(days=p50) if p50 is not None else None
+        error = abs(p50 - duration) if p50 is not None else None
+        if error is not None:
+            p50_errors.append(error)
+        if p10 is not None and p90 is not None:
+            eligible_for_coverage += 1
+            covered += int(p10 <= duration <= p90)
+        backtest_rows.append({
+            "invoice_id": invoice["id"], "issue_date": invoice["issue_date"].isoformat(),
+            "predicted_p50_date": predicted.isoformat() if predicted else None,
+            "actual_paid_date": actual.isoformat(), "p10_date": (invoice["issue_date"] + timedelta(days=p10)).isoformat() if p10 else None,
+            "p90_date": (invoice["issue_date"] + timedelta(days=p90)).isoformat() if p90 else None,
+            "absolute_error_days": error, "within_p10_p90": bool(p10 is not None and p90 is not None and p10 <= duration <= p90),
+        })
+    coverage = covered / eligible_for_coverage if eligible_for_coverage else None
+
+    # Decile plot uses held-out 14-day probabilities and the validation-trained mapping.
     fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=150)
-    ax.plot(calibration_days, predicted, marker="o", label="LightGBM")
-    ax.plot(calibration_days, observed, marker="s", label="Observed test cohort")
-    ax.set(xlabel="Days after invoice issue", ylabel="Cumulative probability of full payment", ylim=(0, 1), title="Synthetic held-out calibration")
+    if test_calibration_metrics["deciles"]:
+        points = test_calibration_metrics["deciles"]
+        ax.plot([point["predicted"] for point in points], [point["observed"] for point in points], marker="o", label="Raw predicted")
+        ax.plot([point["calibrated"] for point in points], [point["observed"] for point in points], marker="s", label="Calibrated")
+    ax.plot([0, 1], [0, 1], color="#888888", linestyle="--", label="Ideal")
+    ax.set(xlabel="Predicted P(full payment within 14 days)", ylabel="Observed share paid within 14 days", xlim=(0, 1), ylim=(0, 1), title="Synthetic held-out 14-day calibration")
     ax.grid(alpha=0.22)
     ax.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
-    model_version = f"lgbm-hazard-v2-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    model_version = f"lgbm-hazard-v3-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    feature_gains = booster.feature_importance(importance_type="gain")
+    feature_importance = sorted(
+        ({"feature": name, "gain": float(gain)} for name, gain in zip(FEATURES, feature_gains, strict=True)),
+        key=lambda item: item["gain"], reverse=True,
+    )
+    (output_dir / "feature_importance.json").write_text(json.dumps({"model_version": model_version, "features": feature_importance}, indent=2))
+    training_issue_dates = [row["issue_date"] for row, _, _ in train_subjects]
     schema = {
         "version": FEATURE_SCHEMA_VERSION, "features": FEATURES, "horizon_days": HORIZON, "seed": SEED,
         "dataset": "fully synthetic invoice records generated locally; 52 clients; no downloads",
         "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
         "training_cutoff": train_cutoff.isoformat(),
+        "training_date_range": [min(training_issue_dates).isoformat(), max(training_issue_dates).isoformat()],
         "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()], "validation_observation_cutoff": validation_cutoff.isoformat(),
         "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": history_cutoff.isoformat(),
+        "validation_unit": "invoice; all daily risk rows for an invoice stay in the same time cohort",
+        "feature_priors": {"delay_days": GLOBAL_DELAY_PRIOR_DAYS, "late_rate": GLOBAL_LATE_RATE_PRIOR,
+                           "amount_median": GLOBAL_AMOUNT_MEDIAN_PRIOR, "history_prior_strength": HISTORY_PRIOR_STRENGTH},
         "generation_parameters": {"client_profiles": ["prompt", "due_date", "chronic_late", "deteriorating", "erratic"], "invoice_count": len(records), "clients": len({row["client_id"] for row in records}), "horizon_days": HORIZON},
     }
+    evaluation = {
+        "as_of_date": history_cutoff.isoformat(), "seed": SEED,
+        "split": {
+            "train_cutoff": train_cutoff.isoformat(), "training_date_range": schema["training_date_range"],
+            "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
+            "validation_observation_cutoff": validation_cutoff.isoformat(),
+            "test_cohort": [test_lo.isoformat(), test_hi.isoformat()],
+            "test_observation_cutoff": history_cutoff.isoformat(), "unit": "invoice",
+        },
+        "survival_metrics": test_metrics,
+        "calibration_14d": test_calibration_metrics | {"validation_deciles": calibration_deciles},
+        "backtest": {
+            "paid_invoice_count": len(backtest_rows), "p50_median_absolute_error_days": float(np.median(p50_errors)) if p50_errors else None,
+            "p10_p90_coverage": coverage, "coverage_invoice_count": eligible_for_coverage,
+            "target_coverage": 0.8, "invoices": backtest_rows,
+        },
+        "cox_baseline_fit": {"converged": cox_model["converged"], "iterations": cox_model["iterations"]},
+        "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy.",
+    }
+    (output_dir / "eval.json").write_text(json.dumps(evaluation, indent=2))
     report = {
         "model_version": model_version, "feature_schema_version": FEATURE_SCHEMA_VERSION,
-        "seed": SEED, "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
+        "seed": SEED, "training_seed": SEED, "feature_list": FEATURES,
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
+        "training_date_range": schema["training_date_range"],
         "training_cutoff": train_cutoff.isoformat(),
         "train_rows": int(len(X_train)), "train_event_rows": int(y_train.sum()), "train_invoices": len(train_subjects),
         "validation_invoices": len(val_subjects), "validation_event_count": int(sum(event for _, _, event in val_subjects)),
@@ -246,13 +413,20 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "validation_observation_cutoff": validation_cutoff.isoformat(),
         "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": history_cutoff.isoformat(),
         "test_invoices": len(test_subjects), "test_event_count": int(sum(event for _, _, event in test_subjects)),
-        "test_horizons": test_horizons, "test_ibs_lightgbm": test_ibs, "test_ibs_km": test_km_ibs,
-        "test_paid_only_date_mae_days": _paid_only_mae(test_subjects, test_days),
+        "test_horizons": test_horizons,
+        "test_integrated_brier_lightgbm": test_metrics["lightgbm"]["integrated_brier_score"],
+        "test_integrated_brier_km": test_metrics["kaplan_meier"]["integrated_brier_score"],
+        "test_uno_concordance_lightgbm": test_metrics["lightgbm"]["uno_concordance"],
+        "test_uno_concordance_km": test_metrics["kaplan_meier"]["uno_concordance"],
+        "test_uno_concordance_cox": test_metrics["cox"]["uno_concordance"],
+        "test_paid_only_date_mae_days": float(np.mean(p50_errors)) if p50_errors else None,
         "test_paid_only_invoice_count": int(sum(event for _, _, event in test_subjects)),
-        "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date MAE excludes censored invoices.",
+        "test_p10_p90_coverage": coverage,
+        "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
     }
     (output_dir / "feature_schema.json").write_text(json.dumps(schema, indent=2))
     (output_dir / "model_metadata.json").write_text(json.dumps(report, indent=2))
+    (output_dir / "eval.json").write_text(json.dumps(evaluation, indent=2))
     return report
 
 
