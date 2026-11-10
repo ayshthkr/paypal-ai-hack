@@ -17,7 +17,7 @@ Implemented in the requested order: profile/read path; client fetching and cachi
 
 - Overdue inference uses a smooth conditional survivor tail, `S(age+t)/S(age)`, instead of repeating an exhausted terminal hazard. Quantile crossings interpolate and unresolved quantiles remain null.
 - Far-overdue invoices show “90+ days, low confidence”. A separate Beta-shrunk recovery estimate reserves unrecovered mass and reduces expected cash. This is a sparse-history recovery heuristic, **not an identified probability of eventual recovery**.
-- Recorded reminder events determine ladder progression and cooldown. Skipping does not advance the ladder. View flags derive from recorded view timestamps. Display timestamps use UTC and calendar dates use the same date format.
+- Recorded reminder events determine ladder progression and cooldown. Skipping does not advance the ladder. View flags derive from recorded view timestamps. Display timestamps consistently use Asia/Kolkata (IST); issue and due dates remain timezone-neutral calendar dates.
 - The seed has 52 clients, 2,154 invoices, exactly 50 open balances, eight deliberately changing clients and three quiet clients. Payment timing includes client effects, lognormal noise, month-end/weekday/holiday effects and occasional disputes. Chronic lateness is distinct from a stable trend.
 - Fixed two point-in-time leakage bugs: historical risk rows no longer use final paid balances, and issue-origin forecasts cannot see later views, reminders or partial payments.
 - Training retains temporal evaluation cohorts, then refits the deployed model through `AS_OF`. `make train AS_OF=today` remains available. The model footer exposes the version and training cutoff.
@@ -39,15 +39,17 @@ On the November 11, 2026 held-out synthetic cohort (300 paid invoices), the corr
 
 ## Verification
 
-- 54 API tests pass, including pagination bounds, empty views, unknown IDs, full export, ETag invalidation, persistence, reminder history, survival tails, historical balance leakage, seeded no-scoring reads, and snapshot reset under five seconds.
+- 56 API tests pass, including pagination bounds, empty views, unknown IDs, full export, ETag invalidation, persistence, reminder history, survival tails, historical balance leakage, seeded no-scoring reads, and snapshot reset under five seconds.
 - Ruff, ESLint, TypeScript and production build pass.
 - Playwright smoke passes portfolio, URL filtering, lazy client search, queue, client, invoice and 404 navigation; it asserts no browser exceptions, no repeated 404 fetch and no warm API read over two seconds.
-- Local PostgreSQL seeded smoke: `/portfolio` 191 ms; `/invoices/demo-invoice-16-045` 191 ms; `/clients` 194 ms; `/facts/clients/demo-client-16` 202 ms; `/action-queue` 206 ms; `/evaluation` 4 ms; `/invoices?view=all` 254 ms. Portfolio response is about 21 KB (roughly 89% smaller than the original 188 KB). These are local measurements, not hosted-service guarantees.
+- Local PostgreSQL seeded smoke: `/portfolio` 56 ms; invoice detail 34 ms; `/clients` 7 ms; client facts 102 ms; `/action-queue` 47 ms; `/evaluation` 4 ms; all-invoice page 31 ms. Portfolio response is about 21 KB (roughly 89% smaller than the original 188 KB). These are local measurements, not hosted-service guarantees.
 
 Run `make check`, `make smoke`, and `bun run test:browser` with the API/web servers running. Use `SMOKE_BASE_URL=https://HOST/api` or `PLAYWRIGHT_BASE_URL=https://HOST` for hosted checks. Readiness warming is excluded from the warm-read latency gate.
 
-PostgreSQL snapshot reset completed in 441 ms. Four simultaneous queue requests and four simultaneous portfolio requests all returned 200; atomic proposal/audit inserts prevent duplicates. The browser smoke also verifies date-only rendering in Asia/Kolkata.
+Incremental snapshot reset completed locally in 89 ms and on the hosted API in 1.051 seconds, restoring 50 open invoices. Startup refresh preserves simulated changes and the original reset baseline. Four simultaneous queue requests and four simultaneous portfolio requests all returned 200; atomic proposal/audit inserts prevent duplicates. The browser smoke also verifies date-only rendering in Asia/Kolkata.
 
 The GitHub health workflow is configured for 09:37–19:27 IST and was manually dispatched successfully. Render free services sleep after idle periods; the schedule reduces cold starts during demo hours without changing the hosting plan. See [Render free-service behaviour](https://render.com/docs/free).
 
-Hosted deployment evidence is recorded after the implementation commits.
+Both Render services successfully deployed commit `8e5f755` before the final draft/timezone follow-up. The hosted proxy smoke measured portfolio 550 ms, invoice detail 380 ms, clients 423 ms, client facts 1,260 ms, queue 419 ms, evaluation 676 ms and all-invoice page 528 ms. All reads met the two-second smoke gate; client facts exceeded the one-second aspirational list budget. Portfolio payload was 21,343 bytes, with zero model-load time during reads. Hosted skip/undo returned 200 and reset restored the current-day, 50-open-invoice baseline in 1.051 seconds. These are warm samples, not latency guarantees.
+
+The final browser suite has two passing local tests: the navigation/latency walkthrough and an isolated synthetic draft edit/save/reload/restore test. The latter requires `E2E_EDITABLE_INVOICE` and skips when no controlled fixture is supplied. Historical views reject invoice mutations server-side as well as disabling controls; stale mutation conflicts invalidate client reads. Invoice draft state is scoped to its recommendation and survives refresh/navigation without being copied into another invoice.
