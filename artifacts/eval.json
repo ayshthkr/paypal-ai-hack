@@ -21,20 +21,20 @@
   },
   "survival_metrics": {
     "lightgbm": {
-      "uno_concordance": 0.8690913812158867,
-      "integrated_brier_score": 0.027289390480540538,
+      "uno_concordance": 0.8723150103476514,
+      "integrated_brier_score": 0.027310651241970848,
       "brier_scores": {
-        "7": 0.03928837483697676,
-        "14": 0.08040709290269069,
-        "30": 0.10880772779925628,
-        "60": 0.03267174487826971,
-        "90": 0.02813083616223694,
+        "7": 0.03922140415483925,
+        "14": 0.08090951428033026,
+        "30": 0.10834324861907993,
+        "60": 0.03259208482090092,
+        "90": 0.028190135690819504,
         "120": 0.007582472206376484
       },
       "time_dependent_auc": {
-        "due_date": 0.8974004192872117,
-        "due_plus_14_days": 0.9182382834556747,
-        "due_plus_30_days": 0.8430672268907563
+        "due_date": 0.8968134171907757,
+        "due_plus_14_days": 0.9181818181818182,
+        "due_plus_30_days": 0.8493697478991596
       }
     },
     "kaplan_meier": {
@@ -55,20 +55,20 @@
       }
     },
     "cox": {
-      "uno_concordance": 0.8578943578291639,
-      "integrated_brier_score": 0.041521454544263973,
+      "uno_concordance": 0.8590028558062266,
+      "integrated_brier_score": 0.04147991722040459,
       "brier_scores": {
-        "7": 0.05703645207785643,
-        "14": 0.09805652148495457,
-        "30": 0.12456602194117453,
-        "60": 0.03427209395746968,
-        "90": 0.03590707222877418,
-        "120": 0.024891602500267753
+        "7": 0.057505774686346586,
+        "14": 0.09856255685029411,
+        "30": 0.12385612745936425,
+        "60": 0.03447834714701036,
+        "90": 0.035570712006124106,
+        "120": 0.024741096101084225
       },
       "time_dependent_auc": {
-        "due_date": 0.8327882599580713,
-        "due_plus_14_days": 0.8331451157538114,
-        "due_plus_30_days": 0.8180672268907563
+        "due_date": 0.8311111111111111,
+        "due_plus_14_days": 0.8348955392433653,
+        "due_plus_30_days": 0.8196428571428571
       }
     }
   },
@@ -126,76 +126,76 @@
   },
   "calibration_14d": {
     "count": 330,
-    "raw_brier": 0.0792814779648068,
-    "calibrated_brier": 0.07807998746626878,
+    "raw_brier": 0.07977740569309472,
+    "calibrated_brier": 0.07940540390127168,
     "deciles": [
       {
         "decile": 1,
         "count": 33,
-        "predicted": 0.0012194090935666489,
+        "predicted": 0.0011989250407053638,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 2,
         "count": 33,
-        "predicted": 0.0013976874668764241,
+        "predicted": 0.0013931251378739532,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 3,
         "count": 33,
-        "predicted": 0.0015819792140447729,
+        "predicted": 0.0015019349237374731,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 4,
         "count": 33,
-        "predicted": 0.01359794165771967,
+        "predicted": 0.013504042577168418,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 5,
         "count": 33,
-        "predicted": 0.08952236472613978,
+        "predicted": 0.08256281225049829,
         "calibrated": 0.0,
-        "observed": 0.030303030303030304
+        "observed": 0.06060606060606061
       },
       {
         "decile": 6,
         "count": 33,
-        "predicted": 0.1878915759024982,
-        "calibrated": 0.11320754716981132,
+        "predicted": 0.18278859322070273,
+        "calibrated": 0.12727272727272726,
         "observed": 0.24242424242424243
       },
       {
         "decile": 7,
         "count": 33,
-        "predicted": 0.4101738997934311,
-        "calibrated": 0.2777777777777778,
-        "observed": 0.36363636363636365
+        "predicted": 0.4168326845993669,
+        "calibrated": 0.30303030303030304,
+        "observed": 0.3333333333333333
       },
       {
         "decile": 8,
         "count": 33,
-        "predicted": 0.9352596633454163,
+        "predicted": 0.9391642633668106,
         "calibrated": 1.0,
         "observed": 0.7575757575757576
       },
       {
         "decile": 9,
         "count": 33,
-        "predicted": 0.9981720481429507,
+        "predicted": 0.9993163788269974,
         "calibrated": 1.0,
         "observed": 0.9393939393939394
       },
       {
         "decile": 10,
         "count": 33,
-        "predicted": 0.9999999999960938,
+        "predicted": 0.9999999990771661,
         "calibrated": 1.0,
         "observed": 0.9090909090909091
       }
@@ -204,70 +204,70 @@
       {
         "decile": 1,
         "count": 45,
-        "predicted": 0.001193682440766302,
+        "predicted": 0.0011798544953068152,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 2,
         "count": 45,
-        "predicted": 0.001388262831853335,
+        "predicted": 0.001423256484351433,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 3,
         "count": 45,
-        "predicted": 0.0015272474923867568,
+        "predicted": 0.0015251279485347657,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 4,
         "count": 45,
-        "predicted": 0.008433060633696527,
+        "predicted": 0.00821391808978573,
         "calibrated": 0.0,
         "observed": 0.0
       },
       {
         "decile": 5,
         "count": 45,
-        "predicted": 0.05805876797898953,
+        "predicted": 0.055216921897739524,
         "calibrated": 0.0,
-        "observed": 0.022222222222222223
+        "observed": 0.0
       },
       {
         "decile": 6,
         "count": 45,
-        "predicted": 0.15055392016484817,
-        "calibrated": 0.11320754716981132,
-        "observed": 0.1111111111111111
+        "predicted": 0.15170764728553732,
+        "calibrated": 0.12727272727272726,
+        "observed": 0.13333333333333333
       },
       {
         "decile": 7,
         "count": 44,
-        "predicted": 0.3754642032460268,
-        "calibrated": 0.2777777777777778,
+        "predicted": 0.37982543236526617,
+        "calibrated": 0.12727272727272726,
         "observed": 0.22727272727272727
       },
       {
         "decile": 8,
         "count": 44,
-        "predicted": 0.8719527911382255,
+        "predicted": 0.8808993383073009,
         "calibrated": 1.0,
         "observed": 0.75
       },
       {
         "decile": 9,
         "count": 44,
-        "predicted": 0.9971702867945901,
+        "predicted": 0.9985623922491796,
         "calibrated": 1.0,
         "observed": 1.0
       },
       {
         "decile": 10,
         "count": 44,
-        "predicted": 0.9999999999998214,
+        "predicted": 0.999999999937053,
         "calibrated": 1.0,
         "observed": 1.0
       }
@@ -276,7 +276,7 @@
   "backtest": {
     "paid_invoice_count": 301,
     "p50_median_absolute_error_days": 1.0,
-    "p10_p90_coverage": 0.9269102990033222,
+    "p10_p90_coverage": 0.9235880398671097,
     "coverage_invoice_count": 301,
     "target_coverage": 0.8,
     "invoices": [
@@ -295,7 +295,7 @@
         "issue_date": "2026-05-24",
         "predicted_p50_date": "2026-06-08",
         "actual_paid_date": "2026-06-08",
-        "p10_date": "2026-06-06",
+        "p10_date": "2026-06-05",
         "p90_date": "2026-06-09",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -303,11 +303,11 @@
       {
         "invoice_id": "demo-invoice-01-077",
         "issue_date": "2026-06-04",
-        "predicted_p50_date": "2026-07-03",
+        "predicted_p50_date": "2026-07-04",
         "actual_paid_date": "2026-07-06",
         "p10_date": "2026-07-01",
         "p90_date": "2026-07-05",
-        "absolute_error_days": 3,
+        "absolute_error_days": 2,
         "within_p10_p90": false
       },
       {
@@ -325,7 +325,7 @@
         "issue_date": "2026-06-18",
         "predicted_p50_date": "2026-07-03",
         "actual_paid_date": "2026-07-05",
-        "p10_date": "2026-07-01",
+        "p10_date": "2026-06-30",
         "p90_date": "2026-07-05",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -353,11 +353,11 @@
       {
         "invoice_id": "demo-invoice-01-082",
         "issue_date": "2026-07-12",
-        "predicted_p50_date": "2026-07-27",
+        "predicted_p50_date": "2026-07-28",
         "actual_paid_date": "2026-07-24",
         "p10_date": "2026-07-25",
-        "p90_date": "2026-07-29",
-        "absolute_error_days": 3,
+        "p90_date": "2026-08-01",
+        "absolute_error_days": 4,
         "within_p10_p90": false
       },
       {
@@ -366,7 +366,7 @@
         "predicted_p50_date": "2026-07-30",
         "actual_paid_date": "2026-07-30",
         "p10_date": "2026-07-30",
-        "p90_date": "2026-07-31",
+        "p90_date": "2026-08-01",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -485,7 +485,7 @@
         "issue_date": "2026-08-31",
         "predicted_p50_date": "2026-09-15",
         "actual_paid_date": "2026-09-13",
-        "p10_date": "2026-09-12",
+        "p10_date": "2026-09-13",
         "p90_date": "2026-09-16",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -525,7 +525,7 @@
         "issue_date": "2026-07-05",
         "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-19",
-        "p10_date": "2026-07-18",
+        "p10_date": "2026-07-17",
         "p90_date": "2026-07-21",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -566,7 +566,7 @@
         "predicted_p50_date": "2026-08-09",
         "actual_paid_date": "2026-08-07",
         "p10_date": "2026-08-07",
-        "p90_date": "2026-08-10",
+        "p90_date": "2026-08-11",
         "absolute_error_days": 2,
         "within_p10_p90": true
       },
@@ -616,7 +616,7 @@
         "predicted_p50_date": "2026-07-14",
         "actual_paid_date": "2026-07-14",
         "p10_date": "2026-07-14",
-        "p90_date": "2026-07-14",
+        "p90_date": "2026-07-15",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -636,7 +636,7 @@
         "predicted_p50_date": "2026-09-16",
         "actual_paid_date": "2026-09-16",
         "p10_date": "2026-09-16",
-        "p90_date": "2026-09-16",
+        "p90_date": "2026-09-17",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -665,10 +665,10 @@
         "issue_date": "2026-06-17",
         "predicted_p50_date": "2026-07-17",
         "actual_paid_date": "2026-07-19",
-        "p10_date": "2026-07-14",
-        "p90_date": "2026-07-18",
+        "p10_date": "2026-07-15",
+        "p90_date": "2026-07-19",
         "absolute_error_days": 2,
-        "within_p10_p90": false
+        "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-06-064",
@@ -683,11 +683,11 @@
       {
         "invoice_id": "demo-invoice-06-065",
         "issue_date": "2026-07-19",
-        "predicted_p50_date": "2026-08-02",
+        "predicted_p50_date": "2026-08-03",
         "actual_paid_date": "2026-08-04",
         "p10_date": "2026-07-31",
         "p90_date": "2026-08-04",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -695,7 +695,7 @@
         "issue_date": "2026-08-02",
         "predicted_p50_date": "2026-09-01",
         "actual_paid_date": "2026-09-03",
-        "p10_date": "2026-08-29",
+        "p10_date": "2026-08-30",
         "p90_date": "2026-09-02",
         "absolute_error_days": 2,
         "within_p10_p90": false
@@ -715,7 +715,7 @@
         "issue_date": "2026-09-02",
         "predicted_p50_date": "2026-09-17",
         "actual_paid_date": "2026-09-18",
-        "p10_date": "2026-09-14",
+        "p10_date": "2026-09-15",
         "p90_date": "2026-09-19",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -723,31 +723,31 @@
       {
         "invoice_id": "demo-invoice-06-069",
         "issue_date": "2026-09-18",
-        "predicted_p50_date": "2026-10-17",
+        "predicted_p50_date": "2026-10-18",
         "actual_paid_date": "2026-10-18",
-        "p10_date": "2026-10-15",
+        "p10_date": "2026-10-16",
         "p90_date": "2026-10-19",
-        "absolute_error_days": 1,
+        "absolute_error_days": 0,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-07-039",
         "issue_date": "2026-05-23",
-        "predicted_p50_date": "2026-05-24",
+        "predicted_p50_date": "2026-05-25",
         "actual_paid_date": "2026-05-24",
         "p10_date": "2026-05-24",
-        "p90_date": "2026-05-27",
-        "absolute_error_days": 0,
+        "p90_date": "2026-05-29",
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-07-040",
         "issue_date": "2026-06-13",
-        "predicted_p50_date": "2026-06-28",
+        "predicted_p50_date": "2026-06-29",
         "actual_paid_date": "2026-06-30",
         "p10_date": "2026-06-26",
-        "p90_date": "2026-06-30",
-        "absolute_error_days": 2,
+        "p90_date": "2026-07-01",
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -756,7 +756,7 @@
         "predicted_p50_date": "2026-08-04",
         "actual_paid_date": "2026-08-03",
         "p10_date": "2026-08-02",
-        "p90_date": "2026-08-06",
+        "p90_date": "2026-08-08",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
@@ -766,7 +766,7 @@
         "predicted_p50_date": "2026-07-27",
         "actual_paid_date": "2026-07-27",
         "p10_date": "2026-07-27",
-        "p90_date": "2026-07-28",
+        "p90_date": "2026-07-29",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -816,7 +816,7 @@
         "predicted_p50_date": "2026-07-13",
         "actual_paid_date": "2026-07-14",
         "p10_date": "2026-07-11",
-        "p90_date": "2026-07-15",
+        "p90_date": "2026-07-14",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
@@ -866,9 +866,9 @@
         "predicted_p50_date": "2026-07-31",
         "actual_paid_date": "2026-08-01",
         "p10_date": "2026-07-31",
-        "p90_date": "2026-07-31",
+        "p90_date": "2026-08-01",
         "absolute_error_days": 1,
-        "within_p10_p90": false
+        "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-09-032",
@@ -916,7 +916,7 @@
         "predicted_p50_date": "2026-07-19",
         "actual_paid_date": "2026-07-19",
         "p10_date": "2026-07-17",
-        "p90_date": "2026-07-21",
+        "p90_date": "2026-07-20",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -936,7 +936,7 @@
         "predicted_p50_date": "2026-08-22",
         "actual_paid_date": "2026-08-22",
         "p10_date": "2026-08-22",
-        "p90_date": "2026-08-22",
+        "p90_date": "2026-08-23",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -1045,7 +1045,7 @@
         "issue_date": "2026-08-11",
         "predicted_p50_date": "2026-09-10",
         "actual_paid_date": "2026-09-10",
-        "p10_date": "2026-09-08",
+        "p10_date": "2026-09-09",
         "p90_date": "2026-09-11",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -1325,7 +1325,7 @@
         "issue_date": "2026-06-20",
         "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-20",
-        "p10_date": "2026-07-17",
+        "p10_date": "2026-07-18",
         "p90_date": "2026-07-21",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -1385,7 +1385,7 @@
         "issue_date": "2026-07-26",
         "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-08-24",
-        "p10_date": "2026-08-23",
+        "p10_date": "2026-08-22",
         "p90_date": "2026-08-26",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -1416,7 +1416,7 @@
         "predicted_p50_date": "2026-05-17",
         "actual_paid_date": "2026-05-17",
         "p10_date": "2026-05-17",
-        "p90_date": "2026-05-17",
+        "p90_date": "2026-05-18",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
@@ -1525,7 +1525,7 @@
         "issue_date": "2026-08-31",
         "predicted_p50_date": "2026-09-30",
         "actual_paid_date": "2026-09-30",
-        "p10_date": "2026-09-28",
+        "p10_date": "2026-09-29",
         "p90_date": "2026-10-01",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -1543,21 +1543,21 @@
       {
         "invoice_id": "demo-invoice-21-080",
         "issue_date": "2026-05-22",
-        "predicted_p50_date": "2026-06-16",
+        "predicted_p50_date": "2026-06-15",
         "actual_paid_date": "2026-06-17",
-        "p10_date": "2026-06-12",
+        "p10_date": "2026-06-13",
         "p90_date": "2026-06-18",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-21-081",
         "issue_date": "2026-05-31",
-        "predicted_p50_date": "2026-07-10",
+        "predicted_p50_date": "2026-07-09",
         "actual_paid_date": "2026-07-10",
         "p10_date": "2026-07-06",
         "p90_date": "2026-07-12",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1566,7 +1566,7 @@
         "predicted_p50_date": "2026-06-16",
         "actual_paid_date": "2026-06-15",
         "p10_date": "2026-06-14",
-        "p90_date": "2026-06-19",
+        "p90_date": "2026-06-18",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
@@ -1586,18 +1586,18 @@
         "predicted_p50_date": "2026-08-11",
         "actual_paid_date": "2026-08-10",
         "p10_date": "2026-08-08",
-        "p90_date": "2026-08-14",
+        "p90_date": "2026-08-13",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-21-085",
         "issue_date": "2026-07-10",
-        "predicted_p50_date": "2026-07-20",
+        "predicted_p50_date": "2026-07-19",
         "actual_paid_date": "2026-07-22",
-        "p10_date": "2026-07-16",
+        "p10_date": "2026-07-17",
         "p90_date": "2026-07-21",
-        "absolute_error_days": 2,
+        "absolute_error_days": 3,
         "within_p10_p90": false
       },
       {
@@ -1613,11 +1613,11 @@
       {
         "invoice_id": "demo-invoice-21-087",
         "issue_date": "2026-07-29",
-        "predicted_p50_date": "2026-09-07",
+        "predicted_p50_date": "2026-09-06",
         "actual_paid_date": "2026-09-05",
-        "p10_date": "2026-09-03",
+        "p10_date": "2026-09-04",
         "p90_date": "2026-09-09",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1626,7 +1626,7 @@
         "predicted_p50_date": "2026-08-17",
         "actual_paid_date": "2026-08-19",
         "p10_date": "2026-08-14",
-        "p90_date": "2026-08-20",
+        "p90_date": "2026-08-19",
         "absolute_error_days": 2,
         "within_p10_p90": true
       },
@@ -1643,51 +1643,51 @@
       {
         "invoice_id": "demo-invoice-21-090",
         "issue_date": "2026-08-25",
-        "predicted_p50_date": "2026-10-04",
+        "predicted_p50_date": "2026-10-03",
         "actual_paid_date": "2026-10-04",
         "p10_date": "2026-09-30",
         "p90_date": "2026-10-06",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-21-091",
         "issue_date": "2026-09-01",
-        "predicted_p50_date": "2026-09-11",
+        "predicted_p50_date": "2026-09-10",
         "actual_paid_date": "2026-09-09",
         "p10_date": "2026-09-08",
         "p90_date": "2026-09-13",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-21-092",
         "issue_date": "2026-09-08",
-        "predicted_p50_date": "2026-10-03",
+        "predicted_p50_date": "2026-10-02",
         "actual_paid_date": "2026-10-04",
         "p10_date": "2026-09-29",
         "p90_date": "2026-10-05",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-21-093",
         "issue_date": "2026-09-20",
-        "predicted_p50_date": "2026-10-30",
+        "predicted_p50_date": "2026-10-29",
         "actual_paid_date": "2026-10-30",
         "p10_date": "2026-10-26",
         "p90_date": "2026-11-01",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-22-036",
         "issue_date": "2026-06-01",
-        "predicted_p50_date": "2026-06-11",
+        "predicted_p50_date": "2026-06-10",
         "actual_paid_date": "2026-06-12",
         "p10_date": "2026-06-09",
         "p90_date": "2026-06-13",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
@@ -1695,7 +1695,7 @@
         "issue_date": "2026-06-25",
         "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-21",
-        "p10_date": "2026-07-16",
+        "p10_date": "2026-07-17",
         "p90_date": "2026-07-22",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -1706,18 +1706,18 @@
         "predicted_p50_date": "2026-08-24",
         "actual_paid_date": "2026-08-24",
         "p10_date": "2026-08-21",
-        "p90_date": "2026-08-27",
+        "p90_date": "2026-08-26",
         "absolute_error_days": 0,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-22-039",
         "issue_date": "2026-08-08",
-        "predicted_p50_date": "2026-08-18",
+        "predicted_p50_date": "2026-08-17",
         "actual_paid_date": "2026-08-19",
         "p10_date": "2026-08-15",
         "p90_date": "2026-08-20",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
@@ -1753,11 +1753,11 @@
       {
         "invoice_id": "demo-invoice-23-027",
         "issue_date": "2026-07-16",
-        "predicted_p50_date": "2026-08-10",
+        "predicted_p50_date": "2026-08-09",
         "actual_paid_date": "2026-08-10",
         "p10_date": "2026-08-06",
         "p90_date": "2026-08-12",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1775,7 +1775,7 @@
         "issue_date": "2026-09-26",
         "predicted_p50_date": "2026-10-06",
         "actual_paid_date": "2026-10-08",
-        "p10_date": "2026-10-03",
+        "p10_date": "2026-10-04",
         "p90_date": "2026-10-08",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -1803,11 +1803,11 @@
       {
         "invoice_id": "demo-invoice-24-028",
         "issue_date": "2026-08-22",
-        "predicted_p50_date": "2026-09-01",
+        "predicted_p50_date": "2026-08-31",
         "actual_paid_date": "2026-08-30",
         "p10_date": "2026-08-28",
         "p90_date": "2026-09-03",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1815,7 +1815,7 @@
         "issue_date": "2026-09-24",
         "predicted_p50_date": "2026-10-19",
         "actual_paid_date": "2026-10-17",
-        "p10_date": "2026-10-15",
+        "p10_date": "2026-10-16",
         "p90_date": "2026-10-21",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -1823,21 +1823,21 @@
       {
         "invoice_id": "demo-invoice-25-038",
         "issue_date": "2026-05-27",
-        "predicted_p50_date": "2026-07-06",
+        "predicted_p50_date": "2026-07-05",
         "actual_paid_date": "2026-07-06",
         "p10_date": "2026-07-03",
         "p90_date": "2026-07-08",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-25-039",
         "issue_date": "2026-06-18",
-        "predicted_p50_date": "2026-06-28",
+        "predicted_p50_date": "2026-06-27",
         "actual_paid_date": "2026-06-26",
         "p10_date": "2026-06-24",
         "p90_date": "2026-06-30",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1845,7 +1845,7 @@
         "issue_date": "2026-07-05",
         "predicted_p50_date": "2026-07-29",
         "actual_paid_date": "2026-08-01",
-        "p10_date": "2026-07-25",
+        "p10_date": "2026-07-26",
         "p90_date": "2026-08-01",
         "absolute_error_days": 3,
         "within_p10_p90": true
@@ -1865,7 +1865,7 @@
         "issue_date": "2026-08-15",
         "predicted_p50_date": "2026-08-24",
         "actual_paid_date": "2026-08-24",
-        "p10_date": "2026-08-21",
+        "p10_date": "2026-08-22",
         "p90_date": "2026-08-27",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -1885,7 +1885,7 @@
         "issue_date": "2026-05-22",
         "predicted_p50_date": "2026-06-01",
         "actual_paid_date": "2026-05-30",
-        "p10_date": "2026-05-29",
+        "p10_date": "2026-05-30",
         "p90_date": "2026-06-03",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -1893,11 +1893,11 @@
       {
         "invoice_id": "demo-invoice-26-042",
         "issue_date": "2026-06-08",
-        "predicted_p50_date": "2026-07-03",
+        "predicted_p50_date": "2026-07-02",
         "actual_paid_date": "2026-07-03",
         "p10_date": "2026-06-29",
         "p90_date": "2026-07-05",
-        "absolute_error_days": 0,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -1913,11 +1913,11 @@
       {
         "invoice_id": "demo-invoice-26-044",
         "issue_date": "2026-07-15",
-        "predicted_p50_date": "2026-07-25",
+        "predicted_p50_date": "2026-07-24",
         "actual_paid_date": "2026-07-26",
         "p10_date": "2026-07-21",
         "p90_date": "2026-07-27",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
@@ -1935,7 +1935,7 @@
         "issue_date": "2026-08-21",
         "predicted_p50_date": "2026-09-29",
         "actual_paid_date": "2026-09-30",
-        "p10_date": "2026-09-26",
+        "p10_date": "2026-09-27",
         "p90_date": "2026-10-02",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -1943,49 +1943,49 @@
       {
         "invoice_id": "demo-invoice-26-047",
         "issue_date": "2026-09-05",
-        "predicted_p50_date": "2026-09-15",
+        "predicted_p50_date": "2026-09-14",
         "actual_paid_date": "2026-09-13",
         "p10_date": "2026-09-11",
-        "p90_date": "2026-09-17",
-        "absolute_error_days": 2,
+        "p90_date": "2026-09-16",
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-26-048",
         "issue_date": "2026-09-21",
-        "predicted_p50_date": "2026-10-16",
+        "predicted_p50_date": "2026-10-15",
         "actual_paid_date": "2026-10-18",
         "p10_date": "2026-10-12",
         "p90_date": "2026-10-18",
-        "absolute_error_days": 2,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-27-024",
         "issue_date": "2026-05-23",
-        "predicted_p50_date": "2026-07-02",
+        "predicted_p50_date": "2026-07-01",
         "actual_paid_date": "2026-06-30",
         "p10_date": "2026-06-29",
         "p90_date": "2026-07-04",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-27-025",
         "issue_date": "2026-06-26",
-        "predicted_p50_date": "2026-07-06",
+        "predicted_p50_date": "2026-07-05",
         "actual_paid_date": "2026-07-08",
         "p10_date": "2026-07-03",
-        "p90_date": "2026-07-08",
-        "absolute_error_days": 2,
-        "within_p10_p90": true
+        "p90_date": "2026-07-07",
+        "absolute_error_days": 3,
+        "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-27-026",
         "issue_date": "2026-07-26",
         "predicted_p50_date": "2026-08-19",
         "actual_paid_date": "2026-08-19",
-        "p10_date": "2026-08-15",
+        "p10_date": "2026-08-16",
         "p90_date": "2026-08-22",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2035,7 +2035,7 @@
         "issue_date": "2026-08-08",
         "predicted_p50_date": "2026-09-16",
         "actual_paid_date": "2026-09-18",
-        "p10_date": "2026-09-12",
+        "p10_date": "2026-09-13",
         "p90_date": "2026-09-19",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -2045,7 +2045,7 @@
         "issue_date": "2026-09-04",
         "predicted_p50_date": "2026-09-14",
         "actual_paid_date": "2026-09-13",
-        "p10_date": "2026-09-11",
+        "p10_date": "2026-09-12",
         "p90_date": "2026-09-16",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -2055,7 +2055,7 @@
         "issue_date": "2026-05-23",
         "predicted_p50_date": "2026-06-01",
         "actual_paid_date": "2026-06-04",
-        "p10_date": "2026-05-29",
+        "p10_date": "2026-05-30",
         "p90_date": "2026-06-04",
         "absolute_error_days": 3,
         "within_p10_p90": true
@@ -2065,7 +2065,7 @@
         "issue_date": "2026-06-25",
         "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-18",
-        "p10_date": "2026-07-16",
+        "p10_date": "2026-07-17",
         "p90_date": "2026-07-22",
         "absolute_error_days": 2,
         "within_p10_p90": true
@@ -2075,7 +2075,7 @@
         "issue_date": "2026-07-29",
         "predicted_p50_date": "2026-09-07",
         "actual_paid_date": "2026-09-06",
-        "p10_date": "2026-09-03",
+        "p10_date": "2026-09-04",
         "p90_date": "2026-09-09",
         "absolute_error_days": 1,
         "within_p10_p90": true
@@ -2113,11 +2113,11 @@
       {
         "invoice_id": "demo-invoice-30-030",
         "issue_date": "2026-07-26",
-        "predicted_p50_date": "2026-09-04",
+        "predicted_p50_date": "2026-09-03",
         "actual_paid_date": "2026-09-03",
         "p10_date": "2026-09-01",
         "p90_date": "2026-09-06",
-        "absolute_error_days": 1,
+        "absolute_error_days": 0,
         "within_p10_p90": true
       },
       {
@@ -2135,7 +2135,7 @@
         "issue_date": "2026-05-20",
         "predicted_p50_date": "2026-08-13",
         "actual_paid_date": "2026-08-13",
-        "p10_date": "2026-08-05",
+        "p10_date": "2026-08-03",
         "p90_date": "2026-08-13",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2145,7 +2145,7 @@
         "issue_date": "2026-05-27",
         "predicted_p50_date": "2026-09-04",
         "actual_paid_date": "2026-09-04",
-        "p10_date": "2026-08-22",
+        "p10_date": "2026-08-18",
         "p90_date": "2026-09-04",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2165,7 +2165,7 @@
         "issue_date": "2026-06-11",
         "predicted_p50_date": "2026-09-04",
         "actual_paid_date": "2026-09-04",
-        "p10_date": "2026-08-25",
+        "p10_date": "2026-08-24",
         "p90_date": "2026-09-04",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2175,7 +2175,7 @@
         "issue_date": "2026-06-18",
         "predicted_p50_date": "2026-09-26",
         "actual_paid_date": "2026-09-26",
-        "p10_date": "2026-09-12",
+        "p10_date": "2026-09-08",
         "p90_date": "2026-09-26",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2195,7 +2195,7 @@
         "issue_date": "2026-07-02",
         "predicted_p50_date": "2026-09-25",
         "actual_paid_date": "2026-09-25",
-        "p10_date": "2026-09-15",
+        "p10_date": "2026-09-14",
         "p90_date": "2026-09-25",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2205,7 +2205,7 @@
         "issue_date": "2026-07-09",
         "predicted_p50_date": "2026-10-17",
         "actual_paid_date": "2026-10-17",
-        "p10_date": "2026-10-03",
+        "p10_date": "2026-09-29",
         "p90_date": "2026-10-17",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2235,7 +2235,7 @@
         "issue_date": "2026-07-31",
         "predicted_p50_date": "2026-11-08",
         "actual_paid_date": "2026-11-08",
-        "p10_date": "2026-10-27",
+        "p10_date": "2026-10-23",
         "p90_date": "2026-11-08",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2245,7 +2245,7 @@
         "issue_date": "2026-05-22",
         "predicted_p50_date": "2026-07-31",
         "actual_paid_date": "2026-07-31",
-        "p10_date": "2026-07-24",
+        "p10_date": "2026-07-26",
         "p90_date": "2026-07-31",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2255,7 +2255,7 @@
         "issue_date": "2026-06-28",
         "predicted_p50_date": "2026-09-21",
         "actual_paid_date": "2026-09-21",
-        "p10_date": "2026-09-12",
+        "p10_date": "2026-09-15",
         "p90_date": "2026-09-21",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2265,7 +2265,7 @@
         "issue_date": "2026-07-30",
         "predicted_p50_date": "2026-11-07",
         "actual_paid_date": "2026-11-07",
-        "p10_date": "2026-10-28",
+        "p10_date": "2026-10-26",
         "p90_date": "2026-11-07",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2275,7 +2275,7 @@
         "issue_date": "2026-05-21",
         "predicted_p50_date": "2026-07-30",
         "actual_paid_date": "2026-07-30",
-        "p10_date": "2026-07-03",
+        "p10_date": "2026-07-04",
         "p90_date": "2026-07-30",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2285,7 +2285,7 @@
         "issue_date": "2026-06-17",
         "predicted_p50_date": "2026-09-05",
         "actual_paid_date": "2026-09-10",
-        "p10_date": "2026-08-14",
+        "p10_date": "2026-08-15",
         "p90_date": "2026-09-10",
         "absolute_error_days": 5,
         "within_p10_p90": true
@@ -2295,7 +2295,7 @@
         "issue_date": "2026-07-16",
         "predicted_p50_date": "2026-10-19",
         "actual_paid_date": "2026-10-24",
-        "p10_date": "2026-09-26",
+        "p10_date": "2026-09-23",
         "p90_date": "2026-10-24",
         "absolute_error_days": 5,
         "within_p10_p90": true
@@ -2305,7 +2305,7 @@
         "issue_date": "2026-05-18",
         "predicted_p50_date": "2026-08-15",
         "actual_paid_date": "2026-08-26",
-        "p10_date": "2026-07-28",
+        "p10_date": "2026-07-24",
         "p90_date": "2026-08-26",
         "absolute_error_days": 11,
         "within_p10_p90": true
@@ -2325,7 +2325,7 @@
         "issue_date": "2026-07-04",
         "predicted_p50_date": "2026-09-27",
         "actual_paid_date": "2026-09-27",
-        "p10_date": "2026-09-19",
+        "p10_date": "2026-09-18",
         "p90_date": "2026-09-27",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2335,7 +2335,7 @@
         "issue_date": "2026-07-25",
         "predicted_p50_date": "2026-11-02",
         "actual_paid_date": "2026-11-02",
-        "p10_date": "2026-10-21",
+        "p10_date": "2026-10-19",
         "p90_date": "2026-11-02",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2343,21 +2343,21 @@
       {
         "invoice_id": "demo-invoice-35-020",
         "issue_date": "2026-05-26",
-        "predicted_p50_date": "2026-06-02",
+        "predicted_p50_date": "2026-06-01",
         "actual_paid_date": "2026-06-05",
         "p10_date": "2026-05-27",
         "p90_date": "2026-06-08",
-        "absolute_error_days": 3,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-35-021",
         "issue_date": "2026-06-24",
-        "predicted_p50_date": "2026-07-19",
+        "predicted_p50_date": "2026-07-18",
         "actual_paid_date": "2026-07-14",
         "p10_date": "2026-07-08",
         "p90_date": "2026-07-22",
-        "absolute_error_days": 5,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -2366,18 +2366,18 @@
         "predicted_p50_date": "2026-08-28",
         "actual_paid_date": "2026-08-20",
         "p10_date": "2026-08-19",
-        "p90_date": "2026-09-01",
+        "p90_date": "2026-08-31",
         "absolute_error_days": 8,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-35-023",
         "issue_date": "2026-08-24",
-        "predicted_p50_date": "2026-08-26",
+        "predicted_p50_date": "2026-08-29",
         "actual_paid_date": "2026-08-25",
         "p10_date": "2026-08-25",
         "p90_date": "2026-09-03",
-        "absolute_error_days": 1,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -2403,21 +2403,21 @@
       {
         "invoice_id": "demo-invoice-36-050",
         "issue_date": "2026-07-04",
-        "predicted_p50_date": "2026-07-26",
+        "predicted_p50_date": "2026-07-27",
         "actual_paid_date": "2026-07-23",
         "p10_date": "2026-07-18",
-        "p90_date": "2026-08-01",
-        "absolute_error_days": 3,
+        "p90_date": "2026-08-02",
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-36-051",
         "issue_date": "2026-07-21",
-        "predicted_p50_date": "2026-08-28",
+        "predicted_p50_date": "2026-08-27",
         "actual_paid_date": "2026-08-23",
         "p10_date": "2026-08-18",
         "p90_date": "2026-09-02",
-        "absolute_error_days": 5,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -2433,22 +2433,22 @@
       {
         "invoice_id": "demo-invoice-36-053",
         "issue_date": "2026-08-26",
-        "predicted_p50_date": "2026-09-18",
+        "predicted_p50_date": "2026-09-17",
         "actual_paid_date": "2026-09-26",
         "p10_date": "2026-09-09",
         "p90_date": "2026-09-29",
-        "absolute_error_days": 8,
+        "absolute_error_days": 9,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-37-034",
         "issue_date": "2026-05-31",
-        "predicted_p50_date": "2026-06-23",
+        "predicted_p50_date": "2026-06-22",
         "actual_paid_date": "2026-07-04",
         "p10_date": "2026-06-14",
-        "p90_date": "2026-07-04",
-        "absolute_error_days": 11,
-        "within_p10_p90": true
+        "p90_date": "2026-07-03",
+        "absolute_error_days": 12,
+        "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-37-035",
@@ -2463,21 +2463,21 @@
       {
         "invoice_id": "demo-invoice-37-036",
         "issue_date": "2026-07-12",
-        "predicted_p50_date": "2026-07-15",
+        "predicted_p50_date": "2026-07-16",
         "actual_paid_date": "2026-07-28",
         "p10_date": "2026-07-13",
         "p90_date": "2026-07-28",
-        "absolute_error_days": 13,
+        "absolute_error_days": 12,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-37-038",
         "issue_date": "2026-08-04",
-        "predicted_p50_date": "2026-09-10",
+        "predicted_p50_date": "2026-09-12",
         "actual_paid_date": "2026-09-16",
-        "p10_date": "2026-09-01",
+        "p10_date": "2026-09-02",
         "p90_date": "2026-09-16",
-        "absolute_error_days": 6,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -2513,31 +2513,31 @@
       {
         "invoice_id": "demo-invoice-38-028",
         "issue_date": "2026-07-20",
-        "predicted_p50_date": "2026-08-24",
+        "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-08-28",
         "p10_date": "2026-08-17",
         "p90_date": "2026-09-01",
-        "absolute_error_days": 4,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-38-029",
         "issue_date": "2026-08-19",
-        "predicted_p50_date": "2026-08-26",
+        "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-08-31",
         "p10_date": "2026-08-20",
         "p90_date": "2026-09-01",
-        "absolute_error_days": 5,
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-39-019",
         "issue_date": "2026-06-12",
-        "predicted_p50_date": "2026-06-19",
+        "predicted_p50_date": "2026-06-20",
         "actual_paid_date": "2026-06-15",
         "p10_date": "2026-06-13",
         "p90_date": "2026-06-24",
-        "absolute_error_days": 4,
+        "absolute_error_days": 5,
         "within_p10_p90": true
       },
       {
@@ -2553,11 +2553,11 @@
       {
         "invoice_id": "demo-invoice-39-021",
         "issue_date": "2026-08-19",
-        "predicted_p50_date": "2026-09-25",
+        "predicted_p50_date": "2026-09-27",
         "actual_paid_date": "2026-10-01",
-        "p10_date": "2026-09-16",
+        "p10_date": "2026-09-17",
         "p90_date": "2026-10-01",
-        "absolute_error_days": 6,
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -2583,21 +2583,21 @@
       {
         "invoice_id": "demo-invoice-40-036",
         "issue_date": "2026-07-16",
-        "predicted_p50_date": "2026-07-24",
+        "predicted_p50_date": "2026-07-25",
         "actual_paid_date": "2026-07-23",
         "p10_date": "2026-07-17",
         "p90_date": "2026-07-28",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-40-037",
         "issue_date": "2026-08-07",
-        "predicted_p50_date": "2026-08-29",
+        "predicted_p50_date": "2026-08-30",
         "actual_paid_date": "2026-08-24",
         "p10_date": "2026-08-21",
         "p90_date": "2026-09-02",
-        "absolute_error_days": 5,
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
@@ -2616,18 +2616,18 @@
         "predicted_p50_date": "2026-06-25",
         "actual_paid_date": "2026-06-18",
         "p10_date": "2026-06-16",
-        "p90_date": "2026-06-29",
+        "p90_date": "2026-06-28",
         "absolute_error_days": 7,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-41-089",
         "issue_date": "2026-05-27",
-        "predicted_p50_date": "2026-06-04",
+        "predicted_p50_date": "2026-06-03",
         "actual_paid_date": "2026-05-28",
         "p10_date": "2026-05-28",
-        "p90_date": "2026-06-08",
-        "absolute_error_days": 7,
+        "p90_date": "2026-06-07",
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
@@ -2656,18 +2656,18 @@
         "predicted_p50_date": "2026-07-05",
         "actual_paid_date": "2026-07-10",
         "p10_date": "2026-06-28",
-        "p90_date": "2026-07-10",
+        "p90_date": "2026-07-09",
         "absolute_error_days": 5,
-        "within_p10_p90": true
+        "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-41-093",
         "issue_date": "2026-07-06",
-        "predicted_p50_date": "2026-07-27",
+        "predicted_p50_date": "2026-07-28",
         "actual_paid_date": "2026-08-06",
         "p10_date": "2026-07-20",
         "p90_date": "2026-08-09",
-        "absolute_error_days": 10,
+        "absolute_error_days": 9,
         "within_p10_p90": true
       },
       {
@@ -2675,7 +2675,7 @@
         "issue_date": "2026-07-13",
         "predicted_p50_date": "2026-08-19",
         "actual_paid_date": "2026-08-13",
-        "p10_date": "2026-08-10",
+        "p10_date": "2026-08-11",
         "p90_date": "2026-08-23",
         "absolute_error_days": 6,
         "within_p10_p90": true
@@ -2683,31 +2683,31 @@
       {
         "invoice_id": "demo-invoice-41-096",
         "issue_date": "2026-07-24",
-        "predicted_p50_date": "2026-08-14",
+        "predicted_p50_date": "2026-08-15",
         "actual_paid_date": "2026-08-22",
         "p10_date": "2026-08-07",
         "p90_date": "2026-08-21",
-        "absolute_error_days": 8,
+        "absolute_error_days": 7,
         "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-41-097",
         "issue_date": "2026-07-31",
-        "predicted_p50_date": "2026-09-06",
+        "predicted_p50_date": "2026-09-07",
         "actual_paid_date": "2026-09-04",
         "p10_date": "2026-08-29",
         "p90_date": "2026-09-12",
-        "absolute_error_days": 2,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-41-098",
         "issue_date": "2026-08-09",
-        "predicted_p50_date": "2026-08-15",
+        "predicted_p50_date": "2026-08-16",
         "actual_paid_date": "2026-08-13",
         "p10_date": "2026-08-10",
-        "p90_date": "2026-08-23",
-        "absolute_error_days": 2,
+        "p90_date": "2026-08-22",
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -2715,10 +2715,10 @@
         "issue_date": "2026-08-16",
         "predicted_p50_date": "2026-09-08",
         "actual_paid_date": "2026-08-30",
-        "p10_date": "2026-08-30",
+        "p10_date": "2026-08-31",
         "p90_date": "2026-09-11",
         "absolute_error_days": 9,
-        "within_p10_p90": true
+        "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-41-100",
@@ -2733,11 +2733,11 @@
       {
         "invoice_id": "demo-invoice-41-101",
         "issue_date": "2026-09-03",
-        "predicted_p50_date": "2026-09-09",
+        "predicted_p50_date": "2026-09-08",
         "actual_paid_date": "2026-09-10",
         "p10_date": "2026-09-04",
         "p90_date": "2026-09-15",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
@@ -2753,21 +2753,21 @@
       {
         "invoice_id": "demo-invoice-42-023",
         "issue_date": "2026-06-17",
-        "predicted_p50_date": "2026-07-12",
+        "predicted_p50_date": "2026-07-13",
         "actual_paid_date": "2026-07-11",
         "p10_date": "2026-07-01",
         "p90_date": "2026-07-16",
-        "absolute_error_days": 1,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-42-024",
         "issue_date": "2026-07-18",
-        "predicted_p50_date": "2026-08-27",
+        "predicted_p50_date": "2026-08-26",
         "actual_paid_date": "2026-08-23",
         "p10_date": "2026-08-17",
         "p90_date": "2026-08-30",
-        "absolute_error_days": 4,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -2783,21 +2783,21 @@
       {
         "invoice_id": "demo-invoice-43-029",
         "issue_date": "2026-05-14",
-        "predicted_p50_date": "2026-06-23",
+        "predicted_p50_date": "2026-06-21",
         "actual_paid_date": "2026-06-19",
-        "p10_date": "2026-06-13",
+        "p10_date": "2026-06-12",
         "p90_date": "2026-06-26",
-        "absolute_error_days": 4,
+        "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-43-030",
         "issue_date": "2026-06-03",
-        "predicted_p50_date": "2026-06-11",
+        "predicted_p50_date": "2026-06-10",
         "actual_paid_date": "2026-06-04",
         "p10_date": "2026-06-04",
         "p90_date": "2026-06-14",
-        "absolute_error_days": 7,
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
@@ -2805,7 +2805,7 @@
         "issue_date": "2026-06-26",
         "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-24",
-        "p10_date": "2026-07-10",
+        "p10_date": "2026-07-11",
         "p90_date": "2026-07-24",
         "absolute_error_days": 4,
         "within_p10_p90": true
@@ -2815,7 +2815,7 @@
         "issue_date": "2026-07-15",
         "predicted_p50_date": "2026-08-24",
         "actual_paid_date": "2026-08-24",
-        "p10_date": "2026-08-13",
+        "p10_date": "2026-08-14",
         "p90_date": "2026-08-27",
         "absolute_error_days": 0,
         "within_p10_p90": true
@@ -2835,7 +2835,7 @@
         "issue_date": "2026-08-22",
         "predicted_p50_date": "2026-09-30",
         "actual_paid_date": "2026-10-06",
-        "p10_date": "2026-09-20",
+        "p10_date": "2026-09-21",
         "p90_date": "2026-10-09",
         "absolute_error_days": 6,
         "within_p10_p90": true
@@ -2853,11 +2853,11 @@
       {
         "invoice_id": "demo-invoice-45-025",
         "issue_date": "2026-05-16",
-        "predicted_p50_date": "2026-05-21",
+        "predicted_p50_date": "2026-05-20",
         "actual_paid_date": "2026-05-17",
         "p10_date": "2026-05-17",
         "p90_date": "2026-05-26",
-        "absolute_error_days": 4,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -2873,11 +2873,11 @@
       {
         "invoice_id": "demo-invoice-45-027",
         "issue_date": "2026-07-18",
-        "predicted_p50_date": "2026-08-24",
+        "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-08-22",
         "p10_date": "2026-08-16",
         "p90_date": "2026-08-30",
-        "absolute_error_days": 2,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -2886,9 +2886,9 @@
         "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-09-08",
         "p10_date": "2026-08-23",
-        "p90_date": "2026-09-07",
+        "p90_date": "2026-09-08",
         "absolute_error_days": 14,
-        "within_p10_p90": false
+        "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-46-048",
@@ -2903,11 +2903,11 @@
       {
         "invoice_id": "demo-invoice-46-049",
         "issue_date": "2026-05-27",
-        "predicted_p50_date": "2026-06-18",
+        "predicted_p50_date": "2026-06-19",
         "actual_paid_date": "2026-06-10",
         "p10_date": "2026-06-10",
         "p90_date": "2026-06-22",
-        "absolute_error_days": 8,
+        "absolute_error_days": 9,
         "within_p10_p90": true
       },
       {
@@ -2935,7 +2935,7 @@
         "issue_date": "2026-07-11",
         "predicted_p50_date": "2026-08-04",
         "actual_paid_date": "2026-08-14",
-        "p10_date": "2026-07-25",
+        "p10_date": "2026-07-26",
         "p90_date": "2026-08-14",
         "absolute_error_days": 10,
         "within_p10_p90": true
@@ -2963,11 +2963,11 @@
       {
         "invoice_id": "demo-invoice-46-055",
         "issue_date": "2026-08-31",
-        "predicted_p50_date": "2026-09-23",
+        "predicted_p50_date": "2026-09-22",
         "actual_paid_date": "2026-09-17",
         "p10_date": "2026-09-14",
         "p90_date": "2026-09-26",
-        "absolute_error_days": 6,
+        "absolute_error_days": 5,
         "within_p10_p90": true
       },
       {
@@ -2976,18 +2976,18 @@
         "predicted_p50_date": "2026-07-07",
         "actual_paid_date": "2026-07-08",
         "p10_date": "2026-06-27",
-        "p90_date": "2026-07-13",
+        "p90_date": "2026-07-12",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-47-019",
         "issue_date": "2026-07-17",
-        "predicted_p50_date": "2026-08-26",
+        "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-08-20",
         "p10_date": "2026-08-16",
-        "p90_date": "2026-08-30",
-        "absolute_error_days": 6,
+        "p90_date": "2026-08-29",
+        "absolute_error_days": 5,
         "within_p10_p90": true
       },
       {
@@ -3003,11 +3003,11 @@
       {
         "invoice_id": "demo-invoice-48-021",
         "issue_date": "2026-06-10",
-        "predicted_p50_date": "2026-07-20",
+        "predicted_p50_date": "2026-07-19",
         "actual_paid_date": "2026-07-15",
         "p10_date": "2026-07-09",
-        "p90_date": "2026-07-23",
-        "absolute_error_days": 5,
+        "p90_date": "2026-07-22",
+        "absolute_error_days": 4,
         "within_p10_p90": true
       },
       {
@@ -3053,11 +3053,11 @@
       {
         "invoice_id": "demo-invoice-49-045",
         "issue_date": "2026-07-01",
-        "predicted_p50_date": "2026-07-10",
+        "predicted_p50_date": "2026-07-08",
         "actual_paid_date": "2026-07-21",
         "p10_date": "2026-07-03",
         "p90_date": "2026-07-20",
-        "absolute_error_days": 11,
+        "absolute_error_days": 13,
         "within_p10_p90": false
       },
       {
@@ -3073,11 +3073,11 @@
       {
         "invoice_id": "demo-invoice-49-048",
         "issue_date": "2026-08-12",
-        "predicted_p50_date": "2026-08-23",
+        "predicted_p50_date": "2026-08-22",
         "actual_paid_date": "2026-08-16",
-        "p10_date": "2026-08-14",
+        "p10_date": "2026-08-15",
         "p90_date": "2026-08-25",
-        "absolute_error_days": 7,
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
@@ -3093,11 +3093,11 @@
       {
         "invoice_id": "demo-invoice-50-027",
         "issue_date": "2026-06-10",
-        "predicted_p50_date": "2026-07-03",
+        "predicted_p50_date": "2026-07-04",
         "actual_paid_date": "2026-07-07",
         "p10_date": "2026-06-24",
-        "p90_date": "2026-07-09",
-        "absolute_error_days": 4,
+        "p90_date": "2026-07-08",
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -3126,7 +3126,7 @@
         "predicted_p50_date": "2026-06-24",
         "actual_paid_date": "2026-06-30",
         "p10_date": "2026-06-15",
-        "p90_date": "2026-07-03",
+        "p90_date": "2026-07-02",
         "absolute_error_days": 6,
         "within_p10_p90": true
       },
@@ -3143,31 +3143,31 @@
       {
         "invoice_id": "demo-invoice-51-080",
         "issue_date": "2026-06-05",
-        "predicted_p50_date": "2026-06-30",
+        "predicted_p50_date": "2026-06-29",
         "actual_paid_date": "2026-07-06",
         "p10_date": "2026-06-20",
-        "p90_date": "2026-07-09",
-        "absolute_error_days": 6,
+        "p90_date": "2026-07-08",
+        "absolute_error_days": 7,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-51-081",
         "issue_date": "2026-06-12",
-        "predicted_p50_date": "2026-07-22",
+        "predicted_p50_date": "2026-07-21",
         "actual_paid_date": "2026-07-21",
         "p10_date": "2026-07-12",
         "p90_date": "2026-07-25",
-        "absolute_error_days": 1,
+        "absolute_error_days": 0,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-51-082",
         "issue_date": "2026-06-23",
-        "predicted_p50_date": "2026-07-03",
+        "predicted_p50_date": "2026-07-02",
         "actual_paid_date": "2026-07-05",
-        "p10_date": "2026-06-25",
+        "p10_date": "2026-06-24",
         "p90_date": "2026-07-06",
-        "absolute_error_days": 2,
+        "absolute_error_days": 3,
         "within_p10_p90": true
       },
       {
@@ -3183,11 +3183,11 @@
       {
         "invoice_id": "demo-invoice-51-084",
         "issue_date": "2026-07-12",
-        "predicted_p50_date": "2026-08-20",
+        "predicted_p50_date": "2026-08-19",
         "actual_paid_date": "2026-08-18",
         "p10_date": "2026-08-11",
         "p90_date": "2026-08-23",
-        "absolute_error_days": 2,
+        "absolute_error_days": 1,
         "within_p10_p90": true
       },
       {
@@ -3196,7 +3196,7 @@
         "predicted_p50_date": "2026-08-03",
         "actual_paid_date": "2026-08-06",
         "p10_date": "2026-07-27",
-        "p90_date": "2026-08-07",
+        "p90_date": "2026-08-06",
         "absolute_error_days": 3,
         "within_p10_p90": true
       },
@@ -3206,7 +3206,7 @@
         "predicted_p50_date": "2026-08-28",
         "actual_paid_date": "2026-08-29",
         "p10_date": "2026-08-19",
-        "p90_date": "2026-09-02",
+        "p90_date": "2026-09-01",
         "absolute_error_days": 1,
         "within_p10_p90": true
       },
@@ -3216,7 +3216,7 @@
         "predicted_p50_date": "2026-09-20",
         "actual_paid_date": "2026-09-23",
         "p10_date": "2026-09-10",
-        "p90_date": "2026-09-24",
+        "p90_date": "2026-09-23",
         "absolute_error_days": 3,
         "within_p10_p90": true
       },
@@ -3233,21 +3233,21 @@
       {
         "invoice_id": "demo-invoice-51-089",
         "issue_date": "2026-08-27",
-        "predicted_p50_date": "2026-09-21",
+        "predicted_p50_date": "2026-09-20",
         "actual_paid_date": "2026-09-26",
         "p10_date": "2026-09-10",
         "p90_date": "2026-09-30",
-        "absolute_error_days": 5,
+        "absolute_error_days": 6,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-52-040",
         "issue_date": "2026-05-27",
-        "predicted_p50_date": "2026-06-19",
+        "predicted_p50_date": "2026-06-20",
         "actual_paid_date": "2026-06-25",
         "p10_date": "2026-06-10",
         "p90_date": "2026-06-24",
-        "absolute_error_days": 6,
+        "absolute_error_days": 5,
         "within_p10_p90": false
       },
       {
@@ -3256,28 +3256,28 @@
         "predicted_p50_date": "2026-07-28",
         "actual_paid_date": "2026-07-26",
         "p10_date": "2026-07-19",
-        "p90_date": "2026-08-01",
+        "p90_date": "2026-08-02",
         "absolute_error_days": 2,
         "within_p10_p90": true
       },
       {
         "invoice_id": "demo-invoice-52-042",
         "issue_date": "2026-07-10",
-        "predicted_p50_date": "2026-07-18",
+        "predicted_p50_date": "2026-07-20",
         "actual_paid_date": "2026-07-24",
         "p10_date": "2026-07-11",
         "p90_date": "2026-07-22",
-        "absolute_error_days": 6,
+        "absolute_error_days": 4,
         "within_p10_p90": false
       },
       {
         "invoice_id": "demo-invoice-52-043",
         "issue_date": "2026-08-01",
-        "predicted_p50_date": "2026-08-24",
+        "predicted_p50_date": "2026-08-25",
         "actual_paid_date": "2026-09-01",
-        "p10_date": "2026-08-15",
+        "p10_date": "2026-08-16",
         "p90_date": "2026-09-04",
-        "absolute_error_days": 8,
+        "absolute_error_days": 7,
         "within_p10_p90": true
       },
       {

@@ -5,7 +5,7 @@ import json
 from sqlalchemy import delete, select
 
 from app.db import SessionLocal
-from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, Prediction, Recommendation, now_utc
+from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, now_utc
 from ml.synthetic import OPEN_BUCKET_COUNTS, OPEN_COUNT, generate_records, resolve_as_of, utc_datetime
 
 
@@ -16,15 +16,19 @@ def seed(as_of=None) -> dict[str, object]:
                for key, row in ((row["client_id"], row) for row in records)}
     db = SessionLocal()
     try:
+        previous_demo_state = db.get(DemoState, "demo")
+        reset_completed_at = previous_demo_state.reset_completed_at if previous_demo_state else None
         demo_invoice_ids = select(Invoice.id).where(Invoice.source == "demo")
         demo_recommendation_ids = select(Recommendation.id).where(Recommendation.invoice_id.in_(demo_invoice_ids))
         db.execute(delete(ActionAttempt).where(ActionAttempt.recommendation_id.in_(demo_recommendation_ids)))
         db.execute(delete(Recommendation).where(Recommendation.invoice_id.in_(demo_invoice_ids)))
+        db.execute(delete(PolicyDecisionLog).where(PolicyDecisionLog.invoice_id.in_(demo_invoice_ids)))
+        db.execute(delete(ReplyTriage).where(ReplyTriage.invoice_id.in_(demo_invoice_ids)))
         db.execute(delete(Prediction).where(Prediction.invoice_id.in_(demo_invoice_ids)))
         db.execute(delete(Payment).where(Payment.invoice_id.in_(demo_invoice_ids)))
         db.execute(delete(Invoice).where(Invoice.source == "demo"))
         db.execute(delete(Client).where(Client.source == "demo"))
-        db.merge(DemoState(id="demo", as_of_date=cutoff, seeded_at=now_utc()))
+        db.merge(DemoState(id="demo", as_of_date=cutoff, seeded_at=now_utc(), reset_completed_at=reset_completed_at))
         db.flush()
         for client in clients.values():
             db.add(Client(id=client["id"], display_name=client["name"], email=None,

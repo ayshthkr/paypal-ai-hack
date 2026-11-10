@@ -1,6 +1,6 @@
 {
   "model_version": "lgbm-hazard-v3-seed-20261110-asof-2026-11-10",
-  "feature_schema_version": "latepayer-features-v2",
+  "feature_schema_version": "latepayer-features-v3",
   "seed": 20261110,
   "training_seed": 20261110,
   "feature_list": [
@@ -35,13 +35,14 @@
     "term_due_on_receipt",
     "term_net_15",
     "term_net_30",
+    "partial_payment_allowed",
     "partial_share",
     "days_since_last_partial_payment",
     "currency_is_usd",
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-10T16:26:02.929567+00:00",
+  "trained_at": "2026-11-10T17:56:48.476428+00:00",
   "as_of_date": "2026-11-10",
   "history_cutoff": "2026-11-10",
   "training_date_range": [
@@ -61,7 +62,7 @@
     60,
     90
   ],
-  "validation_ibs_lightgbm": 0.009570403102259251,
+  "validation_ibs_lightgbm": 0.009479364646654427,
   "validation_ibs_km": 0.06943011843157512,
   "active_model": "lightgbm",
   "validation_cohort": [
@@ -84,13 +85,13 @@
     90,
     120
   ],
-  "test_integrated_brier_lightgbm": 0.027289390480540538,
+  "test_integrated_brier_lightgbm": 0.027310651241970848,
   "test_integrated_brier_km": 0.0744496463810182,
-  "test_uno_concordance_lightgbm": 0.8690913812158867,
+  "test_uno_concordance_lightgbm": 0.8723150103476514,
   "test_uno_concordance_km": 0.5,
-  "test_uno_concordance_cox": 0.8578943578291639,
+  "test_uno_concordance_cox": 0.8590028558062266,
   "test_paid_only_date_mae_days": 2.4053156146179404,
   "test_paid_only_invoice_count": 301,
-  "test_p10_p90_coverage": 0.9269102990033222,
+  "test_p10_p90_coverage": 0.9235880398671097,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices."
 }

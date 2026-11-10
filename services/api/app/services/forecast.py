@@ -130,7 +130,10 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
     return {"days": day, "date": (today + timedelta(days=day)).isoformat()}
 
 
-def forecast_invoice(db: Session, invoice: Invoice, today: date | None = None, persist: bool = True) -> dict:
+def forecast_invoice(
+    db: Session, invoice: Invoice, today: date | None = None, persist: bool = True,
+    scenario: dict | None = None,
+) -> dict:
     today = today or date.today()
     client_invoices = list(db.scalars(select(Invoice).where(Invoice.client_id == invoice.client_id)).all())
     invoice_ids = [item.id for item in client_invoices]
@@ -141,6 +144,9 @@ def forecast_invoice(db: Session, invoice: Invoice, today: date | None = None, p
     records = [_as_record(item, payments_by_invoice.get(item.id, [])) for item in client_invoices]
     record_by_id = {row["id"]: row for row in records}
     target = record_by_id[invoice.id]
+    if scenario:
+        target = {**target, **scenario}
+        records = [target if row["id"] == invoice.id else row for row in records]
     history = [row for row in records if row["settled_at"] and row["settled_at"] <= today]
     base_features = features(target, today, history, records)
     model, baseline, active_model, model_version, metadata, calibration = _load_artifacts()

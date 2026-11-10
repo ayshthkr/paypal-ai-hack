@@ -31,6 +31,7 @@ class DemoState(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default="demo")
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
     seeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    reset_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Invoice(Base):

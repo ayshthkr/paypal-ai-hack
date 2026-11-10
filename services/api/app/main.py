@@ -5,6 +5,7 @@ import hmac
 import json
 import re
 import statistics
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
@@ -34,6 +35,7 @@ from app.services.sync import refresh_paypal_invoice, sync_paypal, upsert_paypal
 from ml.activity import fit_bgnbd
 
 settings = get_settings()
+_REQUEST_DEMO_AS_OF: ContextVar[date | None] = ContextVar("request_demo_as_of", default=None)
 ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"}
 app = FastAPI(title="Late Payer", version="1.0.0", description="Invoice payment forecasts and approved PayPal reminders.")
 app.add_middleware(
@@ -43,6 +45,21 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-Requested-With"],
 )
+
+
+@app.middleware("http")
+async def demo_time_travel_context(request: Request, call_next):
+    override = None
+    if request.url.path == "/invoices" and request.query_params.get("as_of"):
+        try:
+            override = date.fromisoformat(request.query_params["as_of"])
+        except ValueError:
+            pass
+    token = _REQUEST_DEMO_AS_OF.set(override)
+    try:
+        return await call_next(request)
+    finally:
+        _REQUEST_DEMO_AS_OF.reset(token)
 
 
 class LoginInput(BaseModel):
@@ -73,7 +90,13 @@ class CreateInvoiceInput(BaseModel):
     partial_payment_allowed: bool = False
 
 
+class WhatIfInput(BaseModel):
+    payment_term_type: Literal["NET_15", "NET_30"] = "NET_15"
+
+
 def _today(db: Session | None = None, source: str | None = None) -> date:
+    if source == "demo" and _REQUEST_DEMO_AS_OF.get() is not None:
+        return _REQUEST_DEMO_AS_OF.get()
     if db is not None and source == "demo":
         demo_state = db.get(DemoState, "demo")
         if demo_state:
@@ -619,6 +642,36 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/demo/reset")
+def reset_demo(db: Session = Depends(get_db)) -> dict:
+    state = db.scalar(select(DemoState).where(DemoState.id == "demo").with_for_update())
+    if not state:
+        raise HTTPException(status_code=503, detail="The synthetic demo is not seeded yet.")
+    now = datetime.now(timezone.utc)
+    last_reset = state.reset_completed_at
+    if last_reset and last_reset.tzinfo is None:
+        last_reset = last_reset.replace(tzinfo=timezone.utc)
+    if last_reset and (now - last_reset).total_seconds() < 300:
+        seconds_left = max(1, 300 - int((now - last_reset).total_seconds()))
+        raise HTTPException(status_code=429, detail=f"The demo was reset recently. Try again in about {seconds_left // 60 + 1} minute(s).")
+    state.reset_completed_at = now
+    db.commit()
+    try:
+        result = _seed_demo(state.as_of_date)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="The demo reset failed; try again after the cooldown.") from exc
+    db.refresh(state)
+    return {"reset": True, "cutoff": result["cutoff"], "clients": result["clients"],
+            "invoices": result["invoices"], "open_count": result["open_count"],
+            "message": "Synthetic demo state was restored. PayPal Sandbox records were not changed."}
+
+
+def _seed_demo(as_of: date) -> dict:
+    from scripts.seed_demo import seed
+    return seed(as_of=as_of)
+
+
 @app.get("/evaluation")
 def model_evaluation() -> dict:
     path = Path(settings.model_path).with_name("eval.json")
@@ -630,9 +683,12 @@ def model_evaluation() -> dict:
         return {"available": False, "reason": "Model evaluation artifact could not be read."}
     importance_path = path.with_name("feature_importance.json")
     try:
-        payload["feature_importance"] = json.loads(importance_path.read_text()).get("features", [])
+        importance = json.loads(importance_path.read_text())
+        payload["feature_importance"] = importance.get("features", [])
+        payload["feature_importance_method"] = importance.get("method", "Unavailable")
     except (OSError, ValueError, AttributeError):
         payload["feature_importance"] = []
+        payload["feature_importance_method"] = "Unavailable"
     payload["available"] = True
     return payload
 
@@ -734,6 +790,7 @@ def invoices(
     direction: str = "asc",
     action_only: bool = False,
     drifting_only: bool = False,
+    as_of: date | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
     user = session_user(request)
@@ -748,6 +805,10 @@ def invoices(
     allowed_sorts = {"action", "expected_cash", "p14", "due", "client", "balance", "invoice", "status"}
     sort = sort if sort in allowed_sorts else "action"
     direction = "desc" if direction.casefold() == "desc" else "asc"
+    demo_state = db.get(DemoState, "demo")
+    as_of_max = demo_state.as_of_date if demo_state else _today(db, "demo")
+    if as_of is not None and (as_of > as_of_max or as_of < as_of_max - timedelta(days=60)):
+        raise HTTPException(status_code=422, detail="Demo time travel is limited to the latest 60 days.")
 
     query = select(Invoice).options(joinedload(Invoice.client)).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
     if not user:
@@ -869,6 +930,7 @@ def invoices(
         "models": model_names, "synthetic_demo": not user,
         "ready_for_review_count": ready_for_review_count,
         "drifting_client_count": len(drifting_ids),
+        "as_of": _today(db, "demo").isoformat(), "as_of_max": as_of_max.isoformat(),
     }
 
 
@@ -883,6 +945,41 @@ def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_
     _record_policy_decision(db, invoice, payload)
     db.commit()
     return payload
+
+
+@app.get("/action-queue")
+def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
+    scope = None if session_user(request) else "demo"
+    query = select(Invoice).options(joinedload(Invoice.client))
+    if scope:
+        query = query.where(Invoice.source == scope)
+    rows = list(db.scalars(query).all())
+    reviewed_today: set[str] = set()
+    for source in {row.source for row in rows}:
+        today = _today(db, source)
+        reviewed_today.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
+            Invoice.source == source, Recommendation.state.in_(["skipped", "sent", "applied"]),
+            func.date(Recommendation.created_at) == today.isoformat(),
+        )).all())
+    ranked = [invoice_id for invoice_id in _rank_policy_candidates(db, scope) if invoice_id not in reviewed_today]
+    ranked = ranked[:DAILY_SUGGESTION_CAP]
+    candidate_ids = set(ranked)
+    forecast_cache: dict[str, dict] = {}
+    items = []
+    for invoice_id in ranked[:DAILY_SUGGESTION_CAP]:
+        invoice = next((row for row in rows if row.id == invoice_id), None)
+        if invoice is None:
+            continue
+        item = _invoice_dict(db, invoice, include_detail=True, daily_candidate_ids=candidate_ids,
+                             forecast_cache=forecast_cache)
+        if item.get("recommendation") and item["recommendation"].get("state") == "proposed":
+            _record_policy_decision(db, invoice, item)
+            items.append(item)
+    items.sort(key=lambda row: (-float(row["decision"].get("expected_cash_gain") or 0), row["due_date"], row["invoice_number"]))
+    db.commit()
+    return {"items": items, "count": len(items), "daily_cap": DAILY_SUGGESTION_CAP,
+            "as_of": _today(db, scope).isoformat() if scope else _today(db).isoformat(),
+            "synthetic_demo": scope == "demo"}
 
 
 @app.post("/invoices/{invoice_id}/draft")
@@ -978,6 +1075,58 @@ def clients(request: Request, db: Session = Depends(get_db)) -> dict:
     counts = {name: sum(row["drift"].get("signal_type") == name for row in output)
               for name in ("paying_later", "later_than_usual", "gone_quiet", "insufficient_history")}
     return {"items": output, "signal_counts": counts}
+
+
+@app.post("/clients/{client_id}/what-if")
+def client_terms_what_if(client_id: str, payload: WhatIfInput, request: Request, db: Session = Depends(get_db)) -> dict:
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    if client.source != "demo" and not session_user(request):
+        raise HTTPException(status_code=401, detail="Operator login required to simulate PayPal client terms.")
+    records = _client_records(db, client.id)
+    eligible = [row for row in records if row["status"] not in CLOSED_STATUSES and Decimal(str(row["outstanding"])) > 0]
+    if not eligible:
+        eligible = records
+    if not eligible:
+        raise HTTPException(status_code=409, detail="This client has no invoice history to build a terms scenario.")
+    currencies = {}
+    amounts: dict[str, list[float]] = {}
+    for row in records:
+        currencies[row["currency"]] = currencies.get(row["currency"], 0) + 1
+        if row["status"] == "PAID":
+            amounts.setdefault(row["currency"], []).append(float(row["total"]))
+    currency = max(currencies, key=currencies.get)
+    amount_values = amounts.get(currency) or [float(row["total"]) for row in records if row["currency"] == currency]
+    amount = float(statistics.median(amount_values))
+    representative = max((row for row in eligible if row["currency"] == currency), key=lambda row: row["issue_date"], default=eligible[0])
+    invoice = db.get(Invoice, representative["id"])
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Client invoice history is unavailable.")
+    as_of = _today(db, client.source)
+
+    def score(term: str, partial_allowed: bool) -> dict:
+        scenario = {
+            "issue_date": as_of,
+            "due_date": as_of + timedelta(days=15 if term == "NET_15" else 30),
+            "total": amount, "paid": 0.0, "outstanding": amount,
+            "status": "SENT", "payment_term_type": term,
+            "partial_payment_allowed": partial_allowed,
+            "viewed_at": None, "viewed_by_recipient": False, "viewed_observed_at": None,
+            "reminder_events": [], "partial_at": None, "partial_amount": 0.0,
+            "settled_at": None, "paid_at": None, "cancelled_at": None,
+        }
+        forecast = forecast_invoice(db, invoice, today=as_of, persist=False, scenario=scenario)
+        return {"payment_term_type": term, "partial_payment_allowed": partial_allowed,
+                "p50": forecast["quantiles"]["p50"], "probabilities": forecast["probabilities"],
+                "model": forecast["model"], "limited_history": forecast["limited_history"]}
+
+    baseline = score("NET_30", False)
+    term_scenario = score(payload.payment_term_type, False)
+    partial_scenario = score(payload.payment_term_type, True)
+    return {"as_of": as_of.isoformat(), "client_id": client.id, "client_name": client.display_name,
+            "currency": currency, "representative_amount": str(Decimal(str(amount)).quantize(Decimal("0.01"))),
+            "baseline": baseline, "with_terms": term_scenario, "with_partial_payment": partial_scenario}
 
 
 def _scoped_invoice_rows(request: Request, db: Session) -> list[Invoice]:

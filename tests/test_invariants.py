@@ -9,7 +9,7 @@ import pytest
 
 from app import main
 from app.config import Settings
-from app.models import Client, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
+from app.models import Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
@@ -51,6 +51,7 @@ def test_feature_inputs_are_point_in_time_and_cold_start_is_shrunk():
         "due_date": as_of + timedelta(days=10), "total": 4000, "outstanding": 3600,
         "paid": 400, "partial_amount": 400, "partial_at": as_of - timedelta(days=2),
         "viewed_at": as_of - timedelta(days=1), "payment_term_type": "NET_30", "currency": "USD",
+        "partial_payment_allowed": True,
         "reminder_events": [
             {"sent_at": (as_of - timedelta(days=4)).isoformat()},
             {"sent_at": (as_of + timedelta(days=1)).isoformat()},
@@ -64,6 +65,7 @@ def test_feature_inputs_are_point_in_time_and_cold_start_is_shrunk():
     assert current["viewed_by_recipient"] == 1
     assert current["reminder_count"] == 1
     assert current["term_net_30"] == 1
+    assert current["partial_payment_allowed"] == 1
     assert current["partial_share"] == pytest.approx(0.1)
     assert current["days_since_last_partial_payment"] == 2
     assert prior["viewed_by_recipient"] == 0
@@ -306,6 +308,96 @@ def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
     sorted_by_probability = client.get("/invoices?view=open&page_size=50&sort=p14&direction=desc").json()
     probabilities = [row["forecast"]["probabilities"]["14d"] for row in sorted_by_probability["items"]]
     assert probabilities == sorted(probabilities, reverse=True)
+
+
+def test_demo_time_travel_validates_sixty_day_window_and_updates_due_math(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="time-owner", display_name="Time Client", source="demo", drift={})
+        db.add(owner)
+        db.add(DemoState(id="demo", as_of_date=date(2026, 11, 10)))
+        db.flush()
+        invoice = _invoice("time-invoice", owner.id, due=date(2026, 11, 5))
+        invoice.issue_date = date(2026, 10, 1)
+        db.add(invoice)
+        db.commit()
+
+    current = client.get("/invoices?as_of=2026-11-10&view=open").json()
+    earlier = client.get("/invoices?as_of=2026-11-01&view=open").json()
+    assert current["as_of"] == "2026-11-10" and current["items"][0]["days_to_due"] == -5
+    assert earlier["as_of"] == "2026-11-01" and earlier["items"][0]["days_to_due"] == 4
+    assert earlier["as_of_max"] == "2026-11-10"
+    assert client.get("/invoices?as_of=2026-09-10").status_code == 422
+    assert client.get("/invoices?as_of=2026-11-11").status_code == 422
+
+
+def test_client_what_if_changes_term_and_partial_payment_features(api, monkeypatch):
+    client, Session = api
+    observed = []
+    def fake_forecast(db, invoice, today=None, persist=True, scenario=None):
+        observed.append(scenario)
+        return {"quantiles": {"p50": {"date": "2026-12-01", "days": 21}},
+                "probabilities": {"14d": 0.32}, "model": "test", "limited_history": True}
+    monkeypatch.setattr(main, "forecast_invoice", fake_forecast)
+    with Session() as db:
+        owner = Client(id="what-if-owner", display_name="What If Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        paid = _invoice("what-if-paid", owner.id, status="PAID")
+        paid.total, paid.paid, paid.outstanding = Decimal("600.00"), Decimal("600.00"), Decimal("0.00")
+        db.add(paid)
+        db.commit()
+
+    response = client.post("/clients/what-if-owner/what-if", json={"payment_term_type": "NET_15"})
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["baseline"]["payment_term_type"] == "NET_30"
+    assert payload["with_terms"]["payment_term_type"] == "NET_15"
+    assert payload["with_partial_payment"]["partial_payment_allowed"] is True
+    assert [row["payment_term_type"] for row in observed] == ["NET_30", "NET_15", "NET_15"]
+    assert [row["partial_payment_allowed"] for row in observed] == [False, False, True]
+
+
+def test_action_queue_generates_five_or_fewer_reviewable_recommendations(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1}, "quantiles": {"p50": None},
+        "reasons": ["test"], "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    with Session() as db:
+        owner = Client(id="queue-owner", display_name="Queue Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("queue-invoice", owner.id)
+        invoice.due_date = date.today() - timedelta(days=5)
+        db.add(invoice)
+        db.commit()
+
+    response = client.get("/action-queue")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["items"][0]["recommendation"]["state"] == "proposed"
+    assert payload["items"][0]["decision"]["expected_cash_gain"] > 0
+
+
+def test_public_demo_reset_reseeds_only_after_rate_limit_and_preserves_cooldown(api, monkeypatch):
+    client, Session = api
+    with Session() as db:
+        db.add(DemoState(id="demo", as_of_date=date(2026, 11, 10)))
+        db.commit()
+    calls = []
+    monkeypatch.setattr(main, "_seed_demo", lambda as_of: calls.append(as_of) or {
+        "cutoff": as_of.isoformat(), "clients": 50, "invoices": 2000, "open_count": 50,
+    })
+
+    reset = client.post("/demo/reset")
+    limited = client.post("/demo/reset")
+    assert reset.status_code == 200 and reset.json()["reset"] is True
+    assert "PayPal Sandbox records were not changed" in reset.json()["message"]
+    assert limited.status_code == 429
+    assert calls == [date(2026, 11, 10)]
 
 
 def test_new_client_forecast_marks_limited_history_and_reports_model_metadata(api):

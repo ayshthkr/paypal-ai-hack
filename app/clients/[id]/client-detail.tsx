@@ -16,6 +16,12 @@ type ClientFacts = {
   drift: { signal: string; signal_type: string; available: boolean; message: string; settled_count: number; severity_score: number; signal_strength: number; recent_median_delay_days?: number | null; usual_delay_days?: number | null; activity_probability?: number | null };
   invoices: DelayInvoice[];
 };
+type WhatIf = {
+  as_of: string; currency: string; representative_amount: string;
+  baseline: { payment_term_type: string; partial_payment_allowed: boolean; p50: { date: string; days: number } | null; probabilities: Record<string, number>; limited_history: boolean };
+  with_terms: { payment_term_type: string; partial_payment_allowed: boolean; p50: { date: string; days: number } | null; probabilities: Record<string, number>; limited_history: boolean };
+  with_partial_payment: { payment_term_type: string; partial_payment_allowed: boolean; p50: { date: string; days: number } | null; probabilities: Record<string, number>; limited_history: boolean };
+};
 
 class ApiError extends Error {
   status: number;
@@ -42,6 +48,11 @@ export default function ClientDetail({ id }: { id: string }) {
   const [data, setData] = useState<ClientFacts | null>(null);
   const [error, setError] = useState("");
   const [notFound, setNotFound] = useState(false);
+  const [whatIf, setWhatIf] = useState<WhatIf | null>(null);
+  const [whatIfTerm, setWhatIfTerm] = useState("NET_15");
+  const [whatIfLoading, setWhatIfLoading] = useState(false);
+  const [whatIfError, setWhatIfError] = useState("");
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,10 +65,10 @@ export default function ClientDetail({ id }: { id: string }) {
       }
     });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, reload]);
 
   if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
-  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap">{error ? <div className="error-box">{error} {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
+  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => setReload(value => value + 1)}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
 
   const balances = data.invoices.reduce<Record<string, number>>((totals, invoice) => {
     if (!new Set(["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"]).has(invoice.status) && Number(invoice.outstanding) > 0) {
@@ -70,6 +81,19 @@ export default function ClientDetail({ id }: { id: string }) {
   const balanceHeadline = balanceAmounts.length === 1 ? balanceAmounts[0] : balanceAmounts.length ? `${balanceAmounts.length} currencies` : "None";
   const delays = data.invoices.filter(invoice => invoice.days_late != null).sort((a, b) => (a.settled_at || "").localeCompare(b.settled_at || "")).slice(-24);
   const maxDelay = Math.max(1, ...delays.map(invoice => Math.abs(invoice.days_late || 0)));
+
+  const runWhatIf = async () => {
+    setWhatIfLoading(true); setWhatIfError("");
+    try {
+      const response = await fetch(`/api/clients/${encodeURIComponent(id)}/what-if`, { method: "POST", cache: "no-store", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_term_type: whatIfTerm }) });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
+      setWhatIf(value as WhatIf);
+    } catch (cause) { setWhatIfError(cause instanceof Error ? cause.message : "Could not score the terms scenario."); }
+    finally { setWhatIfLoading(false); }
+  };
+
+  const forecastDate = (value: WhatIf["baseline"]["p50"]) => value ? formatDate(value.date) : "Beyond 180 days";
 
   return <div className="app-shell">
     <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link></div></header>
@@ -90,6 +114,11 @@ export default function ClientDetail({ id }: { id: string }) {
           return <div className="delay-history-item" key={invoice.id} title={`${invoice.invoice_number}: ${delay > 0 ? `${delay} days late` : delay < 0 ? `${Math.abs(delay)} days early` : "on time"}`}><div className="delay-history-track"><div className={`delay-history-bar ${direction}`} style={delay >= 0 ? { height: `${height}px`, bottom: "50%" } : { height: `${height}px`, top: "50%" }}/></div><span>{formatDate(invoice.settled_at).slice(0, 6)}</span></div>;
         })}</div><div className="fine-print">Bars above the baseline indicate late payment; blue bars indicate on-time or early payment.</div></> : <div className="empty-inline">There are no fully settled invoices to show in the delay history.</div>}
         <div className="drift-card" style={{ marginTop: 14 }}><strong>{data.drift.available ? `${data.drift.settled_count} invoices support the current signal` : "Not enough settled history for a drift signal"}</strong><p>{data.drift.message}</p></div>
+      </section>
+      <section className="panel"><div className="panel-head"><div><div className="panel-title">What if the next invoice had different terms?</div><div className="panel-subtitle">Scores a representative {data.history.median_invoice_amount_by_currency && Object.values(data.history.median_invoice_amount_by_currency)[0] != null ? "client invoice" : "invoice"} using the current model, then changes only payment terms or partial-payment eligibility.</div></div></div>
+        <div className="toolbar-tools"><label className="fine-print">Payment terms <select className="select" value={whatIfTerm} onChange={event => setWhatIfTerm(event.target.value)}><option value="NET_15">NET 15</option><option value="NET_30">NET 30</option></select></label><button className="btn primary" disabled={whatIfLoading} onClick={() => void runWhatIf()}>{whatIfLoading ? "Scoring…" : "Compare scenarios"}</button></div>
+        {whatIfError && <div className="error-box" role="alert" style={{ marginTop: 12 }}>{whatIfError.includes("unavailable") || whatIfError.includes("502") ? "The API may be waking up. Retry the scenario." : whatIfError} <button className="btn" onClick={() => void runWhatIf()}>Retry</button></div>}
+        {whatIf && <><div className="fine-print" style={{ marginTop: 12 }}>Model {whatIf.baseline.limited_history ? "uses a limited-history baseline" : "uses this client’s observed payment history"} · {whatIf.currency} {Number(whatIf.representative_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} representative amount · as of {formatDate(whatIf.as_of)}</div><div className="what-if-grid">{[["NET 30 · no partial payments", whatIf.baseline], [`${whatIfTerm.replaceAll("_", " ")} · no partial payments`, whatIf.with_terms], [`${whatIfTerm.replaceAll("_", " ")} · partial payments allowed`, whatIf.with_partial_payment]].map(([label, result]) => { const scenario = result as WhatIf["baseline"]; return <article className="what-if-card" key={String(label)}><strong>{String(label)}</strong><span>p50 full settlement</span><b>{forecastDate(scenario.p50)}</b><span>Paid in 14 days</span><b>{Math.round((scenario.probabilities["14d"] || 0) * 100)}%</b></article>; })}</div></>}
       </section>
       <section className="grid-panel"><div className="grid-toolbar"><div><div className="grid-title">Client invoices <span className="fine-print">{data.invoices.length} records</span></div><div className="fine-print" style={{ marginTop: 5 }}>Forecast and next-action facts are shown per invoice.</div></div></div>
         {data.invoices.length ? <div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th>Outstanding</th><th>Paid in 14d</th><th>Next action</th></tr></thead><tbody>{data.invoices.map(invoice => <tr key={invoice.id}><td><Link className="table-link" href={`/invoices/${encodeURIComponent(invoice.id)}?view=all&client_id=${encodeURIComponent(data.client.id)}&page=1&page_size=25&sort=action&direction=asc`}>{invoice.invoice_number}</Link></td><td>{formatDate(invoice.issue_date)}</td><td>{formatDate(invoice.due_date)}</td><td><span className={`status-pill ${invoice.status.toLowerCase()}`}>{invoice.status.replaceAll("_", " ")}</span></td><td>{money(invoice.currency, invoice.outstanding)}</td><td>{invoice.forecast ? `${Math.round(invoice.forecast.probabilities["14d"] * 100)}%` : "—"}</td><td>{invoice.decision.action.replaceAll("_", " ")}</td></tr>)}</tbody></table></div> : <div className="empty-box">This client has no invoices.</div>}

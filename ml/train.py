@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from lightgbm import LGBMClassifier, Booster
 from sklearn.isotonic import IsotonicRegression
+from sklearn.inspection import permutation_importance
 
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
@@ -245,7 +246,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     baseline = km_hazards(train_subjects)
     (output_dir / "kaplan_meier.json").write_text(json.dumps({"hazards": baseline, "horizon_days": HORIZON, "method": "pooled Kaplan–Meier"}, indent=2))
 
-    _, _, val_subjects = make_risk_rows(records, validation_cutoff, lambda r: validation_lo <= r["issue_date"] <= validation_hi)
+    X_validation, y_validation, val_subjects = make_risk_rows(records, validation_cutoff, lambda r: validation_lo <= r["issue_date"] <= validation_hi)
     _, _, test_subjects = make_risk_rows(records, history_cutoff, lambda r: test_lo <= r["issue_date"] <= test_hi)
     # Each invoice contributes all of its daily rows to exactly one time cohort.
     val_predictions: dict[str, list[float]] = {}
@@ -359,12 +360,22 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     plt.close(fig)
 
     model_version = f"lgbm-hazard-v3-seed-{SEED}-asof-{history_cutoff.isoformat()}"
-    feature_gains = booster.feature_importance(importance_type="gain")
-    feature_importance = sorted(
-        ({"feature": name, "gain": float(gain)} for name, gain in zip(FEATURES, feature_gains, strict=True)),
-        key=lambda item: item["gain"], reverse=True,
-    )
-    (output_dir / "feature_importance.json").write_text(json.dumps({"model_version": model_version, "features": feature_importance}, indent=2))
+    if len(X_validation) and len(y_validation):
+        permutation = permutation_importance(
+            model, X_validation, y_validation, scoring="neg_log_loss", n_repeats=3,
+            random_state=SEED, n_jobs=2,
+        )
+        feature_importance = sorted(
+            ({"feature": name, "importance": float(value), "std": float(spread)}
+             for name, value, spread in zip(FEATURES, permutation.importances_mean, permutation.importances_std, strict=True)),
+            key=lambda item: item["importance"], reverse=True,
+        )
+    else:
+        feature_importance = []
+    (output_dir / "feature_importance.json").write_text(json.dumps({
+        "model_version": model_version, "method": "permutation importance on validation risk rows (negative log loss)",
+        "features": feature_importance,
+    }, indent=2))
     training_issue_dates = [row["issue_date"] for row, _, _ in train_subjects]
     schema = {
         "version": FEATURE_SCHEMA_VERSION, "features": FEATURES, "horizon_days": HORIZON, "seed": SEED,

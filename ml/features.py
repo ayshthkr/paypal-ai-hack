@@ -6,7 +6,7 @@ import math
 import statistics
 from datetime import date, datetime
 
-FEATURE_SCHEMA_VERSION = "latepayer-features-v2"
+FEATURE_SCHEMA_VERSION = "latepayer-features-v3"
 GLOBAL_DELAY_PRIOR_DAYS = 10.0
 GLOBAL_LATE_RATE_PRIOR = 0.45
 GLOBAL_AMOUNT_MEDIAN_PRIOR = 4_000.0
@@ -19,7 +19,7 @@ FEATURES = [
     "delay_std_days", "history_missing", "prior_paid_invoice_count",
     "amount_vs_client_median_log", "other_open_exposure_log", "client_open_balance_log",
     "viewed_by_recipient", "days_since_viewed", "reminder_count", "days_since_last_reminder",
-    "term_due_on_receipt", "term_net_15", "term_net_30", "partial_share",
+    "term_due_on_receipt", "term_net_15", "term_net_30", "partial_payment_allowed", "partial_share",
     "days_since_last_partial_payment", "currency_is_usd", "currency_is_eur", "currency_is_gbp",
 ]
 
@@ -152,6 +152,7 @@ def features(invoice: object, as_of: date, history: list[object], all_invoices: 
         "reminder_count": float(len(reminder_days)), "days_since_last_reminder": float(last_reminder_days),
         "term_due_on_receipt": float(term in {"DUE_ON_RECEIPT", "DUE_ON_RECEIPT"}),
         "term_net_15": float(term in {"NET_15", "NET15"}), "term_net_30": float(term in {"NET_30", "NET30"}),
+        "partial_payment_allowed": float(bool(_get(invoice, "partial_payment_allowed", False))),
         "partial_share": partial_share, "days_since_last_partial_payment": float(days_since_partial),
         "currency_is_usd": float(currency == "USD"), "currency_is_eur": float(currency == "EUR"),
         "currency_is_gbp": float(currency == "GBP"),

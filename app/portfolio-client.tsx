@@ -33,6 +33,7 @@ type InvoiceResult = {
   aging_buckets: Record<string, AgingBucket>;
   expected_cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[];
   synthetic_demo: boolean; models: string[]; ready_for_review_count: number; drifting_client_count: number;
+  as_of: string; as_of_max: string;
 };
 type ClientRow = { id: string; name: string; drift: Drift };
 type MorningBrief = {
@@ -104,9 +105,13 @@ export default function PortfolioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [wakeRetryNonce, setWakeRetryNonce] = useState(0);
+  const [timeTravelDate, setTimeTravelDate] = useState("");
+  const timeTravelRef = useRef("");
   const [authenticated, setAuthenticated] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
   const [paypalRecipients, setPaypalRecipients] = useState<PaypalRecipient[]>([]);
   const [newInvoiceClient, setNewInvoiceClient] = useState("");
   const [newInvoiceAmount, setNewInvoiceAmount] = useState("");
@@ -192,6 +197,11 @@ export default function PortfolioClient() {
 
   useEffect(() => { latestQuery.current = searchKey; }, [searchKey]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { const message = window.sessionStorage.getItem("latepayer-demo-reset-message"); if (message) { setResetMessage(message); window.sessionStorage.removeItem("latepayer-demo-reset-message"); } }, []);
+  useEffect(() => {
+    const value = params.get("as_of") || data?.as_of_max || "";
+    if (value) { setTimeTravelDate(value); timeTravelRef.current = value; }
+  }, [data?.as_of_max, params]);
   useEffect(() => {
     if (!error.startsWith("The API is waking up.")) return;
     const timer = window.setTimeout(() => setWakeRetryNonce(value => value + 1), 1800);
@@ -202,6 +212,8 @@ export default function PortfolioClient() {
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+  useEffect(() => { const focus = () => { if (document.visibilityState === "visible") void refresh(); }; window.addEventListener("focus", focus); return () => window.removeEventListener("focus", focus); }, [refresh]);
+  useEffect(() => { const changed = (event: StorageEvent) => { if (event.key === "latepayer-demo-payment-updated") void refresh(); }; window.addEventListener("storage", changed); return () => window.removeEventListener("storage", changed); }, [refresh]);
   const sync = async () => {
     setBusy(true); setError("");
     try {
@@ -212,6 +224,17 @@ export default function PortfolioClient() {
       else setError(`Sync complete · ${result.created || 0} imported, ${result.updated || 0} updated.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "PayPal sync failed."); }
     finally { setBusy(false); }
+  };
+
+  const resetDemo = async () => {
+    if (!window.confirm("Reset all synthetic demo payments, reminders, and replies to the starting state? PayPal Sandbox records are not changed.")) return;
+    setResetBusy(true); setError(""); setResetMessage("");
+    try {
+      const result = await getJson<{ message: string }>("/api/demo/reset", { method: "POST" });
+      window.sessionStorage.setItem("latepayer-demo-reset-message", result.message);
+      window.location.assign("/");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not reset the synthetic demo."); }
+    finally { setResetBusy(false); }
   };
 
   const createInvoice = async (event: FormEvent<HTMLFormElement>) => {
@@ -257,7 +280,8 @@ export default function PortfolioClient() {
   const baseColumns = useMemo<ColDef<InvoiceRow>[]>(() => [
     { colId: "invoice_number", field: "invoice_number", headerName: "Invoice", pinned: "left", minWidth: 140, flex: .8,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={detailHref(cell.data?.id || "")}>{cell.value}</Link> },
-    { colId: "client_name", field: "client_name", headerName: "Client", pinned: "left", minWidth: 160, flex: 1.1 },
+    { colId: "client_name", field: "client_name", headerName: "Client", pinned: "left", minWidth: 160, flex: 1.1,
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={`/clients/${encodeURIComponent(cell.data?.client_id || "")}`}>{cell.value}</Link> },
     { colId: "outstanding", field: "outstanding", headerName: "Balance", minWidth: 125,
       valueFormatter: cell => cell.data ? money(cell.data.currency, cell.value) : "" },
     { colId: "due_date", field: "due_date", headerName: "Due", minWidth: 115,
@@ -306,10 +330,12 @@ export default function PortfolioClient() {
 
   return <AgGridProvider modules={modules}>
     <div className="app-shell">
-      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
+      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
+        {!authenticated && data && <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${timeTravelDate || data.as_of_max}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, Math.round((new Date(`${timeTravelDate || data.as_of_max}T00:00:00Z`).getTime() - new Date(`${data.as_of_max}T00:00:00Z`).getTime()) / 86_400_000)))} onChange={event => { const date = new Date(`${data.as_of_max}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + Number(event.target.value)); const value = date.toISOString().slice(0, 10); setTimeTravelDate(value); timeTravelRef.current = value; }} onPointerUp={() => updateUrl({ as_of: timeTravelRef.current === data.as_of_max ? null : timeTravelRef.current }, "replace")} onKeyUp={() => updateUrl({ as_of: timeTravelRef.current === data.as_of_max ? null : timeTravelRef.current }, "replace")} /><button className="btn" disabled={resetBusy} onClick={() => void resetDemo()}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>}
+        {resetMessage && <div className="action-message" role="status">{resetMessage}</div>}
         {error && <div className="error-box" role="alert">{error}</div>}
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
           <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>
@@ -352,7 +378,7 @@ export default function PortfolioClient() {
               const trigger = drift.signal_type === "gone_quiet"
                 ? `${drift.days_since_last_invoice ?? 0} days since last invoice · usual gap ${Math.round(drift.cadence_days || 0)} days`
                 : `${Math.round(drift.recent_median_delay_days || 0)}d recent delay · ${Math.round(drift.usual_delay_days || 0)}d usual`;
-              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong>{client.name}</strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
+              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong><Link className="table-link" href={`/clients/${encodeURIComponent(client.id)}`}>{client.name}</Link></strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
             })}</div> : <div className="insight-text">No client has a current delay or cadence signal.</div>}
           </section>
 

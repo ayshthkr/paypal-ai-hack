@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import SurvivalCurve from "./survival-curve";
 
@@ -42,6 +43,7 @@ function shortDate(value: string | null | undefined) {
 }
 
 export default function InvoiceDetail({ id, portfolioQuery }: { id: string; portfolioQuery: string }) {
+  const router = useRouter();
   const [data, setData] = useState<InvoiceData | null>(null);
   const [draft, setDraft] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
@@ -142,6 +144,13 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
       const result = await requestJson<{ note: string; status: string }>(`/api/demo/invoices/${encodeURIComponent(id)}/payment`, { method: "POST", body: JSON.stringify(amount ? { amount } : {}) });
       setNotice(`${result.note} Invoice status is now ${result.status}.`);
       await refresh();
+      if (!amount && result.status === "PAID") {
+        window.localStorage.setItem("latepayer-demo-payment-updated", new Date().toISOString());
+        const query = new URLSearchParams(portfolioQuery || "view=open&page=1&page_size=25&sort=action&direction=asc");
+        query.set("view", "all"); query.set("page", "1"); query.delete("as_of");
+        query.delete("age_bucket"); query.delete("action_only"); query.delete("drifting_only");
+        router.push(`/?${query.toString()}`);
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Payment simulation failed."); }
     finally { setBusy(false); }
   };
@@ -170,7 +179,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
 
   if (loading && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="empty-box">Loading invoice…</div></main></div>;
   if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="panel"><div className="eyebrow">Invoice detail</div><h1>Invoice not found</h1><p className="subheading">This invoice may have been removed or the link may be out of date.</p><div className="toolbar-tools"><Link className="btn" href="/">Back to portfolio</Link><form action="/" method="get" className="toolbar-tools"><input className="search" name="q" aria-label="Search invoices" placeholder="Search invoice or client" value={missingSearch} onChange={event => setMissingSearch(event.target.value)}/><button className="btn primary" disabled={!missingSearch.trim()}>Search</button></form></div></div></main></div>;
-  if (error && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="error-box">{error} {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div></main></div>;
+  if (error && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load this invoice." : error} <button className="btn" onClick={() => void refresh()}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div></main></div>;
   if (!data) return null;
   const rec = data.recommendation;
   const isDemo = data.source === "demo";
@@ -184,7 +193,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
     <main className="main-wrap">
       {isDemo && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Forecast and approval flow use generated records. Simulated actions do not contact PayPal.</span></div>}
-      {error && <div className="error-box" role="alert" style={{ marginBottom: 14 }}>{error}</div>}
+      {error && <div className="error-box" role="alert" style={{ marginBottom: 14 }}>{error} <button className="btn" onClick={() => void refresh()}>Retry</button></div>}
       <div className="heading-row"><div><div className="eyebrow">Invoice detail · {data.source === "demo" ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.invoice_number}</h1><p className="subheading"><Link className="table-link" href={`/clients/${encodeURIComponent(data.client_id)}`}>{data.client_name}</Link>{data.client_email ? ` · ${data.client_email}` : ""}</p></div><div className="top-actions"><span className={`status-pill ${data.disputed ? "disputed" : data.status.toLowerCase()}`}>{data.disputed ? "DISPUTED" : data.status.replaceAll("_", " ")}</span>{!isDemo && authenticated && <button className="btn primary" disabled={busy} onClick={async () => { setBusy(true); try { await requestJson("/api/sync", { method: "POST" }); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Sync failed."); } finally { setBusy(false); } }}>↻ Sync PayPal</button>}</div></div>
       <nav className="invoice-navigation" aria-label="Invoice navigation"><div>{neighbors.previous ? <Link className="btn" href={`/invoices/${encodeURIComponent(neighbors.previous.id)}${neighbors.previous.query ? `?${neighbors.previous.query}` : ""}`}>← {neighbors.previous.invoice_number}</Link> : <span className="fine-print">No previous invoice</span>}</div><span className="fine-print">{neighborsLoading ? "Loading current view…" : "Current portfolio view"}</span><div>{neighbors.next ? <Link className="btn" href={`/invoices/${encodeURIComponent(neighbors.next.id)}${neighbors.next.query ? `?${neighbors.next.query}` : ""}`}>{neighbors.next.invoice_number} →</Link> : <span className="fine-print">No next invoice</span>}</div></nav>
       <div className="detail-layout">

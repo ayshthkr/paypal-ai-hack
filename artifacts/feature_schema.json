@@ -1,5 +1,5 @@
 {
-  "version": "latepayer-features-v2",
+  "version": "latepayer-features-v3",
   "features": [
     "log_outstanding",
     "terms_days",
@@ -32,6 +32,7 @@
     "term_due_on_receipt",
     "term_net_15",
     "term_net_30",
+    "partial_payment_allowed",
     "partial_share",
     "days_since_last_partial_payment",
     "currency_is_usd",
