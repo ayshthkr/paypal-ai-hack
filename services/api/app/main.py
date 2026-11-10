@@ -25,7 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -1024,6 +1024,8 @@ def invoices(
     query = select(Invoice).options(joinedload(Invoice.client)).where(
         Invoice.source.in_(source_names)
     ).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
+    if view not in {"all", "paid"}:
+        query = query.where(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0, Invoice.disputed.is_(False))
     portfolio_rows = list(db.scalars(query).unique().all())
     _prepare_portfolio_context(db, portfolio_rows)
     base_rows = portfolio_rows
@@ -1055,7 +1057,6 @@ def invoices(
     drifting_ids = {client_id for client_id, drift in drift_cache.items()
                     if drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}}
 
-    view_counts = {name: 0 for name in ("open", "due_this_week", "overdue", "paid", "all")}
     ready_recommendations = set()
     for source in source_names:
         today = _today(db, source)
@@ -1064,14 +1065,29 @@ def invoices(
             Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
             func.date(Recommendation.created_at) == today,
         )).all())
-    for row in base_rows:
-        open_invoice = _payable(row)
-        today = _today(db, row.source)
-        view_counts["all"] += 1
-        view_counts["open"] += int(open_invoice)
-        view_counts["due_this_week"] += int(open_invoice and 0 <= (row.due_date - today).days <= 7)
-        view_counts["overdue"] += int(open_invoice and row.due_date < today)
-        view_counts["paid"] += int(row.status == "PAID")
+    open_condition = and_(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0, Invoice.disputed.is_(False))
+    due_week_condition = or_(*[and_(Invoice.source == source, Invoice.due_date >= _today(db, source),
+                                  Invoice.due_date <= _today(db, source) + timedelta(days=7)) for source in source_names])
+    overdue_condition = or_(*[and_(Invoice.source == source, Invoice.due_date < _today(db, source)) for source in source_names])
+    count_query = select(func.count(Invoice.id),
+        func.sum(case((open_condition, 1), else_=0)),
+        func.sum(case((and_(open_condition, due_week_condition), 1), else_=0)),
+        func.sum(case((and_(open_condition, overdue_condition), 1), else_=0)),
+        func.sum(case((Invoice.status == "PAID", 1), else_=0))).join(Client).where(Invoice.source.in_(source_names))
+    if client_id:
+        count_query = count_query.where(Invoice.client_id == client_id)
+    if statuses:
+        count_query = count_query.where(Invoice.status.in_(selected_statuses))
+    if due_from:
+        count_query = count_query.where(Invoice.due_date >= due_from)
+    if due_to:
+        count_query = count_query.where(Invoice.due_date <= due_to)
+    if q:
+        needle = q.casefold()
+        count_query = count_query.where(or_(*[func.lower(column).contains(needle, autoescape=True)
+                                             for column in (Invoice.invoice_number, Client.display_name, Invoice.status, Client.email)]))
+    counts = db.execute(count_query).one()
+    view_counts = {name: int(value or 0) for name, value in zip(("all", "open", "due_this_week", "overdue", "paid"), counts, strict=True)}
 
     if view == "open":
         rows = [row for row in base_rows if _payable(row)]
