@@ -238,7 +238,7 @@ def test_cancelled_invoice_with_stale_balance_is_closed_in_api_and_payment_is_bl
         db.add(invoice)
         db.commit()
 
-    portfolio = client.get("/invoices").json()
+    portfolio = client.get("/invoices?view=all").json()
     assert portfolio["items"][0]["outstanding"] == "0.00"
     assert portfolio["currency_totals"] == {}
     detail = client.get("/invoices/cancelled-stale").json()
@@ -246,6 +246,45 @@ def test_cancelled_invoice_with_stale_balance_is_closed_in_api_and_payment_is_bl
     assert detail["forecast"] is None
     assert detail["decision"]["action"] == "wait"
     assert client.post("/demo/invoices/cancelled-stale/payment", json={}).status_code == 409
+
+
+def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
+    client, Session = api
+    with Session() as db:
+        owners = [Client(id=f"grid-owner-{index}", display_name=f"Grid Client {index}", source="demo", drift={}) for index in range(2)]
+        db.add_all(owners)
+        db.flush()
+        invoices = []
+        for index in range(36):
+            owner = owners[index % 2]
+            invoice = _invoice(f"grid-{index:02}", owner.id, status="PAID" if index >= 32 else "OVERDUE")
+            invoice.invoice_number = f"LP-GRID-{index:02}"
+            invoice.outstanding = Decimal("0.00") if invoice.status == "PAID" else Decimal("100.00")
+            invoices.append(invoice)
+        db.add_all(invoices)
+        db.commit()
+
+    page = client.get("/invoices?view=all&page=2&page_size=25&sort=invoice").json()
+    assert page["count"] == 36
+    assert page["page"] == 2 and page["page_count"] == 2 and len(page["items"]) == 11
+    assert page["view_counts"]["open"] == 32
+    assert page["view_counts"]["paid"] == 4
+    assert page["aging_buckets"]["late_1_30"]["count"] == 32
+
+    overdue = client.get("/invoices?view=overdue&page_size=50").json()
+    assert overdue["count"] == 32
+    paid = client.get("/invoices?view=paid&page_size=50").json()
+    assert paid["count"] == 4
+    assert paid["currency_totals"] == {}
+
+    filtered = client.get(f"/invoices?view=open&client_id={owners[0].id}&page_size=50").json()
+    assert filtered["count"] == 16
+    assert filtered["currency_totals"] == {"USD": "1600.00"}
+    assert isinstance(filtered["expected_cash_by_week"], list)
+
+    sorted_by_probability = client.get("/invoices?view=open&page_size=50&sort=p14&direction=desc").json()
+    probabilities = [row["forecast"]["probabilities"]["14d"] for row in sorted_by_probability["items"]]
+    assert probabilities == sorted(probabilities, reverse=True)
 
 
 def test_new_client_forecast_marks_limited_history_and_reports_model_metadata(api):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import urlparse
@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import case, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -161,13 +161,18 @@ def _invoice_dict(
     drift_cache: dict[str, dict] | None = None,
     activity_scores: dict[str, float] | None = None,
     daily_candidate_ids: set[str] | None = None,
+    forecast_cache: dict[str, dict] | None = None,
 ) -> dict:
     client = invoice.client or db.get(Client, invoice.client_id)
     today = _today(db, invoice.source)
     outstanding = Decimal("0.00") if invoice.status in CLOSED_STATUSES else invoice.outstanding
     forecast = None
     if invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0:
-        forecast = forecast_invoice(db, invoice, today=today, persist=include_detail)
+        forecast = None if include_detail else (forecast_cache or {}).get(invoice.id)
+        if forecast is None:
+            forecast = forecast_invoice(db, invoice, today=today, persist=include_detail)
+            if forecast_cache is not None and not include_detail:
+                forecast_cache[invoice.id] = forecast
     if drift_cache is not None and client.id in drift_cache:
         drift = drift_cache[client.id]
     else:
@@ -275,7 +280,7 @@ def _payable(invoice: Invoice) -> bool:
     return invoice.status not in CLOSED_STATUSES and not invoice.disputed and invoice.outstanding > 0
 
 
-def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
+def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cache: dict[str, dict] | None = None) -> list[str]:
     query = select(Invoice).order_by(Invoice.due_date.asc())
     if source:
         query = query.where(Invoice.source == source)
@@ -285,7 +290,11 @@ def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
         if not _payable(invoice):
             continue
         invoice_today = _today(db, invoice.source)
-        forecast = forecast_invoice(db, invoice, today=invoice_today, persist=False)
+        forecast = (forecast_cache or {}).get(invoice.id)
+        if forecast is None:
+            forecast = forecast_invoice(db, invoice, today=invoice_today, persist=False)
+            if forecast_cache is not None:
+                forecast_cache[invoice.id] = forecast
         last_attempt, unresolved, last_tone, last_payment = _last_attempt(db, invoice.id)
         action = decide(
             invoice, forecast.get("probability_by_due"), last_attempt, unresolved, invoice_today,
@@ -295,23 +304,11 @@ def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
         if action["action"] in {"friendly", "firm", "offer_partial_payment"} and not holdback_assignment(invoice.id, invoice_today):
             candidates.append((action["expected_cash_gain"], invoice.due_date, invoice.id))
     candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
-    return {invoice_id for _, _, invoice_id in candidates[:DAILY_SUGGESTION_CAP]}
+    return [invoice_id for _, _, invoice_id in candidates]
 
 
-def _apply_daily_cap(items: list[dict]) -> None:
-    candidates = [item for item in items if item["decision"]["action"] in {"friendly", "firm", "offer_partial_payment"}]
-    candidates.sort(key=lambda item: (
-        -item["decision"].get("expected_cash_gain", 0), item["due_date"], item["id"],
-    ))
-    selected = {item["id"] for item in candidates[:DAILY_SUGGESTION_CAP]}
-    for rank, item in enumerate(candidates, start=1):
-        if item["id"] in selected:
-            item["decision"]["daily_rank"] = rank
-        else:
-            item["decision"]["action_before_daily_cap"] = item["decision"]["action"]
-            item["decision"]["action"] = "wait"
-            item["decision"]["tone"] = "none"
-            item["decision"]["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
+def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
+    return set(_rank_policy_candidates(db, source)[:DAILY_SUGGESTION_CAP])
 
 
 def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> None:
@@ -331,7 +328,7 @@ def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> Non
         "reminder_step": invoice.reminder_step,
         "policy_step": decision.get("policy_step"),
     }
-    payload = {"features": fields, "action": decision["action"], "reason": decision["reason"],
+    payload = {"invoice_id": invoice.id, "features": fields, "action": decision["action"], "reason": decision["reason"],
                "holdback": decision.get("holdback", False)}
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     if db.scalar(select(PolicyDecisionLog.id).where(PolicyDecisionLog.fingerprint == fingerprint)):
@@ -433,45 +430,198 @@ def logout(response: Response) -> dict:
     return {"authenticated": False}
 
 
+def _age_bucket(invoice: Invoice, today: date) -> str | None:
+    if not _payable(invoice):
+        return None
+    days_late = (today - invoice.due_date).days
+    if days_late <= 0:
+        return "not_due"
+    if days_late <= 30:
+        return "late_1_30"
+    if days_late <= 60:
+        return "late_31_60"
+    if days_late <= 90:
+        return "late_61_90"
+    return "late_90_plus"
+
+
+def _sort_invoice_items(items: list[dict], sort: str, direction: str) -> None:
+    reverse = direction.casefold() == "desc"
+    action_order = {"friendly": 0, "firm": 1, "offer_partial_payment": 2, "personal_call": 3, "wait": 4}
+
+    def key(item: dict):
+        decision = item["decision"]
+        if sort == "action":
+            rank = decision.get("daily_rank")
+            return (rank is None, rank or 10_000, action_order.get(decision["action"], 5),
+                    -decision.get("expected_cash_gain", 0), item["due_date"], item["invoice_number"])
+        if sort == "expected_cash":
+            return (decision.get("expected_cash_gain", 0), item["due_date"], item["invoice_number"])
+        if sort == "p14":
+            return ((item.get("forecast") or {}).get("probabilities", {}).get("14d", -1), item["due_date"])
+        if sort == "client":
+            return (item["client_name"].casefold(), item["due_date"])
+        if sort == "balance":
+            return (float(item["outstanding"]), item["due_date"])
+        if sort == "invoice":
+            return item["invoice_number"].casefold()
+        if sort == "status":
+            return (item["status"], item["due_date"])
+        return (item["due_date"], item["invoice_number"])
+
+    items.sort(key=key, reverse=reverse if sort != "action" else False)
+
+
 @app.get("/invoices")
-def invoices(request: Request, q: str | None = None, limit: int = 200, db: Session = Depends(get_db)) -> dict:
+def invoices(
+    request: Request,
+    q: str | None = None,
+    limit: int | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    view: str = "open",
+    client_id: str | None = None,
+    age_bucket: str | None = None,
+    sort: str = "action",
+    direction: str = "asc",
+    action_only: bool = False,
+    drifting_only: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
     user = session_user(request)
-    priority = case((Invoice.status.in_(CLOSED_STATUSES), 1), else_=0)
-    query = select(Invoice).options(joinedload(Invoice.client)).order_by(priority.asc(), Invoice.due_date.asc(), Invoice.invoice_number.asc()).limit(min(max(limit, 1), 500))
+    page = max(1, page)
+    if limit is not None and page_size == 25:
+        page_size = limit
+    page_size = min((25, 50, 100), key=lambda size: abs(size - page_size))
+    allowed_views = {"open", "due_this_week", "overdue", "paid", "all"}
+    view = view if view in allowed_views else "open"
+    allowed_buckets = {"not_due", "late_1_30", "late_31_60", "late_61_90", "late_90_plus"}
+    age_bucket = age_bucket if age_bucket in allowed_buckets else None
+    allowed_sorts = {"action", "expected_cash", "p14", "due", "client", "balance", "invoice", "status"}
+    sort = sort if sort in allowed_sorts else "action"
+    direction = "desc" if direction.casefold() == "desc" else "asc"
+
+    query = select(Invoice).options(joinedload(Invoice.client)).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
     if not user:
         query = query.where(Invoice.source == "demo")
-    rows = list(db.scalars(query).unique().all())
+    base_rows = list(db.scalars(query).unique().all())
+    if client_id:
+        base_rows = [row for row in base_rows if row.client_id == client_id]
     if q:
         needle = q.casefold()
-        rows = [row for row in rows if needle in row.invoice_number.casefold() or needle in row.client.display_name.casefold() or needle in row.status.casefold()]
-    source_names = sorted({row.source for row in rows}) or (["paypal"] if user else ["demo"])
+        base_rows = [row for row in base_rows if any(needle in value.casefold() for value in (
+            row.invoice_number, row.client.display_name, row.status, row.client.email or "",
+        ))]
+
+    source_names = ["demo"] if not user else ["demo", "paypal"]
     activity_by_source = {source: _activity_for_source(db, source) for source in source_names}
-    daily_candidate_ids = _top_policy_candidates(db, None if user else "demo")
+    forecast_cache: dict[str, dict] = {}
+    candidate_order = _rank_policy_candidates(db, None if user else "demo", forecast_cache)
+    daily_candidate_ids = set(candidate_order[:DAILY_SUGGESTION_CAP])
+    candidate_ranks = {invoice_id: index for index, invoice_id in enumerate(candidate_order[:DAILY_SUGGESTION_CAP], start=1)}
+
+    clients_in_scope = list(db.scalars(select(Client).where(Client.source.in_(source_names))).all())
     drift_cache: dict[str, dict] = {}
-    items = [_invoice_dict(db, row, drift_cache=drift_cache, activity_scores=activity_by_source.get(row.source),
-                           daily_candidate_ids=daily_candidate_ids) for row in rows]
-    _apply_daily_cap(items)
-    rows_by_id = {row.id: row for row in rows}
-    items.sort(key=lambda item: (
-        item["decision"].get("daily_rank") is None,
-        item["decision"].get("daily_rank", 10_000), item["due_date"], item["invoice_number"],
-    ))
+    for client in clients_in_scope:
+        drift_cache[client.id] = _drift_for(db, client, activity_by_source.get(client.source, {}).get(client.id))
+    drifting_ids = {client_id for client_id, drift in drift_cache.items()
+                    if drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}}
+
+    view_counts = {name: 0 for name in ("open", "due_this_week", "overdue", "paid", "all")}
+    ready_recommendations = set()
+    for source in source_names:
+        today = _today(db, source)
+        ready_recommendations.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
+            Invoice.source == source, Recommendation.state == "proposed",
+            Recommendation.action.in_(["friendly", "firm"]),
+            func.date(Recommendation.created_at) == today.isoformat(),
+        )).all())
+    for row in base_rows:
+        open_invoice = _payable(row)
+        today = _today(db, row.source)
+        view_counts["all"] += 1
+        view_counts["open"] += int(open_invoice)
+        view_counts["due_this_week"] += int(open_invoice and 0 <= (row.due_date - today).days <= 7)
+        view_counts["overdue"] += int(open_invoice and row.due_date < today)
+        view_counts["paid"] += int(row.status == "PAID")
+
+    if view == "open":
+        rows = [row for row in base_rows if _payable(row)]
+    elif view == "due_this_week":
+        rows = [row for row in base_rows if _payable(row) and 0 <= (row.due_date - _today(db, row.source)).days <= 7]
+    elif view == "overdue":
+        rows = [row for row in base_rows if _payable(row) and row.due_date < _today(db, row.source)]
+    elif view == "paid":
+        rows = [row for row in base_rows if row.status == "PAID"]
+    else:
+        rows = base_rows
+    if age_bucket:
+        rows = [row for row in rows if _age_bucket(row, _today(db, row.source)) == age_bucket]
+    if drifting_only:
+        rows = [row for row in rows if row.client_id in drifting_ids]
+
+    items = [_invoice_dict(
+        db, row, drift_cache=drift_cache, activity_scores=activity_by_source.get(row.source),
+        daily_candidate_ids=daily_candidate_ids, forecast_cache=forecast_cache,
+    ) for row in rows]
     for item in items:
-        _record_policy_decision(db, rows_by_id[item["id"]], item)
+        if item["id"] in candidate_ranks:
+            item["decision"]["daily_rank"] = candidate_ranks[item["id"]]
+    if action_only:
+        items = [item for item in items if item["id"] in ready_recommendations]
+    _sort_invoice_items(items, sort, direction)
+
     totals: dict[str, Decimal] = {}
-    for row in rows:
-        if _payable(row):
-            totals[row.currency] = totals.get(row.currency, Decimal("0")) + Decimal(row.outstanding)
-    model_names = sorted({item["forecast"]["model"] for item in items if item["forecast"]})
-    ready_for_review_count = db.scalar(select(func.count(Recommendation.id)).join(Invoice).where(
-        Invoice.source.in_(source_names), Recommendation.state == "proposed",
-        Recommendation.action.in_(["friendly", "firm"]),
-        func.date(Recommendation.created_at).in_([_today(db, source).isoformat() for source in source_names]),
-    )) or 0
+    for item in items:
+        if Decimal(item["outstanding"]) > 0 and item["status"] not in CLOSED_STATUSES:
+            totals[item["currency"]] = totals.get(item["currency"], Decimal("0")) + Decimal(item["outstanding"])
+    aging = {name: {"count": 0, "amounts": {}} for name in allowed_buckets}
+    for row in base_rows:
+        bucket = _age_bucket(row, _today(db, row.source))
+        if not bucket:
+            continue
+        aging[bucket]["count"] += 1
+        amounts = aging[bucket]["amounts"]
+        amounts[row.currency] = str(Decimal(amounts.get(row.currency, "0")) + Decimal(row.outstanding))
+
+    expected_cash: dict[tuple[str, str], dict] = {}
+    for row in base_rows:
+        if not _payable(row):
+            continue
+        forecast = forecast_cache.get(row.id) or forecast_invoice(db, row, today=_today(db, row.source), persist=False)
+        forecast_cache[row.id] = forecast
+        p50 = forecast.get("quantiles", {}).get("p50")
+        if not p50 or not p50.get("date"):
+            continue
+        pay_date = date.fromisoformat(p50["date"])
+        today = _today(db, row.source)
+        if not today <= pay_date <= today + timedelta(days=56):
+            continue
+        week_start = pay_date - timedelta(days=pay_date.weekday())
+        key = (week_start.isoformat(), row.currency)
+        entry = expected_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
+        entry["amount"] += Decimal(row.outstanding)
+        entry["invoice_count"] += 1
+
+    filtered_count = len(items)
+    page_count = max(1, (filtered_count + page_size - 1) // page_size)
+    page_items = items[(page - 1) * page_size:page * page_size]
+    rows_by_id = {row.id: row for row in rows}
+    for item in page_items:
+        _record_policy_decision(db, rows_by_id[item["id"]], item)
+    model_names = sorted({item["forecast"]["model"] for item in page_items if item["forecast"]})
+    ready_for_review_count = len(ready_recommendations)
     db.commit()
-    return {"items": items, "count": len(items), "currency_totals": {key: str(value) for key, value in sorted(totals.items())},
-            "models": model_names, "synthetic_demo": not user,
-            "ready_for_review_count": ready_for_review_count}
+    return {
+        "items": page_items, "count": filtered_count, "page": page, "page_size": page_size,
+        "page_count": page_count, "view": view, "view_counts": view_counts,
+        "currency_totals": {key: str(value) for key, value in sorted(totals.items())},
+        "aging_buckets": aging,
+        "expected_cash_by_week": [{**entry, "amount": str(entry["amount"])} for key, entry in sorted(expected_cash.items())],
+        "models": model_names, "synthetic_demo": not user,
+        "ready_for_review_count": ready_for_review_count,
+        "drifting_client_count": len(drifting_ids),
+    }
 
 
 @app.get("/invoices/{invoice_id}")
