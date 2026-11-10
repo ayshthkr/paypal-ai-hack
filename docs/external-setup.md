@@ -16,11 +16,11 @@ PayPal account/KYC and Render account setup are marked done based on your latest
 - [x] Add the existing controlled Sandbox Personal buyer email to `PAYPAL_ALLOWED_RECIPIENT_EMAILS` in local `.env`.
 - [x] Existing controlled Sandbox Personal account selected for testing; the email is stored locally in the allowlist, not shown here.
 - [x] In PayPal Developer, enable and save **Invoicing** for the `Late Payer Sandbox` app.
-- [ ] Resolve the Sandbox Invoicing API permission: the app toggle is enabled, but a fresh OAuth token omits `https://api.paypal.com/v1/invoicing:*`, and invoice list/create requests return HTTP 403 `NOT_AUTHORIZED`. Ask PayPal Developer Support to enable the Sandbox Invoicing scope/entitlement for this app/account, then retry `make sync` and `make seed-sandbox`.
+- [x] Confirm Sandbox Invoicing API access: fresh OAuth returned the Invoicing scope, and invoice list/search/create succeeded with the configured app/account. No Developer Support or entitlement request was needed.
 - [x] Register `https://latepayer-api.onrender.com/webhooks/paypal` in that app for invoice paid, cancelled, refunded, and sent events; the webhook ID is stored in Render and ignored local `.env.render`.
-- [ ] Seed/send one controlled USD Sandbox invoice, complete its Sandbox payment, and confirm the webhook delivery and invoice refresh after the Invoicing API permission is fixed.
+- [x] Complete the controlled USD Sandbox invoice journey: import, send, native reminder, recorded Sandbox payment, reconciliation to `PAID` / USD 0.00 outstanding, and verified webhook delivery (Render HTTP 200).
 
-The remaining PayPal action is resolving the missing Sandbox API scope, then completing the controlled invoice/payment and webhook-delivery check—not account verification or KYC. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle.
+No further PayPal action is needed for Sandbox acceptance. The dashboard has `make seed-sandbox`, `make sync`, and `make record-payment ...` commands for the controlled test cycle. Live credentials and live payment operations are intentionally not configured or used.
 
 ### PayPal India KYC
 
@@ -36,7 +36,7 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 - [x] Confirm the API `/ready` endpoint returns HTTP 200 with its database, operator, Sandbox credentials, model artifact, and webhook ID configured; the web root returns HTTP 200.
 - [x] Deploy the first-boot-only synthetic fixture loader. Hosted dashboard verified with 400 invoice records, LightGBM forecasts, and client drift; simulated actions are labeled and do not call PayPal.
 - [x] Verify hosted operator login and authenticated session through the web API proxy; generated credentials remain in ignored local `.env.render`.
-- [ ] Complete the PayPal invoice/reminder/payment and webhook-delivery check after PayPal grants the missing Invoicing API scope.
+- [x] Complete the hosted PayPal Sandbox invoice/reminder/payment and webhook-delivery acceptance flow.
 
 ## AG Grid
 
@@ -44,5 +44,4 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 
 ## Not configured in this workspace
 
-- [ ] PayPal Sandbox Invoicing API scope is still denied despite the app feature being enabled; the end-to-end Sandbox invoice/payment and webhook delivery run is pending.
-- [ ] Complete the PayPal Sandbox invoice/payment/webhook journey after Developer Support resolves the missing Invoicing API scope.
+- Live PayPal credentials and live payment operations are intentionally not configured. Sandbox V1 acceptance is complete.
