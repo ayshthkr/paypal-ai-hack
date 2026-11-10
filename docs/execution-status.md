@@ -13,9 +13,9 @@
 
 ## External work still required
 
-1. PayPal account/KYC is marked complete based on the user's latest note. Sandbox REST credentials and a controlled Sandbox Personal test buyer are configured locally; OAuth passed. The India Sandbox merchant's foreign-currency send restriction blocks live reminder acceptance; check whether a no-email payable invoice/payment record is supported or use a Sandbox merchant account with compatible currency settings.
-3. Render account setup is marked complete. The project is pushed to private GitHub repo `ayshthkr/paypal-ai-hack` on `codex/late-payer-v1`. GitHub sign-in is complete and the Render GitHub App is restricted to this one repository; Render's Git deployment credential is not yet connected in the dashboard. Complete that connection, deploy the Blueprint, configure operator and PayPal Sandbox values in Render, then register the public API webhook and verify one delivery.
-4. Hosted browser journey and PayPal webhook delivery are not claimed as tested. No live PayPal send was attempted.
+1. PayPal account/KYC is marked complete based on the user's latest note. Credentials for the new US Sandbox Business app and the controlled Sandbox Personal buyer are configured locally; OAuth passed. The app's Invoicing capability is disabled. No invoice was created or sent after the API returned `NOT_AUTHORIZED`; enable Invoicing, then run the controlled Sandbox invoice/payment checks.
+2. Render account setup is marked complete. The project is pushed to private GitHub repo `ayshthkr/paypal-ai-hack` on `codex/late-payer-v1`. GitHub sign-in is complete and the Render GitHub App is restricted to this one repository; Render's Git deployment credential is not yet connected in the dashboard. Complete that connection, deploy the free Blueprint, configure operator and PayPal Sandbox values in Render, then register the public API webhook and verify one delivery.
+3. Hosted browser journey and PayPal webhook delivery are not claimed as tested. No live PayPal send was attempted.
 
 ## Main changed areas
 
