@@ -2081,7 +2081,7 @@ def export_invoices(request: Request, q: str | None = None, view: str = "open", 
             buffer.truncate(0)
             quantiles = (item.get("forecast") or {}).get("quantiles", {})
             values = [item["invoice_number"], item["client_name"], item["status"], item["due_date"], item["currency"], item["outstanding"],
-                      *[(quantiles.get(key) or {}).get("date", "After 180 days") for key in ("p10", "p50", "p90")]]
+                      *[(quantiles.get(key) or {}).get("date", "After 180 days") if item.get("forecast") else "" for key in ("p10", "p50", "p90")]]
             # Spreadsheet formula injection is possible even in quoted cells.
             writer.writerow(["'" + str(value) if str(value).startswith(("=", "+", "-", "@", "\t", "\r")) else value for value in values])
             yield buffer.getvalue()

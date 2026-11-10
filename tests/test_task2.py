@@ -92,6 +92,8 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert all_page['count'] == 31 and len(all_page['items']) == 1
     assert all_page['currency_totals']['USD'] == '3000.00'
     assert client.get('/invoices?view=open').json()['count'] == 29
+    paid_export = list(csv.reader(io.StringIO(client.get('/exports/invoices.csv?view=paid').text)))
+    assert paid_export[1][-3:] == ['', '', '']
 
 
 def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, request):
