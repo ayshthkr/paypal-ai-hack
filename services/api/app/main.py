@@ -1021,12 +1021,41 @@ def invoices(
         raise HTTPException(status_code=422, detail="Demo time travel is limited to the latest 60 days.")
 
     source_names = ["demo"] if not user else ["demo", "paypal"]
-    query = select(Invoice).options(joinedload(Invoice.client)).where(
-        Invoice.source.in_(source_names)
-    ).order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())
-    if view not in {"all", "paid"}:
-        query = query.where(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0, Invoice.disputed.is_(False))
-    portfolio_rows = list(db.scalars(query).unique().all())
+    source_query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.source.in_(source_names))
+    open_query = source_query.where(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0)
+    sql_page = (view in {"all", "paid"} and sort in {"due", "client", "balance", "invoice", "status"}
+                and not any((age_bucket, drifting_only, action_only, predicted_week, db.info.get("export_all"))))
+    sql_page_ids: set[str] = set()
+    if sql_page:
+        page_query = source_query.join(Client)
+        if view == "paid":
+            page_query = page_query.where(Invoice.status == "PAID")
+        if client_id:
+            page_query = page_query.where(Invoice.client_id == client_id)
+        if statuses:
+            page_query = page_query.where(Invoice.status.in_({value.strip().upper() for value in statuses.split(",") if value.strip()}))
+        if due_from:
+            page_query = page_query.where(Invoice.due_date >= due_from)
+        if due_to:
+            page_query = page_query.where(Invoice.due_date <= due_to)
+        if q:
+            page_query = page_query.where(or_(*[func.lower(column).contains(q.casefold(), autoescape=True)
+                for column in (Invoice.invoice_number, Client.display_name, Invoice.status, Client.email)]))
+        balance = case((Invoice.status.in_(CLOSED_STATUSES), 0), else_=Invoice.outstanding)
+        order = {"due": [Invoice.due_date, Invoice.invoice_number],
+                 "client": [func.lower(Client.display_name), Invoice.due_date],
+                 "balance": [balance, Invoice.due_date], "invoice": [func.lower(Invoice.invoice_number)],
+                 "status": [Invoice.status, Invoice.due_date]}[sort]
+        order = [column.desc() if direction == "desc" else column.asc() for column in order]
+        page_rows = list(db.scalars(page_query.order_by(*order, Invoice.invoice_number.asc(), Invoice.id.asc()).offset((page-1)*page_size).limit(page_size)).unique())
+        sql_page_ids = {row.id for row in page_rows}
+        # Keep the open book for portfolio aggregates and global policy ranking;
+        # historical rows are hydrated only for this page.
+        open_rows = list(db.scalars(open_query).unique())
+        portfolio_rows = list({row.id: row for row in [*open_rows, *page_rows]}.values())
+    else:
+        query = source_query if view in {"all", "paid"} else open_query
+        portfolio_rows = list(db.scalars(query.order_by(Invoice.due_date.asc(), Invoice.invoice_number.asc())).unique())
     _prepare_portfolio_context(db, portfolio_rows)
     base_rows = portfolio_rows
     if statuses:
@@ -1104,6 +1133,8 @@ def invoices(
     if drifting_only:
         rows = [row for row in rows if row.client_id in drifting_ids]
 
+    if sql_page:
+        rows = [row for row in rows if row.id in sql_page_ids]
     items = []
     for row in rows:
         if row.status in CLOSED_STATUSES or row.outstanding <= 0:
@@ -1128,7 +1159,11 @@ def invoices(
     _sort_invoice_items(items, sort, direction)
 
     totals: dict[str, Decimal] = {}
-    for item in items:
+    if sql_page and view == "all":
+        for row in base_rows:
+            if row.status not in CLOSED_STATUSES and row.outstanding > 0:
+                totals[row.currency] = totals.get(row.currency, Decimal("0")) + row.outstanding
+    for item in [] if sql_page else items:
         if Decimal(item["outstanding"]) > 0 and item["status"] not in CLOSED_STATUSES:
             totals[item["currency"]] = totals.get(item["currency"], Decimal("0")) + Decimal(item["outstanding"])
     def build_aggregates():
@@ -1165,9 +1200,9 @@ def invoices(
                      view, q, client_id, statuses, due_from, due_to)
     aging, expected_cash = cached_aggregate(aggregate_key, build_aggregates)
 
-    filtered_count = len(items)
+    filtered_count = view_counts[view] if sql_page else len(items)
     page_count = max(1, (filtered_count + page_size - 1) // page_size)
-    page_items = items if db.info.get("export_all") else items[(page - 1) * page_size:page * page_size]
+    page_items = items if sql_page or db.info.get("export_all") else items[(page - 1) * page_size:page * page_size]
     model_names = sorted({item["forecast"]["model"] for item in page_items if item["forecast"]})
     ready_for_review_count = len(ready_recommendations)
     slim_items = []
