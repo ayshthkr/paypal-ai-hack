@@ -140,21 +140,23 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
 @timed("scoring")
 def forecast_invoice(
     db: Session, invoice: Invoice, today: date | None = None, persist: bool = True,
-    scenario: dict | None = None,
+    scenario: dict | None = None, detail: bool = True,
 ) -> dict:
     today = today or date.today()
     if persist and not scenario and not db.info.get("precomputing"):
         context = db.info.get("latepayer_portfolio_context")
-        snapshot = context["read_models"].get((f"forecast:{invoice.id}", today)) if context else db.get(ReadModel, (f"forecast:{invoice.id}", today))
+        key = f"forecast:{invoice.id}" if detail else f"forecast_summary:{invoice.id}"
+        snapshot = (context["read_models"].get((key, today)) if context else None) or db.get(ReadModel, (key, today))
         if snapshot and snapshot.version == str(invoice.material_version):
             return snapshot.payload
     portfolio = db.info.get("latepayer_portfolio_context")
-    if portfolio is not None:
+    if portfolio is not None and invoice.client_id in portfolio["records_by_client"]:
         client_invoices = portfolio["invoices_by_client"].get(invoice.client_id, [])
         payments_by_invoice = portfolio["payments_by_invoice"]
         payments = [payment for item in client_invoices for payment in payments_by_invoice.get(item.id, [])]
         records = portfolio["records_by_client"].get(invoice.client_id, [])
     else:
+        portfolio = None
         client_invoices = list(db.scalars(select(Invoice).where(Invoice.client_id == invoice.client_id)).all())
         invoice_ids = [item.id for item in client_invoices]
         payments = list(db.scalars(select(Payment).where(Payment.invoice_id.in_(invoice_ids))).all()) if invoice_ids else []

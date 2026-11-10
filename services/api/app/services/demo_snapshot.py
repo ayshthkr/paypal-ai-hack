@@ -23,7 +23,7 @@ def capture(db):
     invoice_ids = select(Invoice.id).where(Invoice.source == "demo")
     scopes = [(Client, Client.source == "demo"), (Invoice, Invoice.source == "demo"),
               (Payment, Payment.invoice_id.in_(invoice_ids)), (Prediction, Prediction.invoice_id.in_(invoice_ids)),
-              (ReadModel, ((ReadModel.key.like("forecast:demo-%") | ReadModel.key.like("drift:demo-%") | (ReadModel.key == "activity:demo")) & (ReadModel.as_of == state.as_of_date)))]
+              (ReadModel, ((ReadModel.key.like("forecast:demo-%") | ReadModel.key.like("forecast_summary:demo-%") | ReadModel.key.like("drift:demo-%") | (ReadModel.key == "activity:demo")) & (ReadModel.as_of == state.as_of_date)))]
     payload = {}
     for model, where in scopes:
         rows = db.execute(select(model.__table__).where(where)).mappings().all()
@@ -44,7 +44,7 @@ def restore(db, as_of):
         db.execute(delete(model).where(model.invoice_id.in_(invoice_ids)))
     db.execute(delete(Invoice).where(Invoice.source == "demo"))
     db.execute(delete(Client).where(Client.source == "demo"))
-    db.execute(delete(ReadModel).where(ReadModel.key.like("forecast:demo-%") | ReadModel.key.like("drift:demo-%") | (ReadModel.key == "activity:demo")))
+    db.execute(delete(ReadModel).where(ReadModel.key.like("forecast:demo-%") | ReadModel.key.like("forecast_summary:demo-%") | ReadModel.key.like("drift:demo-%") | (ReadModel.key == "activity:demo")))
     for model in (Client, Invoice, Payment, Prediction, ReadModel):
         rows = []
         for source in payload[model.__tablename__]:

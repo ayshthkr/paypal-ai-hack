@@ -13,9 +13,9 @@ def refresh(db: Session, client_ids: set[str] | None = None, as_of=None):
     db.flush()
     db.info.pop(PORTFOLIO_CONTEXT_KEY, None)
     rows = list(db.scalars(select(Invoice).options(joinedload(Invoice.client))).unique())
-    _prepare_portfolio_context(db, rows)
     db.info["precomputing"] = True
     try:
+        _prepare_portfolio_context(db, rows)
         sources = {row.source for row in rows if client_ids is None or row.client_id in client_ids}
         activity = {source: _activity_for_source(db, source) for source in sources}
         for source, probabilities in activity.items():
@@ -31,6 +31,10 @@ def refresh(db: Session, client_ids: set[str] | None = None, as_of=None):
             day = as_of or _today(db, row.source)
             payload = forecast_invoice(db, row, today=day)
             db.merge(ReadModel(key=f"forecast:{row.id}", as_of=day, version=str(row.material_version), payload=payload))
+            summary = {key: value for key, value in payload.items() if key in {
+                "quantiles", "probabilities", "probability_by_due", "model", "model_version", "limited_history",
+                "display_label", "collection_probability", "reasons", "history_count", "scoring_date"}}
+            db.merge(ReadModel(key=f"forecast_summary:{row.id}", as_of=day, version=str(row.material_version), payload=summary))
         db.flush()
         db.info["projection_was_refreshed"] = True
     finally:

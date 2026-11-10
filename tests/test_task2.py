@@ -87,7 +87,7 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert client.get('/invoices/contract-0').json()['status'] == 'PAID'
 
 
-def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch):
+def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, request):
     from time import perf_counter
     from scripts import seed_demo
     from app.services import forecast
@@ -98,20 +98,40 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch):
     monkeypatch.setattr(seed_demo, 'SessionLocal', Session)
     result = seed_demo.seed(date.today())
     assert result['expected_drifting_clients'] == 8
+    from sqlalchemy import event
+    from app.models import ReadModel
+    clock_queries = []
+    def reject_snapshot(target, context):
+        assert target.key != "demo:snapshot", "A read loaded the reset snapshot"
+    def count_clock(conn, cursor, statement, parameters, context, executemany):
+        if "FROM demo_state" in statement:
+            clock_queries.append(statement)
+    engine = Session.kw["bind"]
+    event.listen(ReadModel, "load", reject_snapshot)
+    event.listen(engine, "before_cursor_execute", count_clock)
+    def remove_listeners():
+        if event.contains(ReadModel, "load", reject_snapshot):
+            event.remove(ReadModel, "load", reject_snapshot)
+        if event.contains(engine, "before_cursor_execute", count_clock):
+            event.remove(engine, "before_cursor_execute", count_clock)
+    request.addfinalizer(remove_listeners)
     # Projection existence is tested by making every estimator unavailable.
     load_artifacts = forecast._load_artifacts
     monkeypatch.setattr(forecast, '_load_artifacts', lambda: (_ for _ in ()).throw(AssertionError('Scoring on a read')))
     for path in ['/portfolio', '/invoices?view=all', '/clients', '/action-queue', '/facts/clients/demo-client-01']:
         invalidate()
+        clock_queries.clear()
         start = perf_counter()
         response = client.get(path)
         assert response.status_code == 200, response.text[:200]
         assert perf_counter()-start < 2, path
+        assert len(clock_queries) <= 2, (path, len(clock_queries))
     invoice_id = client.get('/invoices').json()['items'][0]['id']
     invalidate()
     start = perf_counter()
     assert client.get(f'/invoices/{invoice_id}').status_code == 200
     assert perf_counter()-start < .5
+    remove_listeners()
     monkeypatch.setattr(forecast, '_load_artifacts', load_artifacts)
     with Session() as db:
         row = db.get(Invoice, invoice_id)
