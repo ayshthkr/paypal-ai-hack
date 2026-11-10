@@ -143,7 +143,42 @@ class PayPalAdapter:
                        "unit_amount": {"currency_code": currency, "value": f"{amount:.2f}"}}],
         }
         response = self._request("POST", "/v2/invoicing/invoices", payload=payload)
-        return response.json()
+        try:
+            created = response.json()
+        except ValueError:
+            created = {}
+        if not isinstance(created, dict):
+            created = {}
+        if created.get("id"):
+            return created
+
+        # PayPal Sandbox can persist a draft while omitting its normal create response body.
+        # Reconcile by its unique invoice number before reporting failure; never retry the
+        # create request because that could produce duplicate invoices.
+        try:
+            lookup = self._request(
+                "POST", "/v2/invoicing/search-invoices",
+                params={"page": 1, "page_size": 10, "total_required": "true"},
+                payload={"invoice_number": invoice_number, "recipient_email": email},
+                safe_read=True,
+            ).json()
+        except (PayPalError, ValueError) as exc:
+            raise PayPalError(
+                "PayPal accepted the invoice but its ID could not be reconciled; check the Sandbox invoice list before retrying.",
+                ambiguous=True,
+            ) from exc
+
+        matches = [
+            invoice for invoice in lookup.get("items", [])
+            if (invoice.get("detail") or {}).get("invoice_number") == invoice_number
+            and invoice.get("id")
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        raise PayPalError(
+            "PayPal accepted the invoice but did not return one matching invoice ID; check the Sandbox invoice list before retrying.",
+            ambiguous=True,
+        )
 
     def send_invoice(self, invoice_id: str) -> str:
         self._require_sandbox()
