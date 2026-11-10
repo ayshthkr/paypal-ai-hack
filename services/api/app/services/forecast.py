@@ -21,8 +21,6 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
     settled_at = None
     if invoice.status == "PAID" and payments:
         settled_at = max(payment.occurred_at.date() for payment in payments)
-    elif invoice.status == "PAID" and invoice.synced_at:
-        settled_at = invoice.synced_at.date()
     ordered_payments = sorted(payments, key=lambda payment: payment.occurred_at)
     if invoice.status == "PARTIALLY_PAID":
         partial_payments = ordered_payments

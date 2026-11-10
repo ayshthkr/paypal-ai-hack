@@ -280,12 +280,11 @@ def payment_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if not pay_id or not amount.get("value") or not amount.get("currency_code"):
             continue
         value = item.get("payment_date_time") or item.get("payment_date") or item.get("date")
-        if value:
-            occurred = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if occurred.tzinfo is None:
-                occurred = occurred.replace(tzinfo=timezone.utc)
-        else:
-            occurred = datetime.now(timezone.utc)
+        if not value:
+            continue
+        occurred = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=timezone.utc)
         records.append({"provider_payment_id": str(pay_id), "amount": Decimal(str(amount["value"])),
                         "currency": str(amount["currency_code"]).upper(), "occurred_at": occurred})
     return records

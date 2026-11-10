@@ -12,7 +12,8 @@ from app.config import Settings
 from app.models import Client, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
-from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
+from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
+from app.services.forecast import _as_record
 from app.services.policy import decide
 from app.services import sync as sync_service
 from app.services import ai as ai_service
@@ -558,6 +559,15 @@ def test_paid_invoice_without_payment_date_reports_unavailable(api):
     payload = client.get("/invoices/no-paid-date").json()
     assert payload["outcome"]["paid_at"] is None
     assert payload["outcome"]["timing"] == "date_unavailable"
+
+
+def test_missing_provider_payment_date_is_not_replaced_with_sync_time():
+    invoice = _invoice("paid-date-missing", "client", status="PAID")
+    invoice.synced_at = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    assert _as_record(invoice, [])["settled_at"] is None
+    assert payment_records({"payments": {"transactions": [{
+        "payment_id": "payment-without-time", "amount": {"currency_code": "USD", "value": "25.00"},
+    }]}}) == []
 
 
 def test_stale_debt_routes_to_collections_review_without_another_reminder():

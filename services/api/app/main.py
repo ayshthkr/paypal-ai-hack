@@ -179,7 +179,9 @@ def _client_history_facts(db: Session, client_id: str) -> dict:
     payment_counts = db.execute(select(Payment.invoice_id, func.count(Payment.id)).where(
         Payment.invoice_id.in_(invoice_ids)
     ).group_by(Payment.invoice_id)).all() if invoice_ids else []
-    partial_invoice_count = sum(count > 1 for _, count in payment_counts)
+    partial_invoice_ids = {row["id"] for row in records if row["status"] == "PARTIALLY_PAID"}
+    partial_invoice_ids.update(invoice_id for invoice_id, count in payment_counts if count > 1)
+    partial_invoice_count = len(partial_invoice_ids)
     return {
         "invoice_count": len(records),
         "settled_invoice_count": len(settled),
@@ -270,6 +272,13 @@ def _paid_outcome(db: Session, invoice: Invoice) -> dict | None:
         return None
     payments = list(db.scalars(select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.occurred_at.asc())).all())
     paid_date = max((payment.occurred_at.date() for payment in payments), default=None)
+    if paid_date is None and invoice.paypal_id:
+        verified_paid_events = list(db.scalars(select(InvoiceEvent).where(
+            InvoiceEvent.verified.is_(True), InvoiceEvent.event_type.ilike("%PAID%"),
+        )).all())
+        paid_dates = [event.occurred_at.date() for event in verified_paid_events
+                      if event.occurred_at and _payload_mentions(event.raw_payload, {invoice.paypal_id})]
+        paid_date = max(paid_dates, default=None)
     issue_prediction = _issue_prediction(db, invoice)
     if paid_date is None and issue_prediction and issue_prediction.get("backtest_actual_paid_date"):
         paid_date = date.fromisoformat(issue_prediction["backtest_actual_paid_date"])
@@ -1000,11 +1009,14 @@ def invoice_facts(invoice_id: str, request: Request, db: Session = Depends(get_d
 @app.get("/facts/clients/{client_id}")
 def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
     client = db.get(Client, client_id)
-    if not client or (client.source != "demo" and not session_user(request)):
+    if not client:
         raise HTTPException(status_code=404, detail="Client not found.")
+    if client.source != "demo" and not session_user(request):
+        raise HTTPException(status_code=401, detail="Operator login required to view PayPal client facts.")
     query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.client_id == client.id).order_by(Invoice.issue_date.desc())
     rows = list(db.scalars(query).all())
     history = _client_history_facts(db, client.id)
+    history_rows = {row["id"]: row for row in _client_records(db, client.id)}
     activity = _activity_for_source(db, client.source)
     drift = _drift_for(db, client, activity.get(client.id))
     cache: dict[str, dict] = {}
@@ -1013,10 +1025,14 @@ def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)
     for row in rows:
         item = _invoice_dict(db, row, drift_cache={client.id: drift}, activity_scores=activity,
                              daily_candidate_ids=candidates, forecast_cache=cache, create_recommendation=False)
-        invoice_facts.append({key: item[key] for key in (
+        values = {key: item[key] for key in (
             "id", "invoice_number", "issue_date", "due_date", "days_to_due", "total", "paid", "outstanding",
             "currency", "status", "forecast", "why", "decision",
-        )})
+        )}
+        settled_at = history_rows[row.id].get("settled_at")
+        values["settled_at"] = settled_at.isoformat() if settled_at else None
+        values["days_late"] = (settled_at - row.due_date).days if settled_at else None
+        invoice_facts.append(values)
     return {
         "as_of": _today(db, client.source).isoformat(),
         "client": {"id": client.id, "name": client.display_name, "source": client.source},
