@@ -64,6 +64,11 @@ def decide(
 
     if invoice.disputed or invoice.status in CLOSED_STATUSES or Decimal(str(invoice.outstanding)) <= 0:
         return result(reason="Invoice is closed, disputed, or has no outstanding balance.")
+    days_late = max(0, (today - invoice.due_date).days)
+    if days_late >= 90:
+        return result("review_for_writeoff_or_collections", "none",
+                      "This debt is at least 90 days overdue; review for write-off or collections instead of another reminder.",
+                      stale_debt=True, days_late=days_late)
     promised_payment_date = getattr(invoice, "promised_payment_date", None)
     if promised_payment_date and today <= promised_payment_date:
         return result(reason=f"The client promised payment by {promised_payment_date.isoformat()}; wait until that date before another reminder.",
@@ -79,7 +84,6 @@ def decide(
             return result(reason=f"A {last_attempt_tone or 'friendly'} reminder was attempted {elapsed_days} days ago; wait {cooldown} days between reminders.")
 
     days_until_due = (invoice.due_date - today).days
-    days_late = max(0, -days_until_due)
     highest_available = _max_stage(days_late, days_until_due)
     current_step = max(0, int(getattr(invoice, "reminder_step", 0) or 0))
     step = min(highest_available, current_step)

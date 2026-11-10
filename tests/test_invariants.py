@@ -9,7 +9,7 @@ import pytest
 
 from app import main
 from app.config import Settings
-from app.models import Client, Invoice, InvoiceEvent, PolicyDecisionLog, Recommendation, ReplyTriage
+from app.models import Client, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
@@ -502,6 +502,71 @@ def test_reminder_draft_endpoint_persists_model_and_fallback_audit(api, monkeypa
         recommendation = db.query(Recommendation).filter_by(invoice_id="draft-invoice").one()
         assert recommendation.draft_text == "AI generated draft"
         assert recommendation.approved_text is None
+
+
+def test_paid_invoice_detail_shows_issue_forecast_actual_outcome_and_timeline(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "_today", lambda db=None, source=None: date(2026, 11, 10))
+    with Session() as db:
+        owner = Client(id="outcome-owner", display_name="Outcome Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("outcome-invoice", owner.id, status="PAID")
+        invoice.issue_date = date(2026, 10, 1)
+        invoice.due_date = date(2026, 10, 10)
+        invoice.total = invoice.paid = Decimal("100.00")
+        invoice.outstanding = Decimal("0.00")
+        invoice.viewed_at = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        invoice.reminder_events = [{"sent_at": "2026-10-11T12:00:00+00:00", "tone": "friendly"}]
+        db.add(invoice)
+        db.flush()
+        db.add_all([
+            Payment(provider_payment_id="demo-partial-outcome", invoice_id=invoice.id, amount=Decimal("40.00"), currency="USD", occurred_at=datetime(2026, 10, 12, 12, tzinfo=timezone.utc), source="demo"),
+            Payment(provider_payment_id="demo-settlement-outcome", invoice_id=invoice.id, amount=Decimal("60.00"), currency="USD", occurred_at=datetime(2026, 10, 15, 12, tzinfo=timezone.utc), source="demo"),
+        ])
+        db.add(Prediction(
+            invoice_id=invoice.id, scoring_date=invoice.issue_date, fingerprint="issue-score",
+            model_version="issue-model-v1", feature_schema_version="latepayer-features-v2",
+            curve=[1.0, 0.5], quantiles={"p10": {"date": "2026-10-12"}, "p50": {"date": "2026-10-14"}, "p90": {"date": "2026-10-20"}},
+            probabilities={"14d": 0.6}, reasons=[],
+        ))
+        db.commit()
+
+    response = client.get("/invoices/outcome-invoice")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["outcome"]["paid_at"] == "2026-10-15"
+    assert payload["outcome"]["days_from_due"] == 5
+    assert payload["outcome"]["issue_forecast"]["p50_date"] == "2026-10-14"
+    assert payload["outcome"]["issue_forecast"]["absolute_error_days"] == 1
+    kinds = [event["kind"] for event in payload["timeline"]]
+    assert {"Issued", "Sent", "Viewed by recipient", "Reminder sent", "Partial payment", "Paid"}.issubset(kinds)
+
+
+def test_paid_invoice_without_payment_date_reports_unavailable(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="no-paid-date-owner", display_name="No Date", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("no-paid-date", owner.id, status="PAID")
+        invoice.paid = invoice.total
+        invoice.outstanding = Decimal("0.00")
+        db.add(invoice)
+        db.commit()
+
+    payload = client.get("/invoices/no-paid-date").json()
+    assert payload["outcome"]["paid_at"] is None
+    assert payload["outcome"]["timing"] == "date_unavailable"
+
+
+def test_stale_debt_routes_to_collections_review_without_another_reminder():
+    today = date(2026, 11, 10)
+    invoice = _invoice("stale-debt", "client", due=today - timedelta(days=90))
+    result = decide(invoice, 0.1, today=today, probability_14d=0.1)
+    assert result["action"] == "review_for_writeoff_or_collections"
+    assert result["stale_debt"] is True
+    assert "write-off or collections" in result["reason"]
 
 
 def test_paypal_cancelled_invoice_never_keeps_a_due_balance():

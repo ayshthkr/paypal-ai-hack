@@ -90,6 +90,7 @@ export default function PortfolioClient() {
   const actionOnly = params.get("action_only") === "1";
   const driftingOnly = params.get("drifting_only") === "1";
   const urlQuery = params.get("q") || "";
+  const detailHref = useCallback((id: string, query = searchKey) => `/invoices/${encodeURIComponent(id)}${query ? `?${query}` : ""}`, [searchKey]);
 
   const [data, setData] = useState<InvoiceResult | null>(null);
   const [clients, setClients] = useState<ClientRow[]>([]);
@@ -199,7 +200,7 @@ export default function PortfolioClient() {
 
   const baseColumns = useMemo<ColDef<InvoiceRow>[]>(() => [
     { colId: "invoice_number", field: "invoice_number", headerName: "Invoice", pinned: "left", minWidth: 140, flex: .8,
-      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={`/invoices/${cell.data?.id}`}>{cell.value}</Link> },
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="table-link" href={detailHref(cell.data?.id || "")}>{cell.value}</Link> },
     { colId: "client_name", field: "client_name", headerName: "Client", pinned: "left", minWidth: 160, flex: 1.1 },
     { colId: "outstanding", field: "outstanding", headerName: "Balance", minWidth: 125,
       valueFormatter: cell => cell.data ? money(cell.data.currency, cell.value) : "" },
@@ -228,7 +229,7 @@ export default function PortfolioClient() {
     { colId: "expected_cash", headerName: "Expected cash gain", minWidth: 160,
       valueGetter: cell => cell.data?.decision.expected_cash_gain,
       valueFormatter: cell => cell.data?.decision.expected_cash_gain_currency ? money(cell.data.decision.expected_cash_gain_currency, cell.value || 0) : "—" },
-  ], []);
+  ], [detailHref]);
   const columns = useMemo(() => baseColumns.map(column => ({ ...column, hide: !visibleColumns.includes(column.colId || column.field || "") })), [baseColumns, visibleColumns]);
   const rowData = useMemo(() => data?.items || [], [data]);
   const drifting = clients.filter(client => ["paying_later", "later_than_usual", "gone_quiet"].includes(client.drift.signal_type));
@@ -261,7 +262,7 @@ export default function PortfolioClient() {
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
           {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
             <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>{item.invoice_count} p50 settlement{item.invoice_count === 1 ? "" : "s"}</small></div>) : <div className="empty-inline">No p50 settlements fall this week.</div>}</div>
-            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={`/invoices/${item.invoice_id}`}>{item.invoice_number}</Link><span className="drift-badge">{item.action.replaceAll("_", " ")}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
+            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{item.action.replaceAll("_", " ")}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
             <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${client.signal_type.replaceAll("_", " ")})`).join(" · ") || "none"}</div>
           </> : null)}
         </section>

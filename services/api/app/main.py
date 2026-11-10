@@ -7,6 +7,7 @@ import re
 import statistics
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Recommendation, ReplyTriage
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
@@ -226,6 +227,144 @@ def _why_line(forecast: dict | None, drift: dict) -> str:
     return "This forecast uses the portfolio baseline because no invoice-specific driver is available."
 
 
+@lru_cache(maxsize=4)
+def _backtest_issue_predictions(path: str) -> dict[str, dict]:
+    try:
+        value = json.loads(Path(path).read_text())
+        rows = value.get("backtest", {}).get("invoices", [])
+        return {str(row["invoice_id"]): row for row in rows if row.get("invoice_id")}
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
+
+
+def _issue_prediction(db: Session, invoice: Invoice) -> dict | None:
+    saved = db.scalar(select(Prediction).where(
+        Prediction.invoice_id == invoice.id, Prediction.scoring_date == invoice.issue_date,
+    ).limit(1))
+    if saved:
+        return {
+            "source": "stored_issue_prediction", "model_version": saved.model_version,
+            "p10_date": (saved.quantiles.get("p10") or {}).get("date"),
+            "p50_date": (saved.quantiles.get("p50") or {}).get("date"),
+            "p90_date": (saved.quantiles.get("p90") or {}).get("date"),
+            "probabilities": saved.probabilities,
+        }
+    if invoice.source != "demo":
+        return None
+    artifact = Path(settings.model_path).with_name("eval.json")
+    row = _backtest_issue_predictions(str(artifact)).get(invoice.id)
+    if not row:
+        return None
+    return {
+        "source": "out_of_sample_issue_backtest", "model_version": None,
+        "p10_date": row.get("p10_date"), "p50_date": row.get("predicted_p50_date"),
+        "p90_date": row.get("p90_date"), "probabilities": None,
+        "backtest_actual_paid_date": row.get("actual_paid_date"),
+        "absolute_error_days": row.get("absolute_error_days"),
+        "within_p10_p90": row.get("within_p10_p90"),
+    }
+
+
+def _paid_outcome(db: Session, invoice: Invoice) -> dict | None:
+    if invoice.status != "PAID":
+        return None
+    payments = list(db.scalars(select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.occurred_at.asc())).all())
+    paid_date = max((payment.occurred_at.date() for payment in payments), default=None)
+    issue_prediction = _issue_prediction(db, invoice)
+    if paid_date is None and issue_prediction and issue_prediction.get("backtest_actual_paid_date"):
+        paid_date = date.fromisoformat(issue_prediction["backtest_actual_paid_date"])
+    if issue_prediction and paid_date:
+        predicted = date.fromisoformat(issue_prediction["p50_date"]) if issue_prediction.get("p50_date") else None
+        p10 = date.fromisoformat(issue_prediction["p10_date"]) if issue_prediction.get("p10_date") else None
+        p90 = date.fromisoformat(issue_prediction["p90_date"]) if issue_prediction.get("p90_date") else None
+        issue_prediction["absolute_error_days"] = abs((paid_date - predicted).days) if predicted else None
+        issue_prediction["within_p10_p90"] = bool(p10 and p90 and p10 <= paid_date <= p90)
+    days_from_due = (paid_date - invoice.due_date).days if paid_date else None
+    if days_from_due is None:
+        timing = "date_unavailable"
+    elif days_from_due > 0:
+        timing = "late"
+    elif days_from_due < 0:
+        timing = "early"
+    else:
+        timing = "on_time"
+    return {
+        "paid_at": paid_date.isoformat() if paid_date else None,
+        "days_from_due": days_from_due,
+        "timing": timing,
+        "issue_forecast": issue_prediction,
+    }
+
+
+def _timeline_at(value) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            try:
+                return datetime.combine(date.fromisoformat(value[:10]), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                return None
+    return None
+
+
+def _payload_mentions(value, invoice_ids: set[str]) -> bool:
+    if isinstance(value, dict):
+        return any(_payload_mentions(item, invoice_ids) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_payload_mentions(item, invoice_ids) for item in value)
+    return isinstance(value, str) and value in invoice_ids
+
+
+def _invoice_timeline(db: Session, invoice: Invoice) -> list[dict]:
+    events: list[dict] = []
+
+    def add(kind: str, at, detail: str | None = None) -> None:
+        occurred = _timeline_at(at)
+        if occurred:
+            events.append({"kind": kind, "at": occurred, "detail": detail})
+
+    add("Issued", invoice.issue_date)
+    if invoice.source == "demo":
+        add("Sent", invoice.issue_date, "Synthetic invoice delivery is modeled on the issue date.")
+    if invoice.viewed_at:
+        add("Viewed by recipient", invoice.viewed_at)
+    for reminder in invoice.reminder_events or []:
+        if isinstance(reminder, dict):
+            tone = str(reminder.get("tone") or "").strip()
+            add("Reminder sent", reminder.get("sent_at"), f"{tone.title()} tone" if tone else None)
+    attempts = list(db.execute(select(ActionAttempt, Recommendation.tone).join(
+        Recommendation, ActionAttempt.recommendation_id == Recommendation.id,
+    ).where(Recommendation.invoice_id == invoice.id).order_by(ActionAttempt.started_at.asc())).all())
+    for attempt, tone in attempts:
+        label = "Reminder sent" if attempt.state == "sent" else f"Reminder {attempt.state}"
+        add(label, attempt.started_at, f"{tone.title()} tone" if tone else None)
+    payments = list(db.scalars(select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.occurred_at.asc())).all())
+    for index, payment in enumerate(payments):
+        if invoice.status == "PAID" and index == len(payments) - 1:
+            label = "Paid"
+        elif payment.provider_payment_id.startswith("demo-partial-") or invoice.status == "PARTIALLY_PAID":
+            label = "Partial payment"
+        else:
+            label = "Payment recorded"
+        add(label, payment.occurred_at, f"{payment.currency} {payment.amount:,.2f}")
+    if invoice.paypal_id:
+        provider_ids = {invoice.paypal_id}
+        verified_events = list(db.scalars(select(InvoiceEvent).where(InvoiceEvent.verified.is_(True))).all())
+        for event in verified_events:
+            if not _payload_mentions(event.raw_payload, provider_ids):
+                continue
+            event_type = event.event_type.upper()
+            label = "Sent by PayPal" if "SENT" in event_type else event.event_type.replace("INVOICING.INVOICE.", "").replace("_", " ").title()
+            add(label, event.occurred_at or event.received_at)
+    events.sort(key=lambda item: (item["at"], item["kind"]))
+    return events
+
+
 def _invoice_dict(
     db: Session,
     invoice: Invoice,
@@ -275,6 +414,8 @@ def _invoice_dict(
     recommendation = _latest_recommendation(db, invoice.id)
     if invoice.disputed or (invoice.promised_payment_date and today <= invoice.promised_payment_date):
         recommendation = None
+    elif action["action"] == "review_for_writeoff_or_collections" and recommendation and recommendation.state == "proposed":
+        recommendation = None
     if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed"}) and action["action"] in {"friendly", "firm"}:
         provider_url = ((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")
         if not isinstance(provider_url, str) or urlparse(provider_url).scheme != "https" or not urlparse(provider_url).hostname or not urlparse(provider_url).hostname.endswith("paypal.com"):
@@ -310,6 +451,8 @@ def _invoice_dict(
         "days_until_due_nonnegative": currency_due,
     }
     if include_detail:
+        summary["outcome"] = _paid_outcome(db, invoice)
+        summary["timeline"] = _invoice_timeline(db, invoice)
         attempts = list(db.scalars(select(ActionAttempt).where(
             ActionAttempt.recommendation_id == recommendation.id if recommendation else text("1=0")
         ).order_by(ActionAttempt.started_at.desc())).all()) if recommendation else []
@@ -526,7 +669,8 @@ def _age_bucket(invoice: Invoice, today: date) -> str | None:
 
 def _sort_invoice_items(items: list[dict], sort: str, direction: str) -> None:
     reverse = direction.casefold() == "desc"
-    action_order = {"friendly": 0, "firm": 1, "offer_partial_payment": 2, "personal_call": 3, "wait": 4}
+    action_order = {"friendly": 0, "firm": 1, "offer_partial_payment": 2, "personal_call": 3,
+                    "review_for_writeoff_or_collections": 4, "wait": 5}
 
     def key(item: dict):
         decision = item["decision"]
