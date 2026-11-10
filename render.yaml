@@ -1,0 +1,62 @@
+databases:
+  - name: latepayer-db
+    databaseName: latepayer
+    user: latepayer
+    plan: free
+    region: oregon
+
+services:
+  - type: web
+    name: latepayer-api
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run --frozen alembic upgrade head && PYTHONPATH=.:services/api uv run --frozen uvicorn app.main:app --app-dir services/api --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.11
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: latepayer-db
+          property: connectionString
+      - key: WEB_ORIGIN
+        value: https://latepayer-web.onrender.com
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: OPERATOR_USERNAME
+        sync: false
+      - key: OPERATOR_PASSWORD
+        sync: false
+      - key: PAYPAL_MODE
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: PAYPAL_ALLOWED_RECIPIENT_EMAILS
+        sync: false
+      - key: MERCHANT_TIMEZONE
+        value: Asia/Kolkata
+
+  - type: web
+    name: latepayer-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: bun install --frozen-lockfile && bun run build
+    startCommand: bunx next start --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: API_HOSTPORT
+        fromService:
+          type: web
+          name: latepayer-api
+          property: hostport

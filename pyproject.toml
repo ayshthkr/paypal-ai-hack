@@ -1,0 +1,34 @@
+[project]
+name = "late-payer-api"
+version = "0.1.0"
+description = "Invoice payment forecasting and approved PayPal reminders"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "alembic==1.17.1",
+  "cryptography==46.0.3",
+  "fastapi==0.121.0",
+  "httpx==0.28.1",
+  "lightgbm==4.6.0",
+  "matplotlib==3.10.7",
+  "numpy==2.3.4",
+  "psycopg[binary]==3.2.12",
+  "pydantic-settings==2.11.0",
+  "scikit-learn==1.7.2",
+  "sqlalchemy==2.0.44",
+  "uvicorn[standard]==0.38.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==8.4.2",
+  "pytest-cov==7.0.0",
+  "ruff==0.14.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "services/api"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

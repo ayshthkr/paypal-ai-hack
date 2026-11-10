@@ -1,0 +1,52 @@
+{
+  "version": "latepayer-features-v1",
+  "features": [
+    "log_outstanding",
+    "terms_days",
+    "age_days",
+    "days_until_due",
+    "overdue_days",
+    "issue_month_sin",
+    "issue_month_cos",
+    "as_of_month_sin",
+    "as_of_month_cos",
+    "weekday_sin",
+    "weekday_cos",
+    "history_count",
+    "history_late_rate",
+    "recent_delay_days",
+    "delay_std_days",
+    "history_missing",
+    "other_open_exposure_log",
+    "currency_is_usd",
+    "currency_is_eur",
+    "currency_is_gbp"
+  ],
+  "horizon_days": 180,
+  "seed": 20261110,
+  "dataset": "fully synthetic invoice records generated locally; 25 profiles; 400 invoices; no downloads",
+  "history_cutoff": "2026-10-31",
+  "training_cutoff": "2025-12-31",
+  "validation_cohort": [
+    "2026-01-01",
+    "2026-03-31"
+  ],
+  "validation_observation_cutoff": "2026-06-30",
+  "test_cohort": [
+    "2026-04-01",
+    "2026-07-01"
+  ],
+  "test_observation_cutoff": "2026-10-31",
+  "generation_parameters": {
+    "client_profiles": [
+      "prompt",
+      "slow",
+      "volatile",
+      "drifting",
+      "new"
+    ],
+    "invoice_count": 400,
+    "clients": 25,
+    "horizon_days": 180
+  }
+}
