@@ -219,3 +219,9 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
   .invoice-facts { grid-template-columns: repeat(2,1fr); }
   .panel { padding: 16px; }
 }
+
+@keyframes skeleton-pulse { 50% { opacity: .45; } }
+.skeleton-card, .skeleton-grid { background: #e6ebee; border-radius: 12px; animation: skeleton-pulse 1.5s ease-in-out infinite; }
+.skeleton-card { height: 110px; }
+.skeleton-grid { height: 400px; margin-top: 24px; }
+@media (prefers-reduced-motion: reduce) { .skeleton-card, .skeleton-grid { animation: none; } }

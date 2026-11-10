@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { clearReads } from "../lib/api";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -17,6 +18,7 @@ export default function LoginPage() {
       const response = await fetch("/api/auth/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "Login failed.");
+      clearReads();
       router.push("/"); router.refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Login failed."); }
     finally { setBusy(false); }

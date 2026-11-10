@@ -8,6 +8,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 
+import { requestJson as getJson, clearReads } from "./lib/api";
+import { useAuth } from "./providers";
+
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 type Drift = {
@@ -63,11 +66,6 @@ const defaultColumns = columnChoices.map(([id]) => id).filter(id => !["status", 
 const MAX_API_WAKE_RETRIES = 30;
 const API_WAKE_RETRY_DELAY_MS = 2500;
 
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, cache: "no-store", credentials: "same-origin" });
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `Request failed (${response.status})`);
-  return response.json() as Promise<T>;
-}
 
 function SearchInput({ query, onDebouncedQuery }: { query: string; onDebouncedQuery: (value: string) => void }) {
   const [draft, setDraft] = useState(query);
@@ -102,7 +100,7 @@ export default function PortfolioClient() {
   const currentView = params.get("view") || "open";
   const currentPage = Math.max(1, Number(params.get("page") || "1"));
   const pageSize = Number(params.get("page_size") || "25");
-  const currentSort = params.get("sort") || "action";
+  const currentSort = params.get("sort") || "due";
   const currentDirection = params.get("direction") || "asc";
   const selectedClient = params.get("client_id") || "";
   const selectedAge = params.get("age_bucket") || "";
@@ -118,7 +116,7 @@ export default function PortfolioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [wakeRetryNonce, setWakeRetryNonce] = useState(0);
-  const [authenticated, setAuthenticated] = useState(false);
+  const { authenticated } = useAuth();
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
@@ -153,34 +151,24 @@ export default function PortfolioClient() {
     else router.replace(href, { scroll: false });
   }, [router, searchKey]);
 
-  useEffect(() => {
-    const next = new URLSearchParams(searchKey);
-    let changed = false;
-    for (const [key, value] of [["view", "open"], ["page", "1"], ["page_size", "25"], ["sort", "action"], ["direction", "asc"]]) {
-      if (!next.has(key)) { next.set(key, value); changed = true; }
-    }
-    if (changed) router.replace(`/?${next.toString()}`, { scroll: false });
-  }, [router, searchKey]);
-
   const refresh = useCallback(async () => {
     const apiParams = new URLSearchParams(searchKey);
     if (!apiParams.has("view")) apiParams.set("view", "open");
     if (!apiParams.has("page")) apiParams.set("page", "1");
     if (!apiParams.has("page_size")) apiParams.set("page_size", "25");
-    if (!apiParams.has("sort")) apiParams.set("sort", "action");
-    const url = `/api/invoices?${apiParams.toString()}`;
+    if (!apiParams.has("sort")) apiParams.set("sort", "due");
+    const url = `/api/portfolio?${apiParams.toString()}`;
     const existing = refreshInFlight.current.get(url);
     if (existing) return existing;
     const controller = new AbortController();
-    const requestInit = { signal: controller.signal };
+    const requestInit = { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) };
     const pending = Promise.all([
-      getJson<InvoiceResult>(url, requestInit), getJson<{ items: ClientRow[] }>("/api/clients", requestInit),
-      getJson<{ authenticated: boolean }>("/api/auth/me", requestInit),
-    ]).then(async ([invoices, clientData, auth]) => {
+      getJson<InvoiceResult>(url, requestInit),
+    ]).then(async ([invoices]) => {
       if (latestQuery.current !== searchKey) return;
       let operatorSync: SyncStatus | null = null;
       let recipients: PaypalRecipient[] = [];
-      if (auth.authenticated) {
+      if (authenticated) {
         const [syncResult, recipientResult] = await Promise.all([
           getJson<SyncStatus>("/api/sync/status").catch(() => null),
           getJson<{ items: PaypalRecipient[] }>("/api/paypal/recipients").catch(() => null),
@@ -189,7 +177,7 @@ export default function PortfolioClient() {
         recipients = recipientResult?.items || [];
       }
       if (latestQuery.current !== searchKey) return;
-      setData(invoices); setClients(clientData.items); setAuthenticated(auth.authenticated);
+      setData(invoices);
       setSyncStatus(operatorSync); setPaypalRecipients(recipients); setError(""); wakeRetries.current.delete(searchKey);
     }).catch(cause => {
       controller.abort();
@@ -208,7 +196,7 @@ export default function PortfolioClient() {
     });
     refreshInFlight.current.set(url, pending);
     return pending;
-  }, [searchKey]);
+  }, [searchKey, authenticated]);
 
   useEffect(() => { latestQuery.current = searchKey; }, [searchKey]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -240,6 +228,7 @@ export default function PortfolioClient() {
     if (!window.confirm("Reset all synthetic demo payments, reminders, and replies to the starting state? PayPal Sandbox records are not changed.")) return;
     setResetBusy(true); setError("");
     try {
+      clearReads();
       await getJson("/api/demo/reset", { method: "POST" });
       const next = new URLSearchParams(searchKey);
       next.delete("as_of"); next.delete("action_only"); next.delete("drifting_only"); next.delete("age_bucket");
@@ -380,7 +369,7 @@ export default function PortfolioClient() {
           {!paypalRecipients.length && <div className="empty-inline" style={{ marginTop: 10 }}>No allowlisted PayPal recipient is synced. Sync Sandbox invoices and check PAYPAL_ALLOWED_RECIPIENT_EMAILS.</div>}
           {createdInvoice && <div className="action-message" role="status" style={{ marginTop: 12 }}>Created and sent <Link className="table-link" href={`/invoices/${encodeURIComponent(createdInvoice.id)}`}>{createdInvoice.number}</Link> through PayPal Sandbox.</div>}
         </section>}
-        {loading && !data && <div className="empty-box">Loading invoice portfolio…</div>}
+        {loading && !data && <div role="status" aria-label="Loading portfolio" className="portfolio-skeleton"><div className="stats-grid">{[1,2,3,4].map(key => <div className="skeleton-card" key={key} />)}</div><div className="skeleton-grid" /></div>}
         {data && <>
           <section className="stats-grid">
             <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
@@ -411,10 +400,10 @@ export default function PortfolioClient() {
             {data.expected_cash_by_week.length ? <div className="cash-week-grid">{data.expected_cash_by_week.map(entry => <div className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {new Date(`${entry.week_start}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><strong>{money(entry.currency, entry.amount)}</strong><small>{entry.invoice_count} invoice{entry.invoice_count === 1 ? "" : "s"}</small></div>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
           </section>
 
-          <section className="grid-panel">
+          <section className="grid-panel" id="invoice-grid">
             <div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count.toLocaleString()} records in this view</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div>
               <div className="toolbar-tools"><SearchInput key={urlQuery} query={urlQuery} onDebouncedQuery={value => updateUrl({ q: value || null }, "replace")} />
-                <select className="select" aria-label="Filter by client" value={selectedClient} onChange={event => updateUrl({ client_id: event.target.value || null })}><option value="">All clients</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
+                <select onFocus={() => { if (!clients.length) void getJson<{ items: ClientRow[] }>("/api/clients").then(value => setClients(value.items)); }} className="select" aria-label="Filter by client" value={selectedClient} onChange={event => updateUrl({ client_id: event.target.value || null })}><option value="">All clients</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
                 <select className="select" aria-label="Sort invoices" value={`${currentSort}:${currentDirection}`} onChange={event => { const [sort, direction] = event.target.value.split(":"); updateUrl({ sort, direction }); }}>
                   <option value="action:asc">Action queue</option><option value="expected_cash:desc">Expected cash gain</option><option value="p14:desc">Paid in 14d · high to low</option><option value="p14:asc">Paid in 14d · low to high</option><option value="due:asc">Due date · earliest</option><option value="balance:desc">Balance · high to low</option><option value="client:asc">Client · A to Z</option>
                 </select>
@@ -426,7 +415,7 @@ export default function PortfolioClient() {
             {actionOnly && <div className="filter-note">Showing only today&apos;s pending proposed reminders. <button onClick={() => updateUrl({ action_only: null })}>Clear</button></div>}
             {driftingOnly && <div className="filter-note">Showing invoices for clients with a timing signal. <button onClick={() => updateUrl({ drifting_only: null })}>Clear</button></div>}
             <div className="grid-wrap">{rowData.length ? <AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} defaultColDef={{ sortable: false, filter: false, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={event => { gridApi.current = event.api; }} /> : <div className="empty-box">No invoices match this view and its filters. Change a filter or select another view.</div>}</div>
-            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>Filtered open {currency} <strong>{Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
+            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · open {currency} <strong>{Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
               <div className="pager"><label>Rows <select className="select" aria-label="Rows per page" value={pageSize} onChange={event => updateUrl({ page_size: event.target.value })}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><span>Page {currentPage} of {pageCount}</span><button className="btn" disabled={currentPage <= 1} onClick={() => updateUrl({ page: String(currentPage - 1) }, "push", false)}>Previous</button><button className="btn" disabled={currentPage >= pageCount} onClick={() => updateUrl({ page: String(currentPage + 1) }, "push", false)}>Next</button></div>
             </div>
           </section>

@@ -8,7 +8,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const apiBase = process.env.API_URL || (hostPort ? `http://${hostPort}` : "http://127.0.0.1:8000");
   const target = `${apiBase.replace(/\/$/, "")}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const headers = new Headers();
-  for (const name of ["cookie", "content-type", "accept", "x-requested-with"]) {
+  for (const name of ["cookie", "content-type", "accept", "x-requested-with", "if-none-match"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }

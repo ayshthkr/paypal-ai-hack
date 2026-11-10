@@ -1,4 +1,6 @@
 "use client";
+import { requestJson, RequestError } from "../../lib/api";
+import { useAuth } from "../../providers";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,17 +28,6 @@ type InvoiceData = {
 type ReplyTriage = { classification: string; classifier: string; promised_payment_date: string | null; reminders_paused: boolean; note: string };
 type InvoicePage = { items: { id: string; invoice_number: string }[]; page: number; page_count: number };
 
-class RequestError extends Error {
-  status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
-}
-
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json", ...(init?.headers || {}) } });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new RequestError(value.detail || `Request failed (${response.status})`, response.status);
-  return value as T;
-}
 
 function shortDate(value: string | null | undefined) {
   return value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Beyond 180 days";
@@ -46,7 +37,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const router = useRouter();
   const [data, setData] = useState<InvoiceData | null>(null);
   const [draft, setDraft] = useState("");
-  const [authenticated, setAuthenticated] = useState(false);
+  const { authenticated } = useAuth();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,9 +54,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
     if (refreshInFlight.current) return refreshInFlight.current;
     const pending = Promise.all([
       requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}`),
-      requestJson<{ authenticated: boolean }>("/api/auth/me"),
-    ]).then(([invoice, auth]) => {
-      setData(invoice); setAuthenticated(auth.authenticated); setError(""); setNotFound(false);
+
+    ]).then(([invoice]) => {
+      setData(invoice); setError(""); setNotFound(false);
       setDraft(previous => previous && invoice.recommendation?.state === "proposed" ? previous : invoice.recommendation?.edited_text || "");
     }).catch(cause => {
       setError(cause instanceof Error ? cause.message : "Could not load invoice.");
