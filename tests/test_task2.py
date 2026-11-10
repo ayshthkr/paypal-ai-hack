@@ -101,7 +101,7 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, r
     from scripts import seed_demo
     from app.services import forecast
     from app.services.demo_snapshot import restore
-    from app.models import Invoice
+    from app.models import Invoice, Client, Payment
     from app.http_cache import invalidate
     client, Session = api
     monkeypatch.setattr(seed_demo, 'SessionLocal', Session)
@@ -145,9 +145,10 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, r
     with Session() as db:
         row = db.get(Invoice, invoice_id)
         original_balance = row.outstanding
-        row.outstanding = 0
-        row.status = 'PAID'
-        db.commit()
+        original_payments = db.query(Payment).count()
+        owner_id = row.client_id
+        original_signal = db.get(Client, owner_id).drift
+    assert client.post(f'/demo/invoices/{invoice_id}/payment', json={}).status_code == 200
     from scripts import rescore_demo
     monkeypatch.setattr(rescore_demo, 'SessionLocal', Session)
     assert rescore_demo.rescore_and_report(validate_seed=False)['open_count'] == 49
@@ -158,6 +159,8 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, r
         assert restored['open_count'] == 50
     with Session() as db:
         assert db.get(Invoice, invoice_id).outstanding == original_balance
+        assert db.query(Payment).count() == original_payments
+        assert db.get(Client, owner_id).drift == original_signal
 
 
 def test_skip_undo_and_draft_persistence(api):
