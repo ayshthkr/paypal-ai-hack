@@ -630,7 +630,7 @@ def _invoice_dict(
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,
         "viewed_at": invoice.viewed_at.isoformat() if invoice.viewed_at else None,
-        "viewed_by_recipient": invoice.viewed_by_recipient,
+        "viewed_by_recipient": bool(invoice.viewed_at or invoice.viewed_by_recipient),
         "viewed_observed_at": invoice.viewed_observed_at.isoformat() if invoice.viewed_observed_at else None,
         "partial_payment_allowed": invoice.partial_payment_allowed,
         "payment_term_type": invoice.payment_term_type,
@@ -939,7 +939,7 @@ def invoices(
     view: str = "open",
     client_id: str | None = None,
     age_bucket: str | None = None,
-    sort: str = "action",
+    sort: str = "due",
     direction: str = "asc",
     action_only: bool = False,
     drifting_only: bool = False,
@@ -1064,7 +1064,7 @@ def invoices(
         week_start = pay_date - timedelta(days=pay_date.weekday())
         key = (week_start.isoformat(), row.currency)
         entry = expected_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
-        entry["amount"] += Decimal(row.outstanding)
+        entry["amount"] += Decimal(row.outstanding) * Decimal(str(forecast.get("collection_probability", 1)))
         entry["invoice_count"] += 1
 
     filtered_count = len(items)
@@ -1637,8 +1637,6 @@ def skip_recommendation(recommendation_id: str, request: Request, db: Session = 
     if recommendation.state != "proposed":
         raise HTTPException(status_code=409, detail=f"Recommendation is already {recommendation.state}.")
     recommendation.state = "skipped"
-    if recommendation.policy_step is not None:
-        invoice.reminder_step = max(invoice.reminder_step, recommendation.policy_step + 1)
     _update_policy_outcomes(db, invoice.id, {"status": "skipped", "action": recommendation.action,
                                             "recorded_at": datetime.now(timezone.utc).isoformat()})
     db.commit()

@@ -104,13 +104,16 @@ def client_drift(
         slope = theil_sen_slope([float(value) for value in tail]) or 0.0
         above_usual = recent >= usual + 7
         signal_type = "paying_later" if slope > 2 and above_usual else ("later_than_usual" if above_usual else "stable")
-        strength = 0.0
+        late_share = sum(delay > 0 for delay in delays) / len(delays)
+        if signal_type == "stable" and late_share >= 0.8 and usual >= 14:
+            signal_type = "habitually_late"
+        strength = min(1.0, usual / 90) if signal_type == "habitually_late" else 0.0
         if signal_type == "paying_later":
             strength = min(1.0, max(0.25, slope / 6.0, (recent - usual) / 21.0))
         elif signal_type == "later_than_usual":
             strength = min(1.0, max(0.2, (recent - usual) / 21.0))
         base.update({
-            "signal": signal_type, "signal_type": signal_type,
+            "signal": signal_type, "signal_type": signal_type, "late_payment_share": late_share,
             "theil_sen_days_per_invoice": round(slope, 2),
             "recent_median_delay_days": recent, "usual_delay_days": usual,
             "signal_strength": round(strength, 3),

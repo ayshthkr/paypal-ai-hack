@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -43,7 +44,7 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         "currency": invoice.currency,
         "status": invoice.status,
         "viewed_at": invoice.viewed_at.date() if invoice.viewed_at else None,
-        "viewed_by_recipient": invoice.viewed_by_recipient,
+        "viewed_by_recipient": bool(invoice.viewed_at or invoice.viewed_by_recipient),
         "viewed_observed_at": invoice.viewed_observed_at.date() if invoice.viewed_observed_at else None,
         "partial_payment_allowed": invoice.partial_payment_allowed,
         "payment_term_type": invoice.payment_term_type,
@@ -129,7 +130,9 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
     day = next((index for index, survival in enumerate(curve) if index > 0 and survival <= threshold), None)
     if day is None:
         return None
-    return {"days": day, "date": (today + timedelta(days=day)).isoformat()}
+    previous, current = curve[day - 1], curve[day]
+    crossing = day - 1 + (previous - threshold) / max(1e-12, previous - current)
+    return {"days": round(crossing, 2), "date": (today + timedelta(days=math.ceil(crossing))).isoformat()}
 
 
 @timed("scoring")
@@ -177,6 +180,7 @@ def forecast_invoice(
         ) for item in client_invoices),
         "payments": sorted((p.provider_payment_id, str(p.amount), p.occurred_at.isoformat()) for p in payments),
         "today": today.isoformat(),
+        "inference_revision": "conditional-tail-v4",
     }, sort_keys=True)
     fingerprint = hashlib.sha256(fingerprint_raw.encode()).hexdigest()
     existing = None
@@ -215,10 +219,20 @@ def forecast_invoice(
             use_model = False
     if not existing and not use_model:
         age = max(0, (today - invoice.issue_date).days)
-        hazards = [baseline[min(age + offset, HORIZON - 1)] for offset in range(HORIZON)]
+        # Never repeat the final KM hazard: its risk set is exhausted.
+        hazards = [baseline[age + offset] if age + offset < len(baseline) else 0.0 for offset in range(HORIZON)]
     if not existing:
         hazards = [min(1.0, max(0.0, float(hazard))) for hazard in hazards]
         curve = _survival(hazards)
+        overdue = max(0, (today - invoice.due_date).days)
+        if overdue > 0:
+            tail = conditional_tail(target, history, today)
+            # Beyond 30 days late, sparse daily hazard extrapolation is unstable.
+            weight = min(1.0, overdue / 30.0)
+            curve = [(1 - weight) * modeled + weight * empirical for modeled, empirical in zip(curve, tail, strict=True)]
+        if overdue >= 90:
+            collection = collection_probability(records, today)
+            curve = [1.0 - collection * (1.0 - survival) for survival in curve]
         model_label = active_model if use_model else "kaplan_meier"
         history_count = int(base_features["history_count"])
         late_rate = base_features["history_late_rate"]
@@ -279,7 +293,10 @@ def forecast_invoice(
         "forecast_horizon_days": HORIZON,
         "already_overdue": overdue_days > 0,
         "history_count": history_count,
-        "limited_history": history_count < 3,
+        "limited_history": history_count < 5,
+        "display_label": "90+ days, low confidence" if overdue_days >= 90 else None,
+        "collection_probability": collection_probability(records, today) if overdue_days >= 90 else 1.0,
+        "collection_method": "Beta-shrunk historical recovery; sparse tail evidence" if overdue_days >= 90 else None,
     }
 
 
@@ -287,3 +304,30 @@ def warm_model() -> None:
     model, *_ = _load_artifacts()
     if model is not None:
         model.predict(np.zeros((1, len(FEATURES)), dtype=np.float32), num_threads=1)
+
+
+def conditional_tail(target: dict, history: list[dict], today: date) -> list[float]:
+    """Kernel survival S(age+t)/S(age), with shrinkage for thin client history.
+
+    Lognormal kernels provide a continuous tail instead of flooring a past
+    unconditional median at tomorrow. Only outcomes known as of today enter.
+    """
+    age = max(0, (today - target["issue_date"]).days)
+    durations = [max(1, (row["settled_at"] - row["issue_date"]).days) for row in history
+                 if row["id"] != target["id"] and row["issue_date"] < target["issue_date"]]
+    terms = max(0, (target["due_date"] - target["issue_date"]).days)
+    prior = max(7, terms + 14)
+    values = durations + [prior] * max(0, 5 - len(durations))
+    sigma = 0.5
+    def survival(day):
+        return sum(0.5 * math.erfc((math.log(max(0.01, day)) - math.log(value)) / (sigma * math.sqrt(2))) for value in values) / len(values)
+    denominator = max(1e-12, survival(age))
+    return [min(1.0, max(0.0, survival(age + offset) / denominator)) for offset in range(HORIZON + 1)]
+
+
+def collection_probability(records: list[dict], today: date) -> float:
+    # Right-censored recent invoices provide no evidence of non-recovery.
+    mature = [row for row in records if (today - row["due_date"]).days >= 180]
+    late_risk = [row for row in mature if not row.get("settled_at") or (row["settled_at"] - row["due_date"]).days >= 90]
+    recovered = sum(bool(row.get("settled_at") and row["settled_at"] <= today) for row in late_risk)
+    return round((recovered + 3.5) / (len(late_risk) + 10), 4)

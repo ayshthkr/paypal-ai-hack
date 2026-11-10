@@ -42,6 +42,9 @@ def seed(as_of=None) -> dict[str, object]:
                 outstanding=row["outstanding"], currency=row["currency"], status=row["status"],
                 disputed=False, source="demo", provider_payload={}, synced_at=utc_datetime(cutoff), material_version=1,
                 viewed_at=utc_datetime(row["viewed_at"]) if row["viewed_at"] else None,
+                viewed_by_recipient=bool(row["viewed_at"]),
+                viewed_observed_at=utc_datetime(row["viewed_at"]) if row["viewed_at"] else None,
+                reminder_step=max((3 if event["tone"] == "firm" else 2 for event in row["reminder_events"]), default=0),
                 partial_payment_allowed=row["partial_payment_allowed"], payment_term_type=row["payment_term_type"],
                 reminder_events=row["reminder_events"],
             ))

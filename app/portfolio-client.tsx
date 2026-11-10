@@ -21,7 +21,7 @@ type Drift = {
 };
 type Forecast = {
   quantiles: Record<string, { days: number; date: string } | null>;
-  probabilities: Record<string, number>; model: string;
+  probabilities: Record<string, number>; model: string; display_label?: string; limited_history?: boolean;
 } | null;
 type InvoiceRow = {
   id: string; invoice_number: string; client_id: string; client_name: string; due_date: string;
@@ -85,11 +85,11 @@ function TimeTravelControl({ currentAsOf, maxAsOf, resetBusy, onCommit, onReset 
     date.setUTCDate(date.getUTCDate() + Number(event.target.value));
     setSelectedDate(date.toISOString().slice(0, 10));
   };
-  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
+  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
 }
 
 function money(currency: string, value: number | string) {
-  return `${currency} ${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export default function PortfolioClient() {
@@ -216,7 +216,7 @@ export default function PortfolioClient() {
     setBusy(true); setError("");
     try {
       const result = await getJson<{ errors?: string[]; created?: number; updated?: number }>("/api/sync", { method: "POST" });
-      setLastSync(new Date().toLocaleTimeString());
+      setLastSync(new Date().toLocaleTimeString("en-GB", { timeZone: "UTC", timeZoneName: "short" }));
       await refresh();
       if (result.errors?.length) setError(`Sync completed with ${result.errors.length} invoice error(s).`);
       else setError(`Sync complete · ${result.created || 0} imported, ${result.updated || 0} updated.`);
@@ -291,17 +291,17 @@ export default function PortfolioClient() {
     { colId: "outstanding", field: "outstanding", headerName: "Balance", minWidth: 125,
       valueFormatter: cell => cell.data ? money(cell.data.currency, cell.value) : "" },
     { colId: "due_date", field: "due_date", headerName: "Due", minWidth: 115,
-      valueFormatter: cell => cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "" },
+      valueFormatter: cell => cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "" },
     { colId: "status", field: "status", headerName: "Status", minWidth: 125,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill ${String(cell.value).toLowerCase()}`}>{String(cell.value).replaceAll("_", " ")}</span> },
     { colId: "p50", headerName: "Predicted", minWidth: 120,
       valueGetter: cell => cell.data?.forecast?.quantiles.p50?.date || null,
-      valueFormatter: cell => !cell.data?.forecast ? "—" : cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Beyond 180d" },
+      valueFormatter: cell => !cell.data?.forecast ? "—" : cell.data.forecast.display_label || (cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" }) : "After 180 days") },
     { colId: "window", headerName: "p10–p90 range", minWidth: 165,
       valueGetter: cell => cell.data?.forecast ? { p10: cell.data.forecast.quantiles.p10?.date, p90: cell.data.forecast.quantiles.p90?.date } : null,
       valueFormatter: cell => {
         if (!cell.value) return "—";
-        const fmt = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        const fmt = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" });
         return cell.value.p10 ? `${fmt(cell.value.p10)} – ${cell.value.p90 ? fmt(cell.value.p90) : "beyond horizon"}` : "Beyond horizon";
       } },
     { colId: "p14", headerName: "Paid in 14d", minWidth: 110,
@@ -354,7 +354,7 @@ export default function PortfolioClient() {
           </> : null)}
         </section>
         {authenticated && <section className="panel"><div className="panel-head"><div><div className="panel-title">PayPal Sandbox</div><div className="panel-subtitle">Create a controlled test invoice and review the last import.</div></div><span className="status-pill">Sandbox only</span></div>
-          <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString()} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
+          <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
           {syncStatus?.last_run?.errors?.length ? <div className="error-box" style={{ marginTop: 10 }}>{syncStatus.last_run.errors.join(" · ")}</div> : null}
           <form className="toolbar-tools" onSubmit={createInvoice} style={{ marginTop: 14 }}>
             <select className="select" aria-label="Sandbox invoice recipient" value={newInvoiceClient} onChange={event => setNewInvoiceClient(event.target.value)} required>
@@ -383,7 +383,7 @@ export default function PortfolioClient() {
               const trigger = drift.signal_type === "gone_quiet"
                 ? `${drift.days_since_last_invoice ?? 0} days since last invoice · usual gap ${Math.round(drift.cadence_days || 0)} days`
                 : `${Math.round(drift.recent_median_delay_days || 0)}d recent delay · ${Math.round(drift.usual_delay_days || 0)}d usual`;
-              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong><Link className="table-link" href={`/clients/${encodeURIComponent(client.id)}`}>{client.name}</Link></strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
+              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong><Link className="table-link" href={`/clients/${encodeURIComponent(client.id)}`}>{client.name}</Link></strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
             })}</div> : <div className="insight-text">No client has a current delay or cadence signal.</div>}
           </section>
 
@@ -397,11 +397,11 @@ export default function PortfolioClient() {
           </section>
 
           <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Outstanding balances grouped by their p50 settlement week.</div></div></div>
-            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{data.expected_cash_by_week.map(entry => <div className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {new Date(`${entry.week_start}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span><strong>{money(entry.currency, entry.amount)}</strong><small>{entry.invoice_count} invoice{entry.invoice_count === 1 ? "" : "s"}</small></div>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
+            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{data.expected_cash_by_week.map(entry => <div className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {new Date(`${entry.week_start}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{money(entry.currency, entry.amount)}</strong><small>{entry.invoice_count} invoice{entry.invoice_count === 1 ? "" : "s"}</small></div>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
           </section>
 
           <section className="grid-panel" id="invoice-grid">
-            <div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count.toLocaleString()} records in this view</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div>
+            <div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count.toLocaleString("en-US")} records in this view</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div>
               <div className="toolbar-tools"><SearchInput key={urlQuery} query={urlQuery} onDebouncedQuery={value => updateUrl({ q: value || null }, "replace")} />
                 <select onFocus={() => { if (!clients.length) void getJson<{ items: ClientRow[] }>("/api/clients").then(value => setClients(value.items)); }} className="select" aria-label="Filter by client" value={selectedClient} onChange={event => updateUrl({ client_id: event.target.value || null })}><option value="">All clients</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
                 <select className="select" aria-label="Sort invoices" value={`${currentSort}:${currentDirection}`} onChange={event => { const [sort, direction] = event.target.value.split(":"); updateUrl({ sort, direction }); }}>
@@ -415,7 +415,7 @@ export default function PortfolioClient() {
             {actionOnly && <div className="filter-note">Showing only today&apos;s pending proposed reminders. <button onClick={() => updateUrl({ action_only: null })}>Clear</button></div>}
             {driftingOnly && <div className="filter-note">Showing invoices for clients with a timing signal. <button onClick={() => updateUrl({ drifting_only: null })}>Clear</button></div>}
             <div className="grid-wrap">{rowData.length ? <AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} defaultColDef={{ sortable: false, filter: false, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={event => { gridApi.current = event.api; }} /> : <div className="empty-box">No invoices match this view and its filters. Change a filter or select another view.</div>}</div>
-            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · open {currency} <strong>{Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
+            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · open {currency} <strong>{Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
               <div className="pager"><label>Rows <select className="select" aria-label="Rows per page" value={pageSize} onChange={event => updateUrl({ page_size: event.target.value })}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><span>Page {currentPage} of {pageCount}</span><button className="btn" disabled={currentPage <= 1} onClick={() => updateUrl({ page: String(currentPage - 1) }, "push", false)}>Previous</button><button className="btn" disabled={currentPage >= pageCount} onClick={() => updateUrl({ page: String(currentPage + 1) }, "push", false)}>Next</button></div>
             </div>
           </section>

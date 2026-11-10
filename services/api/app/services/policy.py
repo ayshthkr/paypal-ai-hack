@@ -83,9 +83,27 @@ def decide(
         if elapsed_days < cooldown:
             return result(reason=f"A {last_attempt_tone or 'friendly'} reminder was attempted {elapsed_days} days ago; wait {cooldown} days between reminders.")
 
+    reminder_events = []
+    for event in getattr(invoice, "reminder_events", []) or []:
+        try:
+            sent = date.fromisoformat(str(event.get("sent_at", ""))[:10])
+        except (ValueError, AttributeError):
+            continue
+        if sent <= today:
+            reminder_events.append((sent, event.get("tone", "friendly")))
+    reminder_events.sort()
+    if reminder_events and not last_attempt_at:
+        sent, tone = reminder_events[-1]
+        cooldown = 5 if tone == "friendly" else 7
+        if (today - sent).days < cooldown:
+            return result(reason=f"The recorded {tone} reminder is within the {cooldown}-day cooldown.")
     days_until_due = (invoice.due_date - today).days
     highest_available = _max_stage(days_late, days_until_due)
     current_step = max(0, int(getattr(invoice, "reminder_step", 0) or 0))
+    history_step = max((3 if tone == "firm" else 2 for _, tone in reminder_events), default=0)
+    current_step = max(current_step, history_step)
+    if days_late >= 10 and getattr(invoice, "client", None) and (invoice.client.drift or {}).get("signal_type") == "habitually_late":
+        current_step = max(current_step, 2)
     step = min(highest_available, current_step)
     if highest_available >= 0 and step < highest_available:
         # Move only one ladder stage at a time, even if an operator opens the
