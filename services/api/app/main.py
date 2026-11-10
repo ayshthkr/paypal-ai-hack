@@ -582,6 +582,7 @@ def _invoice_dict(
     db: Session,
     invoice: Invoice,
     include_detail: bool = False,
+    include_timeline: bool = True,
     drift_cache: dict[str, dict] | None = None,
     activity_scores: dict[str, float] | None = None,
     daily_candidate_ids: set[str] | None = None,
@@ -593,9 +594,9 @@ def _invoice_dict(
     outstanding = Decimal("0.00") if invoice.status in CLOSED_STATUSES else invoice.outstanding
     forecast = None
     if invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0:
-        forecast = None if include_detail else (forecast_cache or {}).get(invoice.id)
+        forecast = None if include_detail and include_timeline else (forecast_cache or {}).get(invoice.id)
         if forecast is None:
-            forecast = forecast_invoice(db, invoice, today=today, persist=True, detail=include_detail)
+            forecast = forecast_invoice(db, invoice, today=today, persist=True, detail=include_detail and include_timeline)
             if forecast_cache is not None and not include_detail:
                 forecast_cache[invoice.id] = forecast
     if drift_cache is not None and client.id in drift_cache:
@@ -625,12 +626,14 @@ def _invoice_dict(
         action["tone"] = "none"
         action["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
     recommendation = _latest_recommendation(db, invoice.id)
+    if recommendation and include_detail and recommendation.policy_date is None:
+        recommendation.policy_date = today
     if invoice.disputed or (invoice.promised_payment_date and today <= invoice.promised_payment_date):
         recommendation = None
     elif action["action"] == "review_for_writeoff_or_collections" and recommendation and recommendation.state == "proposed":
         recommendation = None
     if (include_detail and create_recommendation and recommendation and recommendation.state == "proposed"
-            and (recommendation.invoice_version != invoice.material_version or recommendation.action != action["action"])):
+            and (recommendation.invoice_version != invoice.material_version or recommendation.action != action["action"] or recommendation.policy_date != today)):
         recommendation.state = "superseded"
         db.flush()
         recommendation = None
@@ -646,7 +649,7 @@ def _invoice_dict(
         values = dict(
             invoice_id=invoice.id, action=action["action"], tone=action["tone"], reason=action["reason"],
             draft_text=body, draft_source="policy" if action["action"] == "offer_partial_payment" else "template", edited_text=body, invoice_version=invoice.material_version,
-            policy_step=action.get("policy_step"),
+            policy_step=action.get("policy_step"), policy_date=today,
         )
         insert = pg_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
         db.execute(insert(Recommendation).values(**values).on_conflict_do_nothing(
@@ -678,7 +681,7 @@ def _invoice_dict(
         "recommendation": _recommendation_dict(recommendation),
         "days_until_due_nonnegative": currency_due,
     }
-    if include_detail:
+    if include_detail and include_timeline:
         summary["outcome"] = _paid_outcome(db, invoice)
         summary["timeline"] = _invoice_timeline(db, invoice)
         attempts = list(db.scalars(select(ActionAttempt).where(
@@ -1092,7 +1095,7 @@ def invoices(
         ready_recommendations.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
             Invoice.source == source, Recommendation.state == "proposed",
             Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
-            func.date(Recommendation.created_at) == today,
+            Recommendation.policy_date == today,
         )).all())
     open_condition = and_(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0, Invoice.disputed.is_(False))
     due_week_condition = or_(*[and_(Invoice.source == source, Invoice.due_date >= _today(db, source),
@@ -1259,27 +1262,27 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
         today = _today(db, source)
         reviewed_today.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
             Invoice.source == source, Recommendation.state.in_(["skipped", "sent", "applied"]),
-            func.date(Recommendation.created_at) == today,
+            Recommendation.policy_date == today,
         )).all())
-    ranked = [invoice_id for invoice_id in _rank_policy_candidates(db, scope) if invoice_id not in reviewed_today]
+    forecast_cache: dict[str, dict] = {}
+    ranked = [invoice_id for invoice_id in _rank_policy_candidates(db, scope, forecast_cache) if invoice_id not in reviewed_today]
     ranked = ranked[:DAILY_SUGGESTION_CAP]
     candidate_ids = set(ranked)
-    forecast_cache: dict[str, dict] = {}
     items = []
     for invoice_id in ranked[:DAILY_SUGGESTION_CAP]:
         invoice = next((row for row in rows if row.id == invoice_id), None)
         if invoice is None:
             continue
-        item = _invoice_dict(db, invoice, include_detail=True, daily_candidate_ids=candidate_ids,
+        item = _invoice_dict(db, invoice, include_detail=True, include_timeline=False, daily_candidate_ids=candidate_ids,
                              forecast_cache=forecast_cache)
         if item.get("recommendation") and item["recommendation"].get("state") == "proposed":
             _record_policy_decision(db, invoice, item)
-            items.append(item)
+            items.append({key: item[key] for key in ("id", "invoice_number", "client_name", "client_id", "source", "currency", "outstanding", "due_date", "decision", "recommendation")})
     items.sort(key=lambda row: (-float(row["decision"].get("expected_cash_gain") or 0), row["due_date"], row["invoice_number"]))
     db.commit()
     skipped = list(db.scalars(select(Recommendation).join(Invoice).where(
         Recommendation.state == "skipped", Invoice.source == "demo" if scope else text("1=1"),
-        func.date(Recommendation.created_at) == _today(db, "demo" if scope else None),
+        or_(*[and_(Invoice.source == source, Recommendation.policy_date == _today(db, source)) for source in (["demo"] if scope else ["demo", "paypal"])]),
     )).all())
     return {"items": items, "count": len(items), "pending_count": len(items), "skipped_count": len(skipped),
             "skipped": [{"id": row.id, "invoice_id": row.invoice_id} for row in skipped], "daily_cap": DAILY_SUGGESTION_CAP,
@@ -1806,6 +1809,7 @@ def skip_recommendation(recommendation_id: str, request: Request, db: Session = 
     if recommendation.state != "proposed":
         raise HTTPException(status_code=409, detail=f"Recommendation is already {recommendation.state}.")
     recommendation.state = "skipped"
+    recommendation.policy_date = recommendation.policy_date or _today(db, invoice.source)
     _update_policy_outcomes(db, invoice.id, {"status": "skipped", "action": recommendation.action,
                                             "recorded_at": datetime.now(timezone.utc).isoformat()})
     db.commit()
@@ -2112,6 +2116,13 @@ def undo_skip(recommendation_id: str, request: Request, db: Session = Depends(ge
     if replacement:
         raise HTTPException(409, "A replacement action already exists; review the invoice.")
     row.state = "proposed"
+    row.policy_date = _today(db, invoice.source)
+    skipped_logs = db.scalars(select(PolicyDecisionLog).where(PolicyDecisionLog.invoice_id == invoice.id,
+        PolicyDecisionLog.decision_date == row.policy_date, PolicyDecisionLog.outcome["status"].as_string() == "skipped")).all()
+    for entry in skipped_logs:
+        previous = entry.outcome or {}
+        entry.outcome = {**previous, "status": "pending", "undo_skip_at": datetime.now(timezone.utc).isoformat(),
+                         "history": [*previous.get("history", []), {key: value for key, value in previous.items() if key != "history"}]}
     db.commit()
     return {"state": "proposed"}
 

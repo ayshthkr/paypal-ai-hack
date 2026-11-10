@@ -134,6 +134,7 @@ class Recommendation(Base):
     edited_text: Mapped[str] = mapped_column(Text, nullable=False)
     invoice_version: Mapped[int] = mapped_column(Integer, nullable=False)
     policy_step: Mapped[int | None] = mapped_column(Integer)
+    policy_date: Mapped[date | None] = mapped_column(Date, index=True)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed", index=True)
     approved_hash: Mapped[str | None] = mapped_column(String(64))
     approved_text: Mapped[str | None] = mapped_column(Text)

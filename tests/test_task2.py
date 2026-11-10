@@ -85,6 +85,13 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert 'curve' in detail['forecast']
     assert client.post('/demo/invoices/contract-0/payment', json={}).status_code == 200
     assert client.get('/invoices/contract-0').json()['status'] == 'PAID'
+    with Session() as db:
+        db.get(Invoice, 'contract-30').disputed = True
+        db.commit()
+    all_page = client.get('/invoices?view=all&page_size=1&sort=balance').json()
+    assert all_page['count'] == 31 and len(all_page['items']) == 1
+    assert all_page['currency_totals']['USD'] == '3000.00'
+    assert client.get('/invoices?view=open').json()['count'] == 29
 
 
 def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, request):
@@ -193,7 +200,13 @@ def test_repeated_queue_reads_reuse_one_proposal_and_one_audit(api):
     invalidate()
     second = client.get('/action-queue')
     assert first.status_code == second.status_code == 200
-    assert first.json()['items'][0]['recommendation']['id'] == second.json()['items'][0]['recommendation']['id']
+    recommendation_id = first.json()['items'][0]['recommendation']['id']
+    assert recommendation_id == second.json()['items'][0]['recommendation']['id']
+    assert client.post(f'/recommendations/{recommendation_id}/skip').status_code == 200
+    skipped = client.get('/action-queue').json()
+    assert skipped['count'] == 0 and skipped['skipped_count'] == 1
+    assert client.post(f'/recommendations/{recommendation_id}/undo-skip').status_code == 200
+    assert client.get('/action-queue').json()['count'] == 1
     with Session() as db:
         assert db.query(Recommendation).filter_by(invoice_id=invoice_id,state='proposed').count() == 1
         assert db.query(PolicyDecisionLog).filter_by(invoice_id=invoice_id).count() == 1
