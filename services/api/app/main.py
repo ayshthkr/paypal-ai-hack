@@ -739,10 +739,12 @@ def _get_invoice_or_404(db: Session, invoice_id: str) -> Invoice:
     return invoice
 
 
-def _authorize_invoice(request: Request, invoice: Invoice) -> str | None:
+def _authorize_invoice(request: Request, invoice: Invoice, db: Session) -> str | None:
     user = session_user(request)
     if invoice.source != "demo" and not user:
         raise HTTPException(status_code=401, detail="Operator login required to view PayPal invoices.")
+    if request.method not in {"GET", "HEAD"} and _historical_demo(db, invoice.source):
+        raise HTTPException(409, "Return the demo clock to today before changing records.")
     return user
 
 
@@ -1255,7 +1257,7 @@ def invoices(
 @app.get("/invoices/{invoice_id}")
 def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
     invoice = _get_invoice_or_404(db, invoice_id)
-    _authorize_invoice(request, invoice)
+    _authorize_invoice(request, invoice, db)
     activity_scores = _activity_for_source(db, invoice.source)
     daily_candidate_ids = _top_policy_candidates(db, None if session_user(request) else "demo")
     payload = _invoice_dict(db, invoice, include_detail=True, activity_scores=activity_scores,
@@ -1309,7 +1311,7 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
 @app.post("/invoices/{invoice_id}/draft")
 def draft_invoice_reminder(invoice_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
     invoice = _get_invoice_or_404(db, invoice_id)
-    operator = _authorize_invoice(request, invoice)
+    operator = _authorize_invoice(request, invoice, db)
     if invoice.source == "paypal" and not operator:
         raise HTTPException(status_code=401, detail="Operator login required to draft PayPal reminders.")
     activity = _activity_for_source(db, invoice.source)
@@ -1345,7 +1347,7 @@ def draft_invoice_reminder(invoice_id: str, request: Request, db: Session = Depe
 @app.post("/invoices/{invoice_id}/reply")
 def triage_invoice_reply(invoice_id: str, payload: ReplyInput, request: Request, db: Session = Depends(get_db)) -> dict:
     invoice = _get_invoice_or_404(db, invoice_id)
-    operator = _authorize_invoice(request, invoice)
+    operator = _authorize_invoice(request, invoice, db)
     reply = payload.reply.strip()
     if not reply:
         raise HTTPException(status_code=422, detail="Paste the client's reply first.")
@@ -1479,7 +1481,7 @@ def _scoped_clients(request: Request, db: Session) -> list[Client]:
 @app.get("/facts/invoices/{invoice_id}")
 def invoice_facts(invoice_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
     invoice = _get_invoice_or_404(db, invoice_id)
-    _authorize_invoice(request, invoice)
+    _authorize_invoice(request, invoice, db)
     activity = _activity_for_source(db, invoice.source)
     summary = _invoice_dict(db, invoice, drift_cache={}, activity_scores=activity,
                             daily_candidate_ids=_top_policy_candidates(db, invoice.source), create_recommendation=False)
@@ -1821,7 +1823,7 @@ def skip_recommendation(recommendation_id: str, request: Request, db: Session = 
     if not recommendation:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
     invoice = _get_invoice_or_404(db, recommendation.invoice_id)
-    _authorize_invoice(request, invoice)
+    _authorize_invoice(request, invoice, db)
     if recommendation.state != "proposed":
         raise HTTPException(status_code=409, detail=f"Recommendation is already {recommendation.state}.")
     recommendation.state = "skipped"
@@ -2112,8 +2114,8 @@ def save_draft(recommendation_id: str, payload: SendInput, request: Request, db:
     if not row:
         raise HTTPException(404, "Recommendation not found.")
     invoice = _get_invoice_or_404(db, row.invoice_id)
-    _authorize_invoice(request, invoice)
-    if row.state != "proposed" or row.invoice_version != invoice.material_version:
+    _authorize_invoice(request, invoice, db)
+    if row.state not in {"proposed", "failed"} or row.invoice_version != invoice.material_version:
         raise HTTPException(409, "Recommendation is no longer editable.")
     row.edited_text = payload.text
     db.commit()
@@ -2126,7 +2128,7 @@ def undo_skip(recommendation_id: str, request: Request, db: Session = Depends(ge
     if not row:
         raise HTTPException(404, "Recommendation not found.")
     invoice = _get_invoice_or_404(db, row.invoice_id)
-    _authorize_invoice(request, invoice)
+    _authorize_invoice(request, invoice, db)
     if row.state != "skipped" or row.invoice_version != invoice.material_version:
         raise HTTPException(409, "Only an unchanged skipped recommendation can be restored.")
     replacement = db.scalar(select(Recommendation.id).where(Recommendation.invoice_id == row.invoice_id,

@@ -12,7 +12,10 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
   const promise = (async () => {
     const response = await fetch(url, { ...init, signal: init?.signal || AbortSignal.timeout(10_000), cache: "no-store", credentials: "same-origin", headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers } });
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw new RequestError(value.detail || `Request failed (${response.status})`, response.status);
+    if (!response.ok) {
+      if (!reading && response.status === 409) clearReads();
+      throw new RequestError(value.detail || `Request failed (${response.status})`, response.status);
+    }
     if (!reading) clearReads();
     return value as T;
   })();

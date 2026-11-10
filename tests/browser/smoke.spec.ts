@@ -49,3 +49,26 @@ test("portfolio, queue, client and invoice workflow stays within warm budgets", 
   expect(errors).toEqual([]);
   expect(slowReads).toEqual([]);
 });
+
+test("an editable synthetic invoice draft survives a reload", async ({ page }) => {
+  const invoiceId = process.env.E2E_EDITABLE_INVOICE;
+  test.skip(!invoiceId, "Set E2E_EDITABLE_INVOICE to a controlled synthetic reminder fixture.");
+  await page.goto(`/invoices/${encodeURIComponent(invoiceId!)}`);
+  await expect(page.getByText("Synthetic demo", { exact: true })).toBeVisible();
+  const editor = page.getByRole("textbox", { name: "Editable reminder preview" });
+  await expect(editor).toBeEditable();
+  const original = await editor.inputValue();
+  const facts = await (await page.request.get(`/api/invoices/${encodeURIComponent(invoiceId!)}`)).json();
+  const recommendationId = facts.recommendation.id;
+  const edited = `${original}\nReviewed draft persistence check.`;
+  try {
+    await editor.fill(edited);
+    await Promise.all([page.waitForResponse(response => response.url().includes(`/recommendations/${recommendationId}/draft`) && response.status() === 200), editor.press("Tab")]);
+    const saved = await (await page.request.get(`/api/invoices/${encodeURIComponent(invoiceId!)}`)).json();
+    expect(saved.recommendation.edited_text).toBe(edited);
+    await page.reload();
+    await expect(editor).toHaveValue(edited);
+  } finally {
+    await page.request.post(`/api/recommendations/${recommendationId}/draft`, { data: { text: original } });
+  }
+});

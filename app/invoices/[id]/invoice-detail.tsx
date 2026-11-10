@@ -50,24 +50,33 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const [neighbors, setNeighbors] = useState<{ previous: Neighbor | null; next: Neighbor | null }>({ previous: null, next: null });
   const [neighborsLoading, setNeighborsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshInFlight = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const draftRecommendation = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (refreshInFlight.current) return refreshInFlight.current;
+    const requestKey = `${id}${clockQuery}`;
+    if (refreshInFlight.current?.key === requestKey) return refreshInFlight.current.promise;
     const pending = Promise.all([
       requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}${clockQuery}`),
 
     ]).then(([invoice]) => {
+      if (refreshInFlight.current?.key !== requestKey) return;
       setData(invoice); setError(""); setNotFound(false);
-      setDraft(previous => previous && invoice.recommendation?.state === "proposed" ? previous : sessionStorage.getItem(`latepayer-draft:${invoice.recommendation?.id}`) ?? invoice.recommendation?.edited_text ?? "");
+      const nextId = invoice.recommendation?.id || null;
+      const sameDraft = draftRecommendation.current === nextId;
+      setDraft(previous => sameDraft && ["proposed", "failed"].includes(invoice.recommendation?.state || "") ? previous : sessionStorage.getItem(`latepayer-draft:${nextId}`) ?? invoice.recommendation?.edited_text ?? "");
+      draftRecommendation.current = nextId;
     }).catch(cause => {
+      if (refreshInFlight.current?.key !== requestKey) return;
       setError(cause instanceof Error ? cause.message : "Could not load invoice.");
       setNotFound(cause instanceof RequestError && cause.status === 404);
     }).finally(() => {
-      setLoading(false);
-      refreshInFlight.current = null;
+      if (refreshInFlight.current?.key === requestKey) {
+        setLoading(false);
+        refreshInFlight.current = null;
+      }
     });
-    refreshInFlight.current = pending;
+    refreshInFlight.current = { key: requestKey, promise: pending };
     return pending;
   }, [id, clockQuery]);
 
@@ -155,6 +164,8 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
       const result = await requestJson<{ recommendation: NonNullable<Recommendation>; note: string }>(`/api/invoices/${encodeURIComponent(id)}/draft`, { method: "POST" });
       setData(current => current ? { ...current, recommendation: result.recommendation } : current);
       setDraft(result.recommendation.edited_text);
+      sessionStorage.setItem(`latepayer-draft:${result.recommendation.id}`, result.recommendation.edited_text);
+      draftRecommendation.current = result.recommendation.id;
       setNotice(result.note);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create a reminder draft."); }
     finally { setBusy(false); }
@@ -179,9 +190,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const isDemo = data.source === "demo";
   const p50 = data.forecast?.quantiles.p50;
   const actionUrl = isDemo ? `/api/demo/recommendations/${rec?.id}/send` : `/api/recommendations/${rec?.id}/send`;
-  const canSend = Boolean(!data.simulation_disabled && rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
+  const canSend = Boolean(!clockDate && !data.simulation_disabled && rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
   const isPartialAction = Boolean(rec && rec.action === "offer_partial_payment");
-  const canApplyPartial = Boolean(!data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
+  const canApplyPartial = Boolean(!clockDate && !data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
 
   return <div className="app-shell">
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
@@ -205,12 +216,12 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="quantiles"><div className="quantile"><div className="quantile-label">Paid by due date</div><div className="quantile-value">{Math.round(data.forecast.probability_by_due * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 14 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["14d"] * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 30 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["30d"] * 100)}%</div></div></div>
               <div className="quantiles">{(["p10", "p50", "p90"] as const).map(key => <div className="quantile" key={key}><div className="quantile-label">{key.toUpperCase()} payment date</div><div className="quantile-value">{shortDate(data.forecast?.quantiles[key]?.date)}</div></div>)}</div>
               <ul className="reasons">{data.forecast.reasons.map((reason, index) => <li key={index}><span className="reason-mark">✓</span>{reason}</li>)}</ul>
-              <div className="fine-print" style={{ marginTop: 15 }}>Model: {data.forecast.model_version} · Scored {new Date(data.forecast.scored_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })} · 180-day horizon</div>
+              <div className="fine-print" style={{ marginTop: 15 }}>Model: {data.forecast.model_version} · Scored {new Date(data.forecast.scored_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })} · 180-day horizon</div>
             </>}
           </div>
           <div className="panel"><div className="panel-head"><div><div className="panel-title">Client timing signal</div><div className="panel-subtitle">Current settled history; forecast history is point-in-time</div></div><span className="status-pill">{data.drift.signal.replaceAll("_", " ")}</span></div><div className="drift-card"><strong>{data.drift.available ? `${data.drift.settled_count} settled invoices reviewed` : "Insufficient history"}</strong><p>{data.drift.message}</p><div className="fine-print">The forecast used {data.forecast?.history_count ?? 0} prior settled invoices known on its scoring date; the timing signal uses currently available settled history.</div></div></div>
           {data.outcome && <div className="panel"><div className="panel-head"><div><div className="panel-title">Paid outcome</div><div className="panel-subtitle">Observed result against the issue-time model backtest</div></div></div><div className="invoice-facts"><div className="fact"><div className="fact-label">Paid date</div><div className="fact-value">{data.outcome.paid_at ? shortDate(data.outcome.paid_at) : "Paid date unavailable"}</div></div><div className="fact"><div className="fact-label">Against due date</div><div className="fact-value">{data.outcome.days_from_due == null ? "Unavailable" : data.outcome.timing === "early" ? `${Math.abs(data.outcome.days_from_due)} days early` : data.outcome.timing === "late" ? `${data.outcome.days_from_due} days late` : "On time"}</div></div></div>{data.outcome.issue_forecast ? <div className="drift-card" style={{ marginTop: 12 }}><strong>Issue-time p50: {shortDate(data.outcome.issue_forecast.p50_date)}</strong><p>Actual payment: {data.outcome.paid_at ? shortDate(data.outcome.paid_at) : "Date unavailable"}{data.outcome.issue_forecast.absolute_error_days != null ? ` · ${data.outcome.issue_forecast.absolute_error_days} day absolute error` : ""}</p><div className="fine-print">p10 {shortDate(data.outcome.issue_forecast.p10_date)} · p90 {shortDate(data.outcome.issue_forecast.p90_date)} · {data.outcome.issue_forecast.source.replaceAll("_", " ")}{data.outcome.issue_forecast.model_version ? ` · ${data.outcome.issue_forecast.model_version}` : ""}</div></div> : <div className="empty-inline">No issue-time prediction was stored for this invoice.</div>}</div>}
-          <div className="panel"><div className="panel-head"><div><div className="panel-title">Invoice timeline</div><div className="panel-subtitle">Issue, delivery, views, reminders, payments, and provider events</div></div></div><div className="history-list">{data.timeline.length ? data.timeline.map((event, index) => <div className="history-row" key={`${event.at}-${event.kind}-${index}`}><span className="history-dot"/><div><div className="history-title">{event.kind}</div><div className="history-meta">{new Date(event.at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })}</div>{event.detail && <div className="history-meta">{event.detail}</div>}</div></div>) : <div className="empty-box">No dated invoice events are available.</div>}</div></div>
+          <div className="panel"><div className="panel-head"><div><div className="panel-title">Invoice timeline</div><div className="panel-subtitle">Issue, delivery, views, reminders, payments, and provider events</div></div></div><div className="history-list">{data.timeline.length ? data.timeline.map((event, index) => <div className="history-row" key={`${event.at}-${event.kind}-${index}`}><span className="history-dot"/><div><div className="history-title">{event.kind}</div><div className="history-meta">{["Issued", "Sent"].includes(event.kind) ? shortDate(event.at) : new Date(event.at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</div>{event.detail && <div className="history-meta">{event.detail}</div>}</div></div>) : <div className="empty-box">No dated invoice events are available.</div>}</div></div>
         </section>
         <aside>
           <div className="panel">
@@ -239,19 +250,19 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
                   const url = isDemo ? `/api/demo/recommendations/${rec.id}/send` : `/api/recommendations/${rec.id}/approve-partial-payment`;
                   if (isDemo || window.confirm("Enable partial payments on this PayPal Sandbox invoice? PayPal may notify the recipient of the invoice update.")) void action(url, "POST", { text: rec.edited_text });
                 }}>{busy ? "Applying…" : isDemo ? "Approve & simulate" : "Approve & enable partial payment"}</button>}
-                {rec.state === "proposed" && <button className="btn" disabled={busy} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "applied" && <span className="fine-print">Partial-payment settings are enabled{isDemo ? " in the synthetic demo" : " in PayPal Sandbox"}.</span>}
                 {rec.state === "unknown" && <span className="fine-print">Provider update status is uncertain. Sync PayPal before retrying.</span>}
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the update. Review and retry is available.</span>}
               </div>
             </> : rec ? <>
-              <div className="fine-print">Grounded in: {data.invoice_number}, {data.currency} {Number(data.outstanding).toLocaleString("en-US")}, due {shortDate(data.due_date)}, recorded reminder and settlement history.</div><div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? "Gemini, grounded in invoice facts" : "grounded template"}{rec.drafted_at ? ` · ${new Date(rec.drafted_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })}` : ""}</div>
-              <textarea aria-label="Editable reminder preview" value={draft} onChange={event => setDraft(event.target.value)} disabled={rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/>
+              <div className="fine-print">Grounded in: {data.invoice_number}, {data.currency} {Number(data.outstanding).toLocaleString("en-US")}, due {shortDate(data.due_date)}, recorded reminder and settlement history.</div><div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? "Gemini, grounded in invoice facts" : "grounded template"}{rec.drafted_at ? ` · ${new Date(rec.drafted_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}` : ""}</div>
+              <textarea aria-label="Editable reminder preview" value={draft} onChange={event => { setDraft(event.target.value); sessionStorage.setItem(`latepayer-draft:${rec.id}`, event.target.value); }} onBlur={() => { if (!clockDate && !data.simulation_disabled && draft.trim() && ["proposed", "failed"].includes(rec.state)) void requestJson(`/api/recommendations/${rec.id}/draft`, { method: "POST", body: JSON.stringify({ text: draft }) }).catch(cause => setError(cause.message)); }} disabled={Boolean(clockDate) || data.simulation_disabled || rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/>
               <div className="delivery-note">{data.reminder_delivery_note || (isDemo ? "Demo mode: simulated send records the approval only. No PayPal email is sent." : "The exact approved copy is recorded for audit. PayPal's native reminder email controls the message body.")}</div>
               <div className="action-buttons">
-                {rec.state === "proposed" && <button className="btn" disabled={busy} onClick={() => void generateDraft()}>{busy ? "Drafting…" : "Generate AI draft"}</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void generateDraft()}>{busy ? "Drafting…" : "Generate AI draft"}</button>}
                 {canSend && <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => { if (isDemo || window.confirm("Approve this exact text and send the PayPal invoice reminder?")) void action(actionUrl, "POST", { text: draft }); }}>{busy ? "Processing…" : isDemo ? "Approve & simulate" : "Approve & send"}</button>}
-                {rec.state === "proposed" && <button className="btn" disabled={busy} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "sent" && <span className="fine-print">{isDemo ? "Recorded as a simulated demo action." : "PayPal accepted the reminder request."}</span>}
                 {rec.state === "unknown" && <span className="fine-print">Delivery is uncertain. Sync PayPal and reconcile before trying again.</span>}
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the request. Review and retry is available.</span>}
@@ -267,7 +278,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
             </div>
             {replyTriage && <div className="action-message" role="status">{replyTriage.classification.replaceAll("_", " ")} · {replyTriage.classifier} · {replyTriage.note}</div>}
           </div>
-          {rec && <div className="panel"><div className="panel-head"><div><div className="panel-title">Action history</div><div className="panel-subtitle">Dispatch attempts for this recommendation</div></div></div><div className="history-list">{(data.attempts || []).length ? data.attempts?.map((attempt, index) => <div className="history-row" key={`${attempt.started_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{attempt.state}{attempt.provider_reference ? ` · ${attempt.provider_reference}` : ""}</div><div className="history-meta">{new Date(attempt.started_at).toLocaleString("en-GB", { timeZone: "UTC", timeZoneName: "short" })}</div>{attempt.error && <div className="history-meta">{attempt.error}</div>}</div></div>) : <div className="fine-print">No send attempts recorded.</div>}</div></div>}
+          {rec && <div className="panel"><div className="panel-head"><div><div className="panel-title">Action history</div><div className="panel-subtitle">Dispatch attempts for this recommendation</div></div></div><div className="history-list">{(data.attempts || []).length ? data.attempts?.map((attempt, index) => <div className="history-row" key={`${attempt.started_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{attempt.state}{attempt.provider_reference ? ` · ${attempt.provider_reference}` : ""}</div><div className="history-meta">{new Date(attempt.started_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</div>{attempt.error && <div className="history-meta">{attempt.error}</div>}</div></div>) : <div className="fine-print">No send attempts recorded.</div>}</div></div>}
         </aside>
       </div>
     </main>

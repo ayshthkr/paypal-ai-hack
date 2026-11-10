@@ -14,5 +14,5 @@ export default async function InvoicePage({
     if (typeof value === "string") values.set(key, value);
     else if (Array.isArray(value)) for (const item of value) values.append(key, item);
   }
-  return <InvoiceDetail id={id} portfolioQuery={values.toString()} />;
+  return <InvoiceDetail key={id} id={id} portfolioQuery={values.toString()} />;
 }

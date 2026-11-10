@@ -39,11 +39,15 @@ On the November 11, 2026 held-out synthetic cohort (300 paid invoices), the corr
 
 ## Verification
 
-- 53 API tests pass, including pagination bounds, empty views, unknown IDs, full export, ETag invalidation, persistence, reminder history, survival tails, historical balance leakage, seeded no-scoring reads, and snapshot reset under five seconds.
+- 54 API tests pass, including pagination bounds, empty views, unknown IDs, full export, ETag invalidation, persistence, reminder history, survival tails, historical balance leakage, seeded no-scoring reads, and snapshot reset under five seconds.
 - Ruff, ESLint, TypeScript and production build pass.
 - Playwright smoke passes portfolio, URL filtering, lazy client search, queue, client, invoice and 404 navigation; it asserts no browser exceptions, no repeated 404 fetch and no warm API read over two seconds.
-- Local seeded smoke: portfolio 168 ms; detail 136 ms; clients 168 ms; client facts 131 ms; queue 136 ms; evaluation 3 ms; all-invoice page 167 ms. These are local measurements, not hosted-service guarantees.
+- Local PostgreSQL seeded smoke: `/portfolio` 191 ms; `/invoices/demo-invoice-16-045` 191 ms; `/clients` 194 ms; `/facts/clients/demo-client-16` 202 ms; `/action-queue` 206 ms; `/evaluation` 4 ms; `/invoices?view=all` 254 ms. Portfolio response is about 21 KB (roughly 89% smaller than the original 188 KB). These are local measurements, not hosted-service guarantees.
 
 Run `make check`, `make smoke`, and `bun run test:browser` with the API/web servers running. Use `SMOKE_BASE_URL=https://HOST/api` or `PLAYWRIGHT_BASE_URL=https://HOST` for hosted checks. Readiness warming is excluded from the warm-read latency gate.
 
-Hosted deployment evidence is recorded separately after the implementation commits.
+PostgreSQL snapshot reset completed in 441 ms. Four simultaneous queue requests and four simultaneous portfolio requests all returned 200; atomic proposal/audit inserts prevent duplicates. The browser smoke also verifies date-only rendering in Asia/Kolkata.
+
+The GitHub health workflow is configured for 09:37–19:27 IST and was manually dispatched successfully. Render free services sleep after idle periods; the schedule reduces cold starts during demo hours without changing the hosting plan. See [Render free-service behaviour](https://render.com/docs/free).
+
+Hosted deployment evidence is recorded after the implementation commits.
