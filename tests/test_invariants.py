@@ -831,7 +831,7 @@ def test_training_generator_has_current_as_of_age_mix_profiles_and_cadence():
     assert len(clients) == 52
     assert 1500 <= len(first) <= 3000
     assert {row["profile"] for row in first} == {"prompt", "due_date", "chronic_late", "deteriorating", "erratic"}
-    assert sum(row["profile"] == "deteriorating" for row in clients.values()) == 4
+    assert sum(row["profile"] == "deteriorating" for row in clients.values()) == 8
     open_rows = [row for row in first if row["outstanding"] > 0 and not row["cancelled"]]
     assert len(open_rows) == 50
     assert {name: sum(row["open_age_bucket"] == name for row in open_rows) for name in OPEN_BUCKET_COUNTS} == OPEN_BUCKET_COUNTS

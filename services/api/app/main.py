@@ -841,6 +841,9 @@ def model_evaluation() -> dict:
     except (OSError, ValueError, AttributeError):
         payload["feature_importance"] = []
         payload["feature_importance_method"] = "Unavailable"
+    shap_path = path.with_name("shap_summary.json")
+    if shap_path.exists():
+        payload["shap_summary"] = json.loads(shap_path.read_text()).get("features", [])
     payload["available"] = True
     return payload
 

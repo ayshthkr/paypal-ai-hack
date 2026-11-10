@@ -36,3 +36,15 @@ def test_chronic_lateness_is_distinct_from_stable_trend():
              "due_date":today-timedelta(days=180+i*10), "settled_at":today-timedelta(days=110+i*10)} for i in range(10)]
     rows.append({"status": "SENT", "issue_date": today, "due_date": today, "outstanding": 100})
     assert client_drift(rows, today)["signal_type"] == "habitually_late"
+
+
+def test_risk_row_balance_does_not_leak_final_settlement():
+    from ml.train import _row_features
+    from ml.features import FEATURES
+    from decimal import Decimal
+    today = date(2026, 11, 11)
+    invoice = {"id": "historical", "client_id": "c", "issue_date": today-timedelta(days=30),
+               "due_date":today, "total":Decimal(100), "outstanding":Decimal(0), "settled_at":today,
+               "partial_at":None, "partial_amount":0}
+    values = _row_features([invoice], invoice, today-timedelta(days=5))
+    assert values[FEATURES.index("log_outstanding")] == pytest.approx(__import__('math').log1p(100))

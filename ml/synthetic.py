@@ -26,7 +26,7 @@ NAMES = (
 
 # Four intentionally deteriorating clients make the delay trend visible without
 # labelling almost the whole book as drift.
-PROFILE_COUNTS = {"prompt": 10, "due_date": 10, "chronic_late": 10, "deteriorating": 4, "erratic": 18}
+PROFILE_COUNTS = {"prompt": 10, "due_date": 10, "chronic_late": 10, "deteriorating": 8, "erratic": 14}
 CHURNED_CLIENT_INDEXES = {2, 16, 43}
 OPEN_BUCKET_COUNTS = {"not_due": 20, "late_1_30": 18, "late_31_90": 7, "late_90_plus": 5}
 OPEN_COUNT = sum(OPEN_BUCKET_COUNTS.values())
@@ -80,15 +80,16 @@ def _open_specs() -> list[tuple[str, int]]:
 
 
 def _settlement_delay(profile: str, index: int, rng: random.Random) -> int:
+    noise = rng.gauss(0, 7) + (rng.lognormvariate(1.5, .9) if rng.random() < .15 else 0)
     if profile == "prompt":
-        return rng.randint(-3, 2)
+        return round(-3 + noise)
     if profile == "due_date":
-        return rng.choice((-1, 0, 0, 0, 1))
+        return round(1 + noise)
     if profile == "chronic_late":
-        return 10 + rng.randint(-2, 2)
+        return round(22 + rng.lognormvariate(2, .6) + noise)
     if profile == "deteriorating":
-        return min(70, max(0, int(index * 3.1 + rng.gauss(1, 3))))
-    return rng.randint(-2, 20)
+        return round(5 + min(65, max(0, index) * 5) + noise)
+    return round(rng.lognormvariate(2.5, .7) - 5 + noise)
 
 
 def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -> list[dict]:
@@ -172,7 +173,21 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
             currency = ("USD", "EUR", "GBP")[c_index % 3]
             amount = Decimal(str(rng.randrange(180, 8200))).quantize(Decimal("0.01"))
             is_open = open_bucket is not None
-            delay = _settlement_delay(profile, i - 1, rng)
+            regime_age = (issue - (cutoff - timedelta(days=300))).days // cadence
+            delay = _settlement_delay(profile, regime_age, rng)
+            # Stable client effects, seasonal holidays, occasional disputes and
+            # business-day settlement introduce variation not known at issue time.
+            delay += (c_index % 7) - 3
+            delay += 5 if issue.month in {12, 1} else 0
+            if rng.random() < .035:
+                delay += rng.randint(15, 45)
+            candidate = max(issue, due + timedelta(days=delay))
+            if c_index % 4 == 0:
+                from calendar import monthrange
+                candidate = candidate.replace(day=monthrange(candidate.year, candidate.month)[1])
+            while candidate.weekday() >= 5:
+                candidate += timedelta(days=1)
+            delay = (candidate - due).days
             cancelled = not is_open and not churned and i % 83 == 0 and c_index % 7 == 0
             partial_allowed = rng.random() < 0.36
             partial_case = partial_allowed and (rng.random() < 0.13 or (is_open and i % 4 == 0))

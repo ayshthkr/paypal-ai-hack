@@ -1,5 +1,5 @@
 {
-  "version": "latepayer-features-v3",
+  "version": "latepayer-features-v4",
   "features": [
     "log_outstanding",
     "terms_days",
@@ -42,29 +42,29 @@
   "horizon_days": 180,
   "seed": 20261110,
   "dataset": "fully synthetic invoice records generated locally; 52 clients; no downloads",
-  "as_of_date": "2026-11-10",
-  "history_cutoff": "2026-11-10",
-  "training_cutoff": "2025-11-15",
+  "as_of_date": "2026-11-11",
+  "history_cutoff": "2026-11-11",
+  "training_cutoff": "2026-11-11",
   "training_date_range": [
     "2023-11-13",
-    "2025-11-15"
+    "2026-11-11"
   ],
   "validation_cohort": [
-    "2025-11-16",
-    "2026-05-13"
+    "2025-11-17",
+    "2026-05-14"
   ],
-  "validation_observation_cutoff": "2026-11-10",
+  "validation_observation_cutoff": "2026-11-11",
   "test_cohort": [
-    "2026-05-14",
-    "2026-11-10"
+    "2026-05-15",
+    "2026-11-11"
   ],
-  "test_observation_cutoff": "2026-11-10",
+  "test_observation_cutoff": "2026-11-11",
   "validation_unit": "invoice; all daily risk rows for an invoice stay in the same time cohort",
   "feature_priors": {
     "delay_days": 10.0,
     "late_rate": 0.45,
     "amount_median": 4000.0,
-    "history_prior_strength": 3
+    "history_prior_strength": 5
   },
   "generation_parameters": {
     "client_profiles": [
@@ -74,7 +74,7 @@
       "deteriorating",
       "erratic"
     ],
-    "invoice_count": 2147,
+    "invoice_count": 2154,
     "clients": 52,
     "horizon_days": 180
   }

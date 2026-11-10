@@ -12,6 +12,7 @@ from lightgbm import LGBMClassifier, Booster
 from sklearn.isotonic import IsotonicRegression
 from sklearn.inspection import permutation_importance
 
+from ml.evaluation import fit_conformal, calibrated_band, grouped_errors, client_bootstrap
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
     GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
@@ -43,7 +44,12 @@ def _row_features(records: list[dict], invoice: dict, as_of: date, frozen_histor
     ]
     history = frozen_history if frozen_history is not None else [row for row in evidence if row["settled_at"]]
     all_rows = frozen_exposure if frozen_exposure is not None else evidence
-    values = features(invoice, as_of, history, all_rows)
+    # Final paid balances must never leak into historical risk rows.
+    target = dict(invoice)
+    target["outstanding"] = invoice["total"]
+    if invoice.get("partial_at") and invoice["partial_at"] <= as_of:
+        target["outstanding"] -= invoice.get("partial_amount", 0)
+    values = features(target, as_of, history, all_rows)
     return [values[name] for name in FEATURES]
 
 
@@ -121,6 +127,12 @@ def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_
             else:
                 snapshot["outstanding"] = row["total"]
             exposure.append(snapshot)
+    invoice = dict(invoice)
+    if invoice.get("viewed_at") and invoice["viewed_at"] > origin:
+        invoice["viewed_at"] = None
+    if invoice.get("partial_at") and invoice["partial_at"] > origin:
+        invoice["partial_at"], invoice["partial_amount"] = None, 0
+    invoice["reminder_events"] = [event for event in invoice.get("reminder_events", []) if date.fromisoformat(event["sent_at"][:10]) <= origin]
     matrix = []
     for day_number in range(1, HORIZON + 1):
         as_of = origin + timedelta(days=day_number - 1)
@@ -129,7 +141,7 @@ def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_
     if model is None:
         hazards = hazards_fallback.copy()
     else:
-        hazards = np.asarray(model.predict(raw), dtype=float).tolist()
+        hazards = np.asarray(model.predict(raw, num_threads=1), dtype=float).tolist()
     return [min(1.0, max(0.0, float(hazard))) for hazard in hazards]
 
 
@@ -316,6 +328,10 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "deciles": _calibration_deciles(test_calibration, calibrator),
     }
 
+    conformal = fit_conformal(val_subjects, val_predictions)
+    calibration_artifact["interval_calibration"] = conformal
+    (output_dir / "calibration.json").write_text(json.dumps(calibration_artifact, indent=2))
+
     # Empirical issue-date forecast backtest for paid invoices in the held-out cohort.
     backtest_rows = []
     p50_errors = []
@@ -325,9 +341,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         if not event:
             continue
         curve = test_predictions[invoice["id"]]
-        p10 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.9), None)
-        p50 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.5), None)
-        p90 = next((day for day in range(1, HORIZON + 1) if curve[day] <= 0.1), None)
+        p10, p50, p90 = calibrated_band(curve, conformal["correction_days"])
         actual = invoice["issue_date"] + timedelta(days=duration)
         predicted = invoice["issue_date"] + timedelta(days=p50) if p50 is not None else None
         error = abs(p50 - duration) if p50 is not None else None
@@ -337,6 +351,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             eligible_for_coverage += 1
             covered += int(p10 <= duration <= p90)
         backtest_rows.append({
+            "client_id": invoice["client_id"], "currency": invoice["currency"],
             "invoice_id": invoice["id"], "issue_date": invoice["issue_date"].isoformat(),
             "predicted_p50_date": predicted.isoformat() if predicted else None,
             "actual_paid_date": actual.isoformat(), "p10_date": (invoice["issue_date"] + timedelta(days=p10)).isoformat() if p10 else None,
@@ -359,7 +374,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
-    model_version = f"lgbm-hazard-v3-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    model_version = f"lgbm-hazard-v4-seed-{SEED}-asof-{history_cutoff.isoformat()}"
     if len(X_validation) and len(y_validation):
         permutation = permutation_importance(
             model, X_validation, y_validation, scoring="neg_log_loss", n_repeats=3,
@@ -376,6 +391,26 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "model_version": model_version, "method": "permutation importance on validation risk rows (negative log loss)",
         "features": feature_importance,
     }, indent=2))
+    shap_rows = X_validation[:2000]
+    shap_values = booster.predict(shap_rows, pred_contrib=True, num_threads=1) if len(shap_rows) else np.empty((0, len(FEATURES)+1))
+    shap_summary = sorted([{"feature": name, "mean_absolute_shap": float(np.abs(shap_values[:, index]).mean())}
+                           for index, name in enumerate(FEATURES)] if len(shap_rows) else [], key=lambda row: -row["mean_absolute_shap"])
+    (output_dir / "shap_summary.json").write_text(json.dumps({"count": len(shap_rows), "method": "TreeSHAP contributions on validation risk rows", "features": shap_summary}, indent=2))
+    confidence_intervals = client_bootstrap(test_subjects, {"lightgbm": test_predictions, "cox": cox_test_predictions}, test_censor_g)
+    age_errors = []
+    for row, duration, event in test_subjects:
+        if not event:
+            continue
+        terms = (row["due_date"] - row["issue_date"]).days
+        for label, age in [("not_due", max(0, terms-1)), ("1–30", terms+1), ("31–90", terms+31), ("90+", terms+91)]:
+            if age >= duration or age >= HORIZON:
+                continue
+            curve = test_predictions[row["id"]]
+            denominator = max(1e-12, curve[age])
+            conditional = [min(1, value/denominator) for value in curve[age:]]
+            conditional += [conditional[-1]] * (HORIZON+1-len(conditional))
+            lo, med, hi = calibrated_band(conditional, conformal["correction_days"])
+            age_errors.append({"age_bucket": label, "absolute_error_days": abs(age+med-duration) if med else None, "within_p10_p90": bool(lo and hi and lo <= duration-age <= hi)})
     training_issue_dates = [row["issue_date"] for row, _, _ in train_subjects]
     schema = {
         "version": FEATURE_SCHEMA_VERSION, "features": FEATURES, "horizon_days": HORIZON, "seed": SEED,
@@ -400,6 +435,12 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             "test_observation_cutoff": history_cutoff.isoformat(), "unit": "invoice",
         },
         "survival_metrics": test_metrics,
+        "concordance_confidence_intervals": confidence_intervals,
+        "model_comparison_note": "Client-cluster bootstrap intervals quantify uncertainty. Prefer the simpler Cox model when intervals overlap unless calibration or operational value justifies LightGBM.",
+        "shap_summary": shap_summary,
+        "interval_calibration": conformal,
+        "error_by_currency": grouped_errors(backtest_rows, "currency"),
+        "error_by_age_bucket": grouped_errors(age_errors, "age_bucket"),
         "drift_backtest": backtest_drift(records, history_cutoff),
         "calibration_14d": test_calibration_metrics | {"validation_deciles": calibration_deciles},
         "backtest": {
@@ -437,6 +478,17 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "test_p10_p90_coverage": coverage,
         "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
     }
+    X_full, y_full, full_subjects = make_risk_rows(records, history_cutoff, lambda row: row["issue_date"] <= history_cutoff)
+    model.fit(X_full, y_full, feature_name=FEATURES, callbacks=[])
+    model.booster_.save_model(str(output_dir / "payment_hazard.txt"))
+    full_baseline = km_hazards(full_subjects)
+    (output_dir / "kaplan_meier.json").write_text(json.dumps({"hazards": full_baseline, "horizon_days":HORIZON, "method":"pooled Kaplan–Meier, full window"}, indent=2))
+    report["evaluation_training_cutoff"] = report["training_cutoff"]
+    report["training_cutoff"] = history_cutoff.isoformat()
+    report["training_date_range"] = [min(row["issue_date"] for row, _, _ in full_subjects).isoformat(), history_cutoff.isoformat()]
+    report["deployment_refit"] = "Expanding window through as-of; held-out metrics use the earlier frozen model. Calibration is transferred from the frozen validation model and requires monitoring after refit."
+    schema["training_cutoff"] = history_cutoff.isoformat()
+    schema["training_date_range"] = report["training_date_range"]
     (output_dir / "feature_schema.json").write_text(json.dumps(schema, indent=2))
     (output_dir / "model_metadata.json").write_text(json.dumps(report, indent=2))
     (output_dir / "eval.json").write_text(json.dumps(evaluation, indent=2))

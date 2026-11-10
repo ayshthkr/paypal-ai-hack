@@ -202,7 +202,21 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
     recency.sort(key=lambda row: (-row[1], row[0]))
     baseline_ids = [client_id for client_id, _ in recency[:len(model_ids)]]
     baseline_hits = sum(actual_by_client.get(client_id, False) for client_id in baseline_ids)
+    total_positives = sum(actual_by_client.values())
+    lead_times = []
+    for client_id in model_ids:
+        future_misses = [row["due_date"] for row in grouped[client_id]
+                         if evaluation_date < row["due_date"] <= outcome_window_end
+                         and row.get("outcome_paid_at") and row["outcome_paid_at"] > row["due_date"]]
+        if actual_by_client.get(client_id) and future_misses:
+            lead_times.append((min(future_misses) - evaluation_date).days)
     return {
+        "actual_positive_client_count": total_positives,
+        "recall": round(model_hits / total_positives, 4) if total_positives else None,
+        "recency_only_recall": round(baseline_hits / total_positives, 4) if total_positives else None,
+        "median_lead_time_days": float(median(lead_times)) if lead_times else None,
+        "lead_time_client_count": len(lead_times),
+        "lead_time_definition": "Days from signal snapshot to the first subsequent late invoice due date, among true-positive clients with a future missed due date.",
         "evaluation_as_of": evaluation_date.isoformat(), "outcome_window_end": outcome_window_end.isoformat(),
         "outcome_horizon_days": horizon_days,
         "flagged_client_count": len(model_ids), "true_positive_count": model_hits,

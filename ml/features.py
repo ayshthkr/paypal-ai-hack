@@ -6,11 +6,11 @@ import math
 import statistics
 from datetime import date, datetime
 
-FEATURE_SCHEMA_VERSION = "latepayer-features-v3"
+FEATURE_SCHEMA_VERSION = "latepayer-features-v4"
 GLOBAL_DELAY_PRIOR_DAYS = 10.0
 GLOBAL_LATE_RATE_PRIOR = 0.45
 GLOBAL_AMOUNT_MEDIAN_PRIOR = 4_000.0
-HISTORY_PRIOR_STRENGTH = 3
+HISTORY_PRIOR_STRENGTH = 5
 FEATURES = [
     "log_outstanding", "terms_days", "age_days", "days_until_due", "overdue_days",
     "overdue_1_7", "overdue_8_30", "overdue_31_90", "overdue_91_plus",

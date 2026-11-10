@@ -1,0 +1,154 @@
+{
+  "count": 2000,
+  "method": "TreeSHAP contributions on validation risk rows",
+  "features": [
+    {
+      "feature": "days_until_due",
+      "mean_absolute_shap": 1.2376351241727848
+    },
+    {
+      "feature": "weekday_sin",
+      "mean_absolute_shap": 1.0069475174144562
+    },
+    {
+      "feature": "recent_delay_days",
+      "mean_absolute_shap": 0.44860472361067705
+    },
+    {
+      "feature": "history_late_rate",
+      "mean_absolute_shap": 0.15507953968553742
+    },
+    {
+      "feature": "days_since_last_reminder",
+      "mean_absolute_shap": 0.1302161656444087
+    },
+    {
+      "feature": "age_days",
+      "mean_absolute_shap": 0.06463124380626002
+    },
+    {
+      "feature": "weekday_cos",
+      "mean_absolute_shap": 0.04079022083310759
+    },
+    {
+      "feature": "other_open_exposure_log",
+      "mean_absolute_shap": 0.039234252505147706
+    },
+    {
+      "feature": "client_open_balance_log",
+      "mean_absolute_shap": 0.03808737916152746
+    },
+    {
+      "feature": "issue_month_cos",
+      "mean_absolute_shap": 0.03554507961209767
+    },
+    {
+      "feature": "delay_std_days",
+      "mean_absolute_shap": 0.032183181461357534
+    },
+    {
+      "feature": "history_count",
+      "mean_absolute_shap": 0.03145891505414283
+    },
+    {
+      "feature": "issue_month_sin",
+      "mean_absolute_shap": 0.029105755275550222
+    },
+    {
+      "feature": "amount_vs_client_median_log",
+      "mean_absolute_shap": 0.027610856459711793
+    },
+    {
+      "feature": "as_of_month_sin",
+      "mean_absolute_shap": 0.027599489307433823
+    },
+    {
+      "feature": "log_outstanding",
+      "mean_absolute_shap": 0.026889693467992238
+    },
+    {
+      "feature": "days_since_viewed",
+      "mean_absolute_shap": 0.024000521077896388
+    },
+    {
+      "feature": "overdue_days",
+      "mean_absolute_shap": 0.018538371711193727
+    },
+    {
+      "feature": "as_of_month_cos",
+      "mean_absolute_shap": 0.017580230182624765
+    },
+    {
+      "feature": "terms_days",
+      "mean_absolute_shap": 0.010149206699468885
+    },
+    {
+      "feature": "prior_paid_invoice_count",
+      "mean_absolute_shap": 0.009746102053055839
+    },
+    {
+      "feature": "partial_payment_allowed",
+      "mean_absolute_shap": 0.008474156880414356
+    },
+    {
+      "feature": "currency_is_gbp",
+      "mean_absolute_shap": 0.008071285285377908
+    },
+    {
+      "feature": "overdue_1_7",
+      "mean_absolute_shap": 0.006452333245762626
+    },
+    {
+      "feature": "term_net_15",
+      "mean_absolute_shap": 0.00559984368293773
+    },
+    {
+      "feature": "reminder_count",
+      "mean_absolute_shap": 0.004941638809533349
+    },
+    {
+      "feature": "currency_is_eur",
+      "mean_absolute_shap": 0.004590714842999173
+    },
+    {
+      "feature": "term_due_on_receipt",
+      "mean_absolute_shap": 0.0024738120344680627
+    },
+    {
+      "feature": "days_since_last_partial_payment",
+      "mean_absolute_shap": 0.0022851516535772934
+    },
+    {
+      "feature": "viewed_by_recipient",
+      "mean_absolute_shap": 0.0012805362128396175
+    },
+    {
+      "feature": "history_missing",
+      "mean_absolute_shap": 0.0012002788771649287
+    },
+    {
+      "feature": "term_net_30",
+      "mean_absolute_shap": 0.001169946513336551
+    },
+    {
+      "feature": "currency_is_usd",
+      "mean_absolute_shap": 0.0009740717922998775
+    },
+    {
+      "feature": "partial_share",
+      "mean_absolute_shap": 1.690979978880143e-05
+    },
+    {
+      "feature": "overdue_8_30",
+      "mean_absolute_shap": 0.0
+    },
+    {
+      "feature": "overdue_31_90",
+      "mean_absolute_shap": 0.0
+    },
+    {
+      "feature": "overdue_91_plus",
+      "mean_absolute_shap": 0.0
+    }
+  ]
+}

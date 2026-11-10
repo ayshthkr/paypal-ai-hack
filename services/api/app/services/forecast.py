@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.telemetry import timed
 from app.config import get_settings
 from app.models import Invoice, Payment, Prediction, ReadModel
+from ml.evaluation import calibrated_band
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
 
 HORIZON = 180
@@ -105,6 +106,7 @@ def _load_artifacts_cached(model_path: str, schema_file: str, revision: tuple) -
         schema_compatible = schema.get("version") == FEATURE_SCHEMA_VERSION and schema.get("features") == FEATURES
         if active == "lightgbm" and path.exists() and schema_compatible:
             model = Booster(model_file=str(path))
+            version = f"{version}-{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}"
         elif active == "lightgbm":
             active = "kaplan_meier"
             version = "pooled-km-incompatible-artifact-v1"
@@ -251,12 +253,19 @@ def forecast_invoice(
             "p50": _quantile(curve, 0.5, today),
             "p90": _quantile(curve, 0.1, today),
         }
+        interval = calibration.get("interval_calibration", {})
+        if interval.get("count", 0) > 0:
+            lo, median, hi = calibrated_band(curve, interval.get("correction_days", 0))
+            quantiles["p10"] = {"days": lo, "date": (today + timedelta(days=lo)).isoformat()} if lo else None
+            quantiles["p90"] = {"days": hi, "date": (today + timedelta(days=hi)).isoformat()} if hi else None
         probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30)}
         if calibration.get("applied") and probabilities.get("14d") is not None:
             thresholds_x = np.asarray(calibration.get("thresholds_x", [0.0, 1.0]), dtype=float)
             thresholds_y = np.asarray(calibration.get("thresholds_y", [0.0, 1.0]), dtype=float)
             if len(thresholds_x) and len(thresholds_x) == len(thresholds_y):
                 probabilities["14d"] = round(float(np.interp(probabilities["14d"], thresholds_x, thresholds_y)), 6)
+        if overdue >= 90:
+            probabilities = {key: min(value, collection) for key, value in probabilities.items()}
         scored_at = datetime.now(timezone.utc)
         if persist:
             prediction = Prediction(
@@ -296,6 +305,7 @@ def forecast_invoice(
         "limited_history": history_count < 5,
         "display_label": "90+ days, low confidence" if overdue_days >= 90 else None,
         "collection_probability": collection_probability(records, today) if overdue_days >= 90 else 1.0,
+        "interval_method": calibration.get("interval_calibration", {}).get("method", "Raw survival quantiles"),
         "collection_method": "Beta-shrunk historical recovery; sparse tail evidence" if overdue_days >= 90 else None,
     }
 
