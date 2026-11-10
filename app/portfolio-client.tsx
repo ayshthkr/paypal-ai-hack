@@ -85,7 +85,7 @@ function TimeTravelControl({ currentAsOf, maxAsOf, resetBusy, onCommit, onReset 
     date.setUTCDate(date.getUTCDate() + Number(event.target.value));
     setSelectedDate(date.toISOString().slice(0, 10));
   };
-  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
+  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
 }
 
 function money(currency: string, value: number | string) {
@@ -300,17 +300,17 @@ export default function PortfolioClient() {
     { colId: "outstanding", field: "outstanding", headerName: "Balance", minWidth: 125,
       valueFormatter: cell => cell.data ? money(cell.data.currency, cell.value) : "" },
     { colId: "due_date", field: "due_date", headerName: "Due", minWidth: 115,
-      valueFormatter: cell => cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "" },
+      valueFormatter: cell => cell.value ? new Date(`${cell.value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "" },
     { colId: "status", field: "status", headerName: "Status", minWidth: 125,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill ${String(cell.value).toLowerCase()}`}>{String(cell.value).replaceAll("_", " ")}</span> },
     { colId: "p50", headerName: "Predicted", minWidth: 120,
       valueGetter: cell => cell.data?.forecast?.quantiles.p50?.date || null,
-      valueFormatter: cell => !cell.data?.forecast ? "—" : cell.data.forecast.display_label || (cell.value ? new Date(`${cell.value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" }) : "After 180 days") },
+      valueFormatter: cell => !cell.data?.forecast ? "—" : cell.data.forecast.display_label || (cell.value ? new Date(`${cell.value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" }) : "After 180 days") },
     { colId: "window", headerName: "p10–p90 range", minWidth: 165,
       valueGetter: cell => cell.data?.forecast ? { p10: cell.data.forecast.quantiles.p10?.date, p90: cell.data.forecast.quantiles.p90?.date } : null,
       valueFormatter: cell => {
         if (!cell.value) return "—";
-        const fmt = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" });
+        const fmt = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" });
         return cell.value.p10 ? `${fmt(cell.value.p10)} – ${cell.value.p90 ? fmt(cell.value.p90) : "beyond horizon"}` : "Beyond horizon";
       } },
     { colId: "p14", headerName: "Paid in 14d", minWidth: 110,

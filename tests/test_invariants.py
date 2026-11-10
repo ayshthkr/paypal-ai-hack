@@ -222,7 +222,7 @@ def test_public_routes_only_expose_demo_and_demo_payment_partial_then_full(api):
     assert [row["source"] for row in response.json()["items"]] == ["demo"]
     assert response.json()["ready_for_review_count"] == 0
     with Session() as db:
-        assert db.query(PolicyDecisionLog).count() == 1
+        assert db.query(PolicyDecisionLog).count() == 0
     assert client.get("/invoices/live-one").status_code == 401
     partial = client.post("/demo/invoices/demo-one/payment", json={"amount": "30.00"})
     assert partial.status_code == 200

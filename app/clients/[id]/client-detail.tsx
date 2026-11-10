@@ -30,7 +30,7 @@ const getFacts = (id: string) => requestJson<ClientFacts>(`/api/facts/clients/${
 
 function formatDate(value: string | null) {
   if (!value) return "—";
-  return new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+  return new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
 }
 
 function money(currency: string, value: number | string) {

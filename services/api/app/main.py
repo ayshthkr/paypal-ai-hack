@@ -26,6 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -608,7 +610,12 @@ def _invoice_dict(
         recommendation = None
     elif action["action"] == "review_for_writeoff_or_collections" and recommendation and recommendation.state == "proposed":
         recommendation = None
-    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed", "applied"}) and action["action"] in {"friendly", "firm", "offer_partial_payment"}:
+    if (include_detail and create_recommendation and recommendation and recommendation.state == "proposed"
+            and (recommendation.invoice_version != invoice.material_version or recommendation.action != action["action"])):
+        recommendation.state = "superseded"
+        db.flush()
+        recommendation = None
+    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed", "applied", "superseded"}) and action["action"] in {"friendly", "firm", "offer_partial_payment"}:
         provider_url = ((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")
         if not isinstance(provider_url, str) or urlparse(provider_url).scheme != "https" or not urlparse(provider_url).hostname or not urlparse(provider_url).hostname.endswith("paypal.com"):
             provider_url = None
@@ -617,13 +624,16 @@ def _invoice_dict(
             if action["action"] == "offer_partial_payment"
             else render_message(client.display_name, invoice.outstanding, invoice.currency, invoice.due_date, action["tone"], provider_url)
         )
-        recommendation = Recommendation(
+        values = dict(
             invoice_id=invoice.id, action=action["action"], tone=action["tone"], reason=action["reason"],
             draft_text=body, draft_source="policy" if action["action"] == "offer_partial_payment" else "template", edited_text=body, invoice_version=invoice.material_version,
             policy_step=action.get("policy_step"),
         )
-        db.add(recommendation)
-        db.flush()
+        insert = pg_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
+        db.execute(insert(Recommendation).values(**values).on_conflict_do_nothing(
+            index_elements=["invoice_id", "invoice_version"], index_where=Recommendation.state == "proposed"))
+        recommendation = db.scalar(select(Recommendation).where(Recommendation.invoice_id == invoice.id,
+            Recommendation.invoice_version == invoice.material_version, Recommendation.state == "proposed"))
     currency_due = max(0, (invoice.due_date - today).days)
     summary = {
         "id": invoice.id, "paypal_id": invoice.paypal_id, "invoice_number": invoice.invoice_number,
@@ -762,11 +772,10 @@ def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> Non
     payload = {"invoice_id": invoice.id, "features": fields, "action": decision["action"], "reason": decision["reason"],
                "holdback": decision.get("holdback", False)}
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    if db.scalar(select(PolicyDecisionLog.id).where(PolicyDecisionLog.fingerprint == fingerprint)):
-        return
     options = ["friendly", "firm", "offer_partial_payment", "personal_call", "wait"]
     alternatives = [{"action": name, "selected": name == decision["action"]} for name in options]
-    db.add(PolicyDecisionLog(
+    insert = pg_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
+    db.execute(insert(PolicyDecisionLog).values(
         invoice_id=invoice.id, decision_date=date.fromisoformat(fields["decision_date"]), fingerprint=fingerprint,
         features=fields, chosen_action=decision["action"], alternatives=alternatives,
         assigned_holdback=bool(decision.get("holdback")), outcome={"status": "pending"},
@@ -1115,9 +1124,6 @@ def invoices(
     filtered_count = len(items)
     page_count = max(1, (filtered_count + page_size - 1) // page_size)
     page_items = items if db.info.get("export_all") else items[(page - 1) * page_size:page * page_size]
-    rows_by_id = {row.id: row for row in rows}
-    for item in page_items:
-        _record_policy_decision(db, rows_by_id[item["id"]], item)
     model_names = sorted({item["forecast"]["model"] for item in page_items if item["forecast"]})
     ready_for_review_count = len(ready_recommendations)
     slim_items = []

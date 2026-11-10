@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Index, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Index, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -120,6 +120,8 @@ class Prediction(Base):
 
 class Recommendation(Base):
     __tablename__ = "recommendations"
+    __table_args__ = (Index("uq_proposed_recommendation_version", "invoice_id", "invoice_version", unique=True,
+                           postgresql_where=text("state = 'proposed'"), sqlite_where=text("state = 'proposed'")),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), index=True)

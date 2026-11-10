@@ -30,7 +30,7 @@ type InvoicePage = { items: { id: string; invoice_number: string }[]; page: numb
 
 
 function shortDate(value: string | null | undefined) {
-  return value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "Beyond 180 days";
+  return value ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "Beyond 180 days";
 }
 
 export default function InvoiceDetail({ id, portfolioQuery }: { id: string; portfolioQuery: string }) {
