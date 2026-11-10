@@ -21,7 +21,7 @@ from app.models import ActionAttempt, Client, Invoice, InvoiceEvent, Payment, Re
 from app.security import COOKIE_NAME, create_session, require_operator, session_user
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice
-from app.services.paypal import PayPalAdapter, PayPalError
+from app.services.paypal import PayPalAdapter, PayPalError, webhook_invoice_id
 from app.services.policy import CLOSED_STATUSES, decide, render_message
 from app.services.sync import refresh_paypal_invoice, sync_paypal
 
@@ -342,12 +342,7 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     event.failure_reason = None
     db.commit()
     try:
-        resource = payload.get("resource") or {}
-        invoice_resource = resource.get("invoice") if isinstance(resource.get("invoice"), dict) else {}
-        paypal_id = (
-            resource.get("id") or resource.get("invoice_id")
-            or invoice_resource.get("id") or invoice_resource.get("invoice_id")
-        )
+        paypal_id = webhook_invoice_id(payload)
         if not paypal_id:
             raise ValueError("Webhook resource did not include an invoice ID.")
         refresh_paypal_invoice(db, PayPalAdapter(), str(paypal_id))

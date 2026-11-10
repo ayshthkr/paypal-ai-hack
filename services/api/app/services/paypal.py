@@ -18,6 +18,16 @@ class PayPalError(RuntimeError):
         self.ambiguous = ambiguous
 
 
+def webhook_invoice_id(payload: dict[str, Any]) -> str | None:
+    resource = payload.get("resource") or {}
+    if not isinstance(resource, dict):
+        return None
+    invoice = resource.get("invoice")
+    invoice = invoice if isinstance(invoice, dict) else {}
+    value = resource.get("id") or resource.get("invoice_id") or invoice.get("id") or invoice.get("invoice_id")
+    return str(value) if value else None
+
+
 class PayPalAdapter:
     """Small typed boundary for the PayPal Invoicing v2 operations used by V1."""
 

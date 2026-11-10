@@ -14,6 +14,7 @@ from app.security import COOKIE_NAME, create_session
 from app.services.drift import client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
 from app.services.policy import decide
+from app.services import sync as sync_service
 from ml.features import features
 from ml.synthetic import generate_records
 from ml.train import _duration, _survival_from_hazards, km_hazards
@@ -227,6 +228,32 @@ def test_verified_nested_paypal_invoice_event_refreshes_invoice(api, monkeypatch
         event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-nested-invoice").one()
         assert invoice.status == "PAID" and invoice.outstanding == Decimal("0.00")
         assert event.verified is True and event.processing_status == "processed"
+
+
+def test_sync_retry_refreshes_nested_paypal_invoice_event(api, monkeypatch):
+    _, Session = api
+    with Session() as db:
+        event = InvoiceEvent(
+            provider_event_id="evt-nested-retry", event_type="INVOICING.INVOICE.PAID",
+            raw_payload={"resource": {"invoice": {"id": "paypal-nested-id"}}},
+            verified=True, processing_status="retry",
+        )
+        db.add(event)
+        db.commit()
+
+    refreshed_ids = []
+
+    def refresh_invoice(db, adapter, paypal_id):
+        refreshed_ids.append(paypal_id)
+
+    monkeypatch.setattr(sync_service, "refresh_paypal_invoice", refresh_invoice)
+    with Session() as db:
+        succeeded, failed = sync_service.retry_event_refreshes(db, object())
+        db.commit()
+        event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-nested-retry").one()
+        assert event.processing_status == "processed"
+    assert (succeeded, failed) == (1, 0)
+    assert refreshed_ids == ["paypal-nested-id"]
 
 
 def test_paypal_mutation_timeout_is_marked_ambiguous():

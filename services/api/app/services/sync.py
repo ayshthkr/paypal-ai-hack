@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import Client, Invoice, InvoiceEvent, Payment
 from app.services.drift import client_drift
 from app.services.forecast import _as_record
-from app.services.paypal import PayPalAdapter, payment_records, normalize_invoice
+from app.services.paypal import PayPalAdapter, payment_records, normalize_invoice, webhook_invoice_id
 
 
 def upsert_paypal_invoice(db: Session, payload: dict) -> tuple[Invoice, bool]:
@@ -88,8 +88,7 @@ def retry_event_refreshes(db: Session, adapter: PayPalAdapter) -> tuple[int, int
     failed = 0
     for event in events:
         try:
-            resource = event.raw_payload.get("resource") or {}
-            paypal_id = resource.get("id") or resource.get("invoice_id")
+            paypal_id = webhook_invoice_id(event.raw_payload)
             if not paypal_id:
                 raise ValueError("Webhook resource did not include an invoice ID.")
             refresh_paypal_invoice(db, adapter, str(paypal_id))
