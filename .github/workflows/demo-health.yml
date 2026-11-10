@@ -13,7 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Wake API and web proxy
+      - name: Wake services and warm demo reads
         run: |
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/health
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-web.onrender.com/api/health
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 'https://latepayer-api.onrender.com/portfolio?view=open&page=1&page_size=1' -o /tmp/portfolio.json
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/action-queue -o /tmp/action-queue.json
+          invoice_id="$(python -c 'import json; payload=json.load(open("/tmp/portfolio.json")); print(payload["items"][0]["id"])')"
+          test -n "$invoice_id"
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 "https://latepayer-api.onrender.com/invoices/$invoice_id" -o /dev/null
