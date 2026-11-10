@@ -37,6 +37,10 @@ test("portfolio, queue, client and invoice workflow stays within warm budgets", 
   await page.goto(invoiceUrl!);
   await expect(page.getByText("Payment timing forecast", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy invoice link" })).toBeVisible();
+  const invoiceId = new URL(invoiceUrl!, "http://localhost").pathname.split("/").pop();
+  const facts = await (await page.request.get(`/api/invoices/${invoiceId}`)).json();
+  const dueDate = new Date(`${facts.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+  await expect(page.locator(".fact").filter({ has: page.getByText("Due date", { exact: true }) }).getByText(dueDate, { exact: true })).toBeVisible();
   await page.goto("/invoices/does-not-exist");
   await expect(page.getByRole("heading", { name: "Invoice not found" })).toBeVisible();
   await page.waitForTimeout(1200);

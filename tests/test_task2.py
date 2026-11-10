@@ -149,3 +149,31 @@ def test_skip_undo_and_draft_persistence(api):
         row = db.get(Recommendation,'draft-rec')
         assert row.state == 'proposed' and row.edited_text == 'Saved human edit'
         assert db.get(Invoice,'draft-invoice').reminder_step == 0
+
+
+def test_repeated_queue_reads_reuse_one_proposal_and_one_audit(api):
+    from decimal import Decimal
+    from app.models import Client, Invoice, Recommendation, PolicyDecisionLog, DemoState
+    from app.services.policy import holdback_assignment
+    from app.http_cache import invalidate
+    client, Session = api
+    today = date.today()
+    invoice_id = next(f'queue-race-{i}' for i in range(100) if not holdback_assignment(f'queue-race-{i}',today))
+    with Session() as db:
+        db.add(DemoState(id='demo', as_of_date=today))
+        db.add(Client(id='queue-race-owner',display_name='Queue race',source='demo',drift={}))
+        db.flush()
+        db.add(Invoice(id=invoice_id,invoice_number='QR-1',client_id='queue-race-owner',issue_date=today-timedelta(days=33),
+            due_date=today-timedelta(days=3),total=Decimal(100),paid=Decimal(0),outstanding=Decimal(100),currency='USD',status='OVERDUE',source='demo',material_version=1))
+        db.commit()
+    client.get('/portfolio')
+    with Session() as db:
+        assert db.query(PolicyDecisionLog).count() == 0
+    first = client.get('/action-queue')
+    invalidate()
+    second = client.get('/action-queue')
+    assert first.status_code == second.status_code == 200
+    assert first.json()['items'][0]['recommendation']['id'] == second.json()['items'][0]['recommendation']['id']
+    with Session() as db:
+        assert db.query(Recommendation).filter_by(invoice_id=invoice_id,state='proposed').count() == 1
+        assert db.query(PolicyDecisionLog).filter_by(invoice_id=invoice_id).count() == 1

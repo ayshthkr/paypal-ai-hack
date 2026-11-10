@@ -779,7 +779,7 @@ def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> Non
         invoice_id=invoice.id, decision_date=date.fromisoformat(fields["decision_date"]), fingerprint=fingerprint,
         features=fields, chosen_action=decision["action"], alternatives=alternatives,
         assigned_holdback=bool(decision.get("holdback")), outcome={"status": "pending"},
-    ))
+    ).on_conflict_do_nothing(index_elements=["fingerprint"]))
 
 
 def _update_policy_outcomes(db: Session, invoice_id: str, outcome: dict) -> None:
