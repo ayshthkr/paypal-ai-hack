@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -38,6 +39,8 @@ settings = get_settings()
 _REQUEST_DEMO_AS_OF: ContextVar[date | None] = ContextVar("request_demo_as_of", default=None)
 ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"}
 PORTFOLIO_CONTEXT_KEY = "latepayer_portfolio_context"
+_ACTIVITY_CACHE: dict[tuple, dict] = {}
+_ACTIVITY_CACHE_LOCK = Lock()
 app = FastAPI(title="Late Payer", version="1.0.0", description="Invoice payment forecasts and approved PayPal reminders.")
 app.add_middleware(
     CORSMiddleware,
@@ -225,7 +228,15 @@ def _activity_for_source(db: Session, source: str) -> dict[str, float]:
     issue_dates: dict[str, list[date]] = {}
     for client_id, issue_date in rows:
         issue_dates.setdefault(client_id, []).append(issue_date)
-    fit = fit_bgnbd(issue_dates, _today(db, source))
+    as_of = _today(db, source)
+    cache_key = (source, as_of, tuple(sorted((client_id, issue_date) for client_id, issue_date in rows)))
+    with _ACTIVITY_CACHE_LOCK:
+        fit = _ACTIVITY_CACHE.get(cache_key)
+        if fit is None:
+            fit = fit_bgnbd(issue_dates, as_of)
+            if len(_ACTIVITY_CACHE) >= 8:
+                _ACTIVITY_CACHE.clear()
+            _ACTIVITY_CACHE[cache_key] = fit
     return fit.get("probabilities", {})
 
 
