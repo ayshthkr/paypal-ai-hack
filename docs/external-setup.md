@@ -28,8 +28,10 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 ## Render
 
 - [x] Render account setup: done per your note.
+- [x] Code pushed to private GitHub repository `ayshthkr/paypal-ai-hack` on branch `codex/late-payer-v1`.
+- [ ] Connect Render to this repository with repository-only access. This gives Render read/deploy access to the project source.
 - [ ] Deploy the repository Blueprint from `render.yaml`.
-- [ ] In the API service, set `SESSION_SECRET`, `OPERATOR_USERNAME`, `OPERATOR_PASSWORD`, Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
+- [ ] In the API service, set a generated `SESSION_SECRET`, operator username/password, Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
 - [ ] Set the API service's `WEB_ORIGIN` to the deployed web URL and `PAYPAL_WEBHOOK_ID` after registering the webhook.
 - [ ] Confirm the API `/ready` endpoint and complete the browser journey: demo invoice → forecast → edit reminder → operator login → approve/send → Sandbox buyer payment → refreshed status.
 
@@ -39,5 +41,5 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 
 ## Not configured in this workspace
 
-- [ ] Render service deployment and hosted environment values are not configured yet.
+- [ ] Render GitHub authorization, service deployment, and hosted environment values are not configured yet.
 - [ ] PayPal webhook registration and a live Sandbox delivery remain to be completed after the API is public.

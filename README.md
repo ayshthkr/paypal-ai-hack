@@ -49,7 +49,7 @@ The invoice dashboard uses **AG Grid Community**, the free MIT-licensed edition.
 
 ## Render
 
-`render.yaml` defines the web service, API service, and Postgres database. Deploy it as a Blueprint, fill the prompted secrets in Render, keep `PAYPAL_MODE=sandbox`, and check `/ready`. The blueprint uses free instance plans for the web/API and database; select a persistent database plan in Render if its current free-tier retention is insufficient for the data you intend to keep. Update `WEB_ORIGIN` if you use a custom web domain. The current Render dashboard session and deployment are not connected to this workspace, so no hosted deployment or webhook delivery is claimed.
+`render.yaml` defines the web service, API service, and Postgres database. The source is in a private GitHub repository; connect Render to that repository, deploy it as a Blueprint, fill the prompted secrets in Render, keep `PAYPAL_MODE=sandbox`, and check `/ready`. The blueprint uses free instance plans for the web/API and database; select a persistent database plan in Render if its current free-tier retention is insufficient for the data you intend to keep. Update `WEB_ORIGIN` if you use a custom web domain. Render's GitHub connection and hosted deployment are still pending, so no hosted readiness or webhook delivery is claimed.
 
 Full external actions and account configuration are listed in [docs/external-setup.md](docs/external-setup.md). Execution evidence and remaining external blockers are in [docs/execution-status.md](docs/execution-status.md) and [docs/v1-acceptance.md](docs/v1-acceptance.md).
 

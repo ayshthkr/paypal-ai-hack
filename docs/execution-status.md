@@ -14,7 +14,7 @@
 ## External work still required
 
 1. PayPal account/KYC is marked complete based on the user's latest note. Sandbox REST credentials and a controlled Sandbox Personal test buyer are configured locally; OAuth passed. The India Sandbox merchant's foreign-currency send restriction blocks live reminder acceptance; check whether a no-email payable invoice/payment record is supported or use a Sandbox merchant account with compatible currency settings.
-3. Render account setup is marked complete, but the open dashboard shows the service-creation onboarding and this repository has no Git remote. Connect/deploy the repo as a Render Blueprint, configure operator and PayPal Sandbox secrets in Render, then register the public API webhook and verify one delivery.
+3. Render account setup is marked complete. The project is now pushed to private GitHub repo `ayshthkr/paypal-ai-hack` on `codex/late-payer-v1`. Render does not yet have GitHub access. Connect it to this repository with repository-only access, deploy the Blueprint, configure operator and PayPal Sandbox secrets in Render, then register the public API webhook and verify one delivery.
 4. Hosted browser journey and PayPal webhook delivery are not claimed as tested. No live PayPal send was attempted.
 
 ## Main changed areas
