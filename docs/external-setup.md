@@ -15,7 +15,7 @@ PayPal account/KYC and Render account setup are marked done based on your latest
 - [x] New US Sandbox Business merchant and `Late Payer Sandbox` REST app created; corrected Client ID and Secret saved in local `.env`; OAuth verification passed. `PAYPAL_MODE=sandbox`.
 - [x] Add the existing controlled Sandbox Personal buyer email to `PAYPAL_ALLOWED_RECIPIENT_EMAILS` in local `.env`.
 - [x] Existing controlled Sandbox Personal account selected for testing; the email is stored locally in the allowlist, not shown here.
-- [ ] Enable the PayPal app's **Invoicing** capability. It is currently disabled, so invoice operations fail with `NOT_AUTHORIZED`; no invoice was created or sent.
+- [ ] In PayPal Developer, open **Apps & Credentials → Late Payer Sandbox → Features**, enable **Invoicing**, then save. This is an app-level Sandbox permission; the API currently returns HTTP 403 and no invoice was created or sent.
 - [ ] After deploying the API, register `https://<API_HOST>/webhooks/paypal` in that PayPal app for `INVOICING.INVOICE.PAID`, `INVOICING.INVOICE.CANCELLED`, `INVOICING.INVOICE.REFUNDED`, and `INVOICING.INVOICE.SENT`; copy its Webhook ID to `PAYPAL_WEBHOOK_ID`.
 - [ ] Seed/send a controlled USD Sandbox invoice, complete its Sandbox payment, and confirm the webhook delivery and invoice refresh.
 
@@ -30,7 +30,7 @@ PayPal India lists identity confirmation for the business type, PAN, an Indian b
 - [x] Render account setup: done per your note.
 - [x] Code pushed to private GitHub repository `ayshthkr/paypal-ai-hack` on branch `codex/late-payer-v1`.
 - [x] GitHub sign-in completed; Render's GitHub App is restricted to the single private `ayshthkr/paypal-ai-hack` repository.
-- [ ] Complete Render's Git deployment credential connection and verify that the repository appears in the Blueprint picker.
+- [ ] In the open Render Account Settings page, choose **Git Deployment Credentials → Add credential → GitHub** and finish the authorization. GitHub sign-in is done, but Render still has no deployment credential; the GitHub App installation is already restricted to this one repository.
 - [ ] Deploy the repository Blueprint from `render.yaml`.
 - [ ] In the API service, set a generated `SESSION_SECRET`, operator username/password, corrected Sandbox credentials, and the recipient allowlist. Keep `PAYPAL_MODE=sandbox` for acceptance.
 - [ ] Set the API service's `WEB_ORIGIN` to the deployed web URL and `PAYPAL_WEBHOOK_ID` after registering the webhook.
