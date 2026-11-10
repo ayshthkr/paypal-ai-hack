@@ -1,10 +1,10 @@
 "use client";
 
 import { AllCommunityModule, ModuleRegistry, themeQuartz } from "ag-grid-community";
-import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import type { ColDef, GridApi, ICellRendererParams, ModelUpdatedEvent } from "ag-grid-community";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -36,21 +36,29 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [filteredRows, setFilteredRows] = useState<InvoiceRow[] | null>(null);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
-    try {
-      const [invoices, clientData, auth] = await Promise.all([
-        getJson<InvoiceResult>("/api/invoices?limit=500"), getJson<{ items: ClientRow[] }>("/api/clients"),
-        getJson<{ authenticated: boolean }>("/api/auth/me"),
-      ]);
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const pending = Promise.all([
+      getJson<InvoiceResult>("/api/invoices?limit=500"), getJson<{ items: ClientRow[] }>("/api/clients"),
+      getJson<{ authenticated: boolean }>("/api/auth/me"),
+    ]).then(([invoices, clientData, auth]) => {
       setData(invoices); setClients(clientData.items); setAuthenticated(auth.authenticated); setError("");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load invoices."); }
-    finally { setLoading(false); }
+    }).catch(cause => {
+      setError(cause instanceof Error ? cause.message : "Could not load invoices.");
+    }).finally(() => {
+      setLoading(false);
+      refreshInFlight.current = null;
+    });
+    refreshInFlight.current = pending;
+    return pending;
   }, []);
 
-  useEffect(() => { const timer = window.setTimeout(() => { void refresh(); }, 0); return () => window.clearTimeout(timer); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
 
@@ -74,7 +82,12 @@ export default function HomePage() {
     { field: "due_date", headerName: "Due", minWidth: 115, valueFormatter: params => params.value ? new Date(`${params.value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "" },
     { field: "status", headerName: "Status", minWidth: 130, cellRenderer: (params: ICellRendererParams<InvoiceRow>) => <span className={`status-pill ${String(params.value).toLowerCase()}`}>{String(params.value).replaceAll("_", " ")}</span> },
     { colId: "p50", headerName: "Predicted", minWidth: 125, valueGetter: params => params.data?.forecast?.quantiles.p50?.date || null, valueFormatter: params => !params.data?.forecast ? "—" : params.value ? new Date(`${params.value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Beyond 180d" },
-    { colId: "window", headerName: "p10–p90 range", minWidth: 150, valueGetter: params => params.data?.forecast ? { p10: params.data.forecast.quantiles.p10?.date, p90: params.data.forecast.quantiles.p90?.date } : null, valueFormatter: params => !params.value ? "—" : `${params.value.p10 ? new Date(`${params.value.p10}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "<10%"} – ${params.value.p90 ? new Date(`${params.value.p90}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ">90%"}` },
+    { colId: "window", headerName: "p10–p90 range", minWidth: 175, valueGetter: params => params.data?.forecast ? { p10: params.data.forecast.quantiles.p10?.date, p90: params.data.forecast.quantiles.p90?.date } : null, valueFormatter: params => {
+      if (!params.value) return "—";
+      const formatDate = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      if (!params.value.p10) return "Beyond horizon";
+      return `${formatDate(params.value.p10)} – ${params.value.p90 ? formatDate(params.value.p90) : "beyond horizon"}`;
+    } },
     { colId: "p14", headerName: "Paid in 14d", minWidth: 115, valueGetter: params => params.data?.forecast?.probabilities["14d"], valueFormatter: params => params.value == null ? "—" : `${Math.round(params.value * 100)}%` },
     { colId: "drift", headerName: "Client drift", minWidth: 130, valueGetter: params => params.data?.drift?.signal, cellRenderer: (params: ICellRendererParams<InvoiceRow>) => <span className={`drift-badge ${params.value === "stable" ? "stable" : ""}`}>{String(params.value || "—").replaceAll("_", " ")}</span> },
     { colId: "action", headerName: "Next action", minWidth: 130, cellRenderer: (params: ICellRendererParams<InvoiceRow>) => <span className={`status-pill decision-pill ${params.data?.decision.action}`}>{params.data?.decision.action}</span> },
@@ -84,6 +97,18 @@ export default function HomePage() {
   const recommendationCount = data?.items.filter(row => ["friendly", "firm"].includes(row.decision.action)).length || 0;
   const drifting = clients.filter(client => ["increasing_delay", "recent_late", "invoice_cadence_gap"].includes(client.drift.signal));
   const rowData = useMemo(() => data?.items || [], [data]);
+  const updateVisibleRows = useCallback((event: ModelUpdatedEvent<InvoiceRow> | { api: GridApi<InvoiceRow> }) => {
+    const visible: InvoiceRow[] = [];
+    event.api.forEachNodeAfterFilterAndSort(node => { if (node.data) visible.push(node.data); });
+    setFilteredRows(visible);
+  }, []);
+  const totalRows = filteredRows ?? rowData;
+  const visibleTotals = useMemo(() => totalRows.reduce<Record<string, number>>((totals, row) => {
+    if (Number(row.outstanding) > 0 && !["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"].includes(row.status)) {
+      totals[row.currency] = (totals[row.currency] || 0) + Number(row.outstanding);
+    }
+    return totals;
+  }, {}), [totalRows]);
 
   return <AgGridProvider modules={modules}>
     <div className="app-shell">
@@ -102,8 +127,8 @@ export default function HomePage() {
           </section>
           <section className="insight-strip"><div className="insight-copy"><span className="insight-icon">↗</span><div><div className="insight-title">Client payment timing</div><div className="insight-text">{drifting.length ? `${drifting.length} client${drifting.length === 1 ? " shows" : "s show"} a recent delay signal. ${drifting.slice(0, 3).map(client => client.drift.message).join(" ")}` : "No client has enough recent evidence to show a worsening delay trend."}</div></div></div><span className="fine-print">Heuristic trend · not a churn score</span></section>
           <section className="grid-panel"><div className="grid-toolbar"><div><div className="grid-title">Invoices <span className="fine-print">{data.count} records</span></div><div className="fine-print" style={{ marginTop: 5 }}>{data.models.length ? `Forecast: ${data.models.join(", ")}` : "Forecast unavailable"}{lastSync ? ` · Last sync ${lastSync}` : ""}</div></div><div className="toolbar-tools"><input className="search" aria-label="Search invoices" placeholder="Search client, invoice, status" value={query} onChange={event => setQuery(event.target.value)} /></div></div>
-            <div className="grid-wrap"><AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} quickFilterText={query} defaultColDef={{ sortable: true, filter: true, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} /></div>
-            <div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>Open {currency} <strong>{Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
+            <div className="grid-wrap"><AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} quickFilterText={query} defaultColDef={{ sortable: true, filter: true, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={updateVisibleRows} onModelUpdated={updateVisibleRows} /></div>
+            <div className="currency-total-row">{Object.entries(visibleTotals).map(([currency, amount]) => <span key={currency}>Filtered open {currency} <strong>{amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
           </section>
         </>}
       </main>

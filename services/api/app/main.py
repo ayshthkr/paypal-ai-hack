@@ -109,6 +109,7 @@ def _latest_recommendation(db: Session, invoice_id: str) -> Recommendation | Non
 def _invoice_dict(db: Session, invoice: Invoice, include_detail: bool = False, drift_cache: dict[str, dict] | None = None) -> dict:
     client = invoice.client or db.get(Client, invoice.client_id)
     today = _today(db, invoice.source)
+    outstanding = Decimal("0.00") if invoice.status in CLOSED_STATUSES else invoice.outstanding
     forecast = None
     if invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0:
         forecast = forecast_invoice(db, invoice, today=today, persist=include_detail)
@@ -138,7 +139,7 @@ def _invoice_dict(db: Session, invoice: Invoice, include_detail: bool = False, d
         "client_id": client.id, "client_name": client.display_name, "client_email": client.email,
         "issue_date": invoice.issue_date.isoformat(), "due_date": invoice.due_date.isoformat(),
         "days_to_due": (invoice.due_date - today).days,
-        "total": str(invoice.total), "paid": str(invoice.paid), "outstanding": str(invoice.outstanding),
+        "total": str(invoice.total), "paid": str(invoice.paid), "outstanding": str(outstanding),
         "currency": invoice.currency, "status": invoice.status, "disputed": invoice.disputed,
         "source": invoice.source, "material_version": invoice.material_version,
         "synced_at": invoice.synced_at.isoformat() if invoice.synced_at else None,

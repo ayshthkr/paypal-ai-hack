@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import SurvivalCurve from "./survival-curve";
 
 type Quantile = { days: number; date: string } | null;
@@ -36,22 +36,29 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
-    try {
-      const [invoice, auth] = await Promise.all([
-        requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}`),
-        requestJson<{ authenticated: boolean }>("/api/auth/me"),
-      ]);
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const pending = Promise.all([
+      requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}`),
+      requestJson<{ authenticated: boolean }>("/api/auth/me"),
+    ]).then(([invoice, auth]) => {
       setData(invoice); setAuthenticated(auth.authenticated); setError("");
       setDraft(previous => previous && invoice.recommendation?.state === "proposed" ? previous : invoice.recommendation?.edited_text || "");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load invoice."); }
-    finally { setLoading(false); }
+    }).catch(cause => {
+      setError(cause instanceof Error ? cause.message : "Could not load invoice.");
+    }).finally(() => {
+      setLoading(false);
+      refreshInFlight.current = null;
+    });
+    refreshInFlight.current = pending;
+    return pending;
   }, [id]);
 
-  useEffect(() => { const timer = window.setTimeout(() => { void refresh(); }, 0); return () => window.clearTimeout(timer); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
 

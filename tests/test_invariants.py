@@ -132,6 +132,26 @@ def test_public_routes_only_expose_demo_and_demo_payment_partial_then_full(api):
     assert full.json()["outstanding"] == "0.00"
 
 
+def test_cancelled_invoice_with_stale_balance_is_closed_in_api_and_payment_is_blocked(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="cancelled-owner", display_name="Cancelled", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("cancelled-stale", owner.id, status="CANCELLED")
+        db.add(invoice)
+        db.commit()
+
+    portfolio = client.get("/invoices").json()
+    assert portfolio["items"][0]["outstanding"] == "0.00"
+    assert portfolio["currency_totals"] == {}
+    detail = client.get("/invoices/cancelled-stale").json()
+    assert detail["outstanding"] == "0.00"
+    assert detail["forecast"] is None
+    assert detail["decision"]["action"] == "wait"
+    assert client.post("/demo/invoices/cancelled-stale/payment", json={}).status_code == 409
+
+
 def test_demo_send_is_idempotent_and_does_not_call_paypal(api):
     client, Session = api
     with Session() as db:
@@ -187,6 +207,19 @@ def test_paypal_marked_as_paid_normalizes_to_closed_paid_state():
     })
     assert invoice["status"] == "PAID"
     assert invoice["paid"] == Decimal("1.00")
+    assert invoice["outstanding"] == Decimal("0.00")
+
+
+def test_paypal_cancelled_invoice_never_keeps_a_due_balance():
+    invoice = normalize_invoice({
+        "id": "paypal-cancelled", "status": "CANCELLED",
+        "detail": {"invoice_number": "LP-CANCELLED", "invoice_date": date.today().isoformat()},
+        "amount": {"currency_code": "GBP", "value": "4198.00"},
+        "due_amount": {"currency_code": "GBP", "value": "4198.00"},
+        "primary_recipients": [{"billing_info": {"email_address": "buyer@example.test"}}],
+    })
+    assert invoice["status"] == "CANCELLED"
+    assert invoice["paid"] == Decimal("0.00")
     assert invoice["outstanding"] == Decimal("0.00")
 
 

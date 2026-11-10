@@ -247,6 +247,9 @@ def normalize_invoice(payload: dict[str, Any]) -> dict[str, Any]:
     if status == "PAID":
         outstanding = Decimal("0.00")
         paid = total
+    elif status in {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"}:
+        outstanding = Decimal("0.00")
+        paid = Decimal("0.00")
     recipient = (payload.get("primary_recipients") or [{}])[0].get("billing_info") or {}
     name_parts = (recipient.get("name") or {})
     display_name = " ".join(str(name_parts.get(key, "")).strip() for key in ("given_name", "surname")).strip()
