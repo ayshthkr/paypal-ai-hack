@@ -225,13 +225,15 @@ def normalize_invoice(payload: dict[str, Any]) -> dict[str, Any]:
     detail = payload.get("detail") or {}
     amount = payload.get("amount") or {}
     due_amount = payload.get("due_amount") or {}
-    total = Decimal(str(amount.get("value", "0")))
-    outstanding = Decimal(str(due_amount.get("value", total if payload.get("status") != "PAID" else "0")))
-    outstanding = min(total, max(Decimal("0"), outstanding))
-    paid = max(Decimal("0"), total - outstanding)
     status = str(payload.get("status", "SENT")).upper().replace(" ", "_")
+    if status == "MARKED_AS_PAID":
+        status = "PAID"
     if status in {"PARTIALLY_PAID", "PARTIAL_PAID"}:
         status = "PARTIALLY_PAID"
+    total = Decimal(str(amount.get("value", "0")))
+    outstanding = Decimal(str(due_amount.get("value", total if status != "PAID" else "0")))
+    outstanding = min(total, max(Decimal("0"), outstanding))
+    paid = max(Decimal("0"), total - outstanding)
     if status == "PAID":
         outstanding = Decimal("0.00")
         paid = total

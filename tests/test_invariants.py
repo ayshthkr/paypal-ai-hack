@@ -12,7 +12,7 @@ from app.config import Settings
 from app.models import Client, Invoice, InvoiceEvent, Recommendation
 from app.security import COOKIE_NAME, create_session
 from app.services.drift import client_drift, theil_sen_slope
-from app.services.paypal import PayPalAdapter, PayPalError
+from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice
 from app.services.policy import decide
 from ml.features import features
 from ml.synthetic import generate_records
@@ -174,6 +174,19 @@ def test_invalid_webhook_is_stored_but_never_mutates_invoice(api, monkeypatch):
         event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-invalid").one()
         assert invoice.status == "OVERDUE" and invoice.outstanding == Decimal("100.00")
         assert event.verified is False and event.processing_status == "rejected"
+
+
+def test_paypal_marked_as_paid_normalizes_to_closed_paid_state():
+    invoice = normalize_invoice({
+        "id": "paypal-marked-paid", "status": "MARKED_AS_PAID",
+        "detail": {"invoice_number": "LP-MARKED-PAID", "invoice_date": date.today().isoformat()},
+        "amount": {"currency_code": "USD", "value": "1.00"},
+        "due_amount": {"currency_code": "USD", "value": "0.00"},
+        "primary_recipients": [{"billing_info": {"email_address": "buyer@example.test"}}],
+    })
+    assert invoice["status"] == "PAID"
+    assert invoice["paid"] == Decimal("1.00")
+    assert invoice["outstanding"] == Decimal("0.00")
 
 
 def test_verified_nested_paypal_invoice_event_refreshes_invoice(api, monkeypatch):
