@@ -1,0 +1,19 @@
+name: Demo health wake-up
+on:
+  workflow_dispatch:
+  schedule:
+    # 09:37–19:27 IST; avoid keeping two free services awake around the clock.
+    - cron: '7,17,27,37,47,57 4-13 * * *'
+permissions: {}
+concurrency:
+  group: demo-health
+  cancel-in-progress: false
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake API and web proxy
+        run: |
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/health
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-web.onrender.com/api/health
