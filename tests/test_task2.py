@@ -1,7 +1,10 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 import pytest
-from app.services.forecast import conditional_tail, _quantile, collection_probability
+from app.services.forecast import (
+    _calibrate_survival_curve, _consistent_quantiles, _display_curve,
+    conditional_tail, _quantile, collection_probability,
+)
 from app.services.policy import decide
 from ml.drift import client_drift
 
@@ -16,6 +19,39 @@ def test_unpaid_tail_conditions_at_current_age_without_tomorrow_floor():
     assert _quantile(curve, .5, today)["days"] > 1
     assert _quantile([1] * 181, .1, today) is None
     assert collection_probability([], today) == .35
+
+
+def test_forecast_quantiles_obey_14_day_probability_and_display_curve_is_compact():
+    today = date(2026, 11, 11)
+    quantiles = {
+        "p10": {"days": 1, "date": "2026-11-12"},
+        "p50": {"days": 5, "date": "2026-11-16"},
+        "p90": {"days": 100, "date": "2027-02-19"},
+    }
+    consistent = _consistent_quantiles(quantiles, {"14d": .06}, today)
+    assert consistent["p10"]["days"] == 15
+    assert consistent["p50"]["days"] == 15
+    assert consistent["p10"]["days"] <= consistent["p50"]["days"] <= consistent["p90"]["days"]
+
+    raw_curve = [1 - .2 * day / 180 for day in range(181)]
+    calibration = {"applied": True, "thresholds_x": [0, .2], "thresholds_y": [0, .6]}
+    calibrated = _calibrate_survival_curve(raw_curve, calibration)
+    raw_p14 = 1 - raw_curve[14]
+    assert calibrated[14] == pytest.approx(1 - raw_p14 * 3)
+    assert all(left >= right for left, right in zip(calibrated, calibrated[1:]))
+    display_curve = _display_curve(calibrated)
+    assert len(display_curve) == 60
+    assert display_curve[0] == calibrated[0] and display_curve[-1] == calibrated[-1]
+
+
+def test_ninety_day_bucket_boundary_matches_policy_cutoff():
+    from app.main import _age_bucket
+    from app.models import Invoice
+    today = date(2026, 11, 11)
+    invoice = Invoice(status="OVERDUE", outstanding=100, due_date=today - timedelta(days=89))
+    assert _age_bucket(invoice, today) == "late_61_89"
+    invoice.due_date = today - timedelta(days=90)
+    assert _age_bucket(invoice, today) == "late_90_plus"
 
 
 def test_reminder_history_advances_ladder_and_enforces_cooldown():
@@ -80,6 +116,9 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert len(rows) == 32 and rows[0][-3:] == ['p10','p50','p90']
     first = client.get('/clients')
     assert first.headers['cache-control'] == 'private, max-age=30, stale-while-revalidate=120'
+    assert first.headers['x-content-type-options'] == 'nosniff'
+    assert first.headers['x-frame-options'] == 'DENY'
+    assert "default-src 'none'" in first.headers['content-security-policy']
     assert client.get('/clients', headers={'If-None-Match':first.headers['etag']}).status_code == 304
     detail = client.get('/invoices/contract-0').json()
     assert 'curve' in detail['forecast']
@@ -91,7 +130,7 @@ def test_pagination_filters_export_and_cache_contracts(api):
     all_page = client.get('/invoices?view=all&page_size=1&sort=balance').json()
     assert all_page['count'] == 31 and len(all_page['items']) == 1
     assert all_page['currency_totals']['USD'] == '3000.00'
-    assert client.get('/invoices?view=open').json()['count'] == 29
+    assert client.get('/invoices?view=open').json()['count'] == 30
     paid_export = list(csv.reader(io.StringIO(client.get('/exports/invoices.csv?view=paid').text)))
     assert paid_export[1][-3:] == ['', '', '']
 
@@ -107,6 +146,8 @@ def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, r
     monkeypatch.setattr(seed_demo, 'SessionLocal', Session)
     result = seed_demo.seed(date.today())
     assert result['expected_drifting_clients'] == 8
+    assert result['open_age_buckets']['late_31_89'] == 6
+    assert result['open_age_buckets']['late_90_plus'] == 6
     from sqlalchemy import event
     from app.models import ReadModel
     clock_queries = []

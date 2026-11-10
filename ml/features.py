@@ -6,16 +6,16 @@ import math
 import statistics
 from datetime import date, datetime
 
-FEATURE_SCHEMA_VERSION = "latepayer-features-v4"
+FEATURE_SCHEMA_VERSION = "latepayer-features-v5"
 GLOBAL_DELAY_PRIOR_DAYS = 10.0
 GLOBAL_LATE_RATE_PRIOR = 0.45
 GLOBAL_AMOUNT_MEDIAN_PRIOR = 4_000.0
 HISTORY_PRIOR_STRENGTH = 5
 FEATURES = [
     "log_outstanding", "terms_days", "age_days", "days_until_due", "overdue_days",
-    "overdue_1_7", "overdue_8_30", "overdue_31_90", "overdue_91_plus",
+    "overdue_1_7", "overdue_8_30", "overdue_31_89", "overdue_90_plus",
     "issue_month_sin", "issue_month_cos", "as_of_month_sin", "as_of_month_cos",
-    "weekday_sin", "weekday_cos", "history_count", "history_late_rate", "recent_delay_days",
+    "history_count", "history_late_rate", "recent_delay_days",
     "delay_std_days", "history_missing", "prior_paid_invoice_count",
     "amount_vs_client_median_log", "other_open_exposure_log", "client_open_balance_log",
     "viewed_by_recipient", "days_since_viewed", "reminder_count", "days_since_last_reminder",
@@ -126,7 +126,6 @@ def features(invoice: object, as_of: date, history: list[object], all_invoices: 
 
     issue_angle = 2 * math.pi * (issue.month - 1) / 12
     asof_angle = 2 * math.pi * (as_of.month - 1) / 12
-    week_angle = 2 * math.pi * as_of.weekday() / 7
     currency = str(_get(invoice, "currency", "USD")).upper()
     term = str(_get(invoice, "payment_term_type", "") or "").upper().replace(" ", "_")
     outstanding = _amount(_get(invoice, "outstanding", _get(invoice, "total", 0)))
@@ -138,10 +137,9 @@ def features(invoice: object, as_of: date, history: list[object], all_invoices: 
         "terms_days": float(max(0, (due - issue).days)), "age_days": float(age),
         "days_until_due": float((due - as_of).days), "overdue_days": float(overdue_days),
         "overdue_1_7": float(1 <= overdue_days <= 7), "overdue_8_30": float(8 <= overdue_days <= 30),
-        "overdue_31_90": float(31 <= overdue_days <= 90), "overdue_91_plus": float(overdue_days > 90),
+        "overdue_31_89": float(31 <= overdue_days < 90), "overdue_90_plus": float(overdue_days >= 90),
         "issue_month_sin": math.sin(issue_angle), "issue_month_cos": math.cos(issue_angle),
         "as_of_month_sin": math.sin(asof_angle), "as_of_month_cos": math.cos(asof_angle),
-        "weekday_sin": math.sin(week_angle), "weekday_cos": math.cos(week_angle),
         "history_count": float(count), "history_late_rate": late_rate,
         "recent_delay_days": float(recent_delay), "delay_std_days": float(delay_std),
         "history_missing": float(count < HISTORY_PRIOR_STRENGTH), "prior_paid_invoice_count": float(count),

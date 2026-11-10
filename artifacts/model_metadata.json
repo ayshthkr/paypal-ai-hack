@@ -1,6 +1,6 @@
 {
-  "model_version": "lgbm-hazard-v4-seed-20261110-asof-2026-11-11",
-  "feature_schema_version": "latepayer-features-v4",
+  "model_version": "lgbm-hazard-v5-seed-20261110-asof-2026-11-11",
+  "feature_schema_version": "latepayer-features-v5",
   "seed": 20261110,
   "training_seed": 20261110,
   "feature_list": [
@@ -11,14 +11,12 @@
     "overdue_days",
     "overdue_1_7",
     "overdue_8_30",
-    "overdue_31_90",
-    "overdue_91_plus",
+    "overdue_31_89",
+    "overdue_90_plus",
     "issue_month_sin",
     "issue_month_cos",
     "as_of_month_sin",
     "as_of_month_cos",
-    "weekday_sin",
-    "weekday_cos",
     "history_count",
     "history_late_rate",
     "recent_delay_days",
@@ -42,7 +40,7 @@
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-10T19:35:25.443494+00:00",
+  "trained_at": "2026-11-10T22:47:16.080589+00:00",
   "as_of_date": "2026-11-11",
   "history_cutoff": "2026-11-11",
   "training_date_range": [
@@ -50,11 +48,11 @@
     "2026-11-11"
   ],
   "training_cutoff": "2026-11-11",
-  "train_rows": 41331,
-  "train_event_rows": 1279,
-  "train_invoices": 1359,
-  "validation_invoices": 444,
-  "validation_event_count": 444,
+  "train_rows": 41386,
+  "train_event_rows": 1253,
+  "train_invoices": 1330,
+  "validation_invoices": 442,
+  "validation_event_count": 442,
   "validation_horizons": [
     7,
     14,
@@ -63,9 +61,9 @@
     90,
     120
   ],
-  "validation_ibs_lightgbm": 0.06349988439744195,
-  "validation_ibs_km": 0.0780176497755501,
-  "active_model": "lightgbm",
+  "validation_ibs_lightgbm": 0.08400257584840135,
+  "validation_ibs_km": 0.0756696845755906,
+  "active_model": "kaplan_meier",
   "validation_cohort": [
     "2025-11-17",
     "2026-05-14"
@@ -76,8 +74,8 @@
     "2026-11-11"
   ],
   "test_observation_cutoff": "2026-11-11",
-  "test_invoices": 350,
-  "test_event_count": 300,
+  "test_invoices": 356,
+  "test_event_count": 306,
   "test_horizons": [
     7,
     14,
@@ -86,14 +84,14 @@
     90,
     120
   ],
-  "test_integrated_brier_lightgbm": 0.0831968791645233,
-  "test_integrated_brier_km": 0.08933452498850522,
-  "test_uno_concordance_lightgbm": 0.7660638786695485,
+  "test_integrated_brier_lightgbm": 0.09701018163590626,
+  "test_integrated_brier_km": 0.08783296886466115,
+  "test_uno_concordance_lightgbm": 0.756300414162722,
   "test_uno_concordance_km": 0.5,
-  "test_uno_concordance_cox": 0.7862734756481656,
-  "test_paid_only_date_mae_days": 14.73,
-  "test_paid_only_invoice_count": 300,
-  "test_p10_p90_coverage": 0.7133333333333334,
+  "test_uno_concordance_cox": 0.7874802127193867,
+  "test_paid_only_date_mae_days": 17.065359477124183,
+  "test_paid_only_invoice_count": 306,
+  "test_p10_p90_coverage": 0.7941176470588235,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
   "evaluation_training_cutoff": "2025-11-16",
   "deployment_refit": "Expanding window through as-of; held-out metrics use the earlier frozen model. Calibration is transferred from the frozen validation model and requires monitoring after refit."

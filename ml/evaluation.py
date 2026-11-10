@@ -11,18 +11,39 @@ def quantile_day(curve, survival):
 
 def fit_conformal(subjects, curves, target=.8):
     scores = []
+    by_currency = defaultdict(list)
     for row, duration, event in subjects:
         if not event:
             continue
         curve = curves[row["id"]]
         lo, hi = quantile_day(curve, .9), quantile_day(curve, .1)
         if lo is not None and hi is not None:
-            scores.append(max(lo-duration, duration-hi))
+            score = max(lo-duration, duration-hi)
+            scores.append(score)
+            by_currency[row["currency"]].append(score)
     if not scores:
-        return {"method": "unavailable", "correction_days": 0, "count": 0, "target": target}
-    rank = min(len(scores), math.ceil((len(scores)+1)*target))
-    return {"method": "split conformal quantile regression on validation paid invoices", "correction_days": sorted(scores)[rank-1], "count": len(scores), "target": target,
-            "caveat": "Paid-only calibration; censoring and client dependence limit marginal coverage guarantees."}
+        return {"method": "unavailable", "correction_days": 0, "count": 0, "target": target, "currency_corrections": {}}
+
+    def correction(values):
+        rank = min(len(values), math.ceil((len(values) + 1) * target))
+        return max(0, int(math.ceil(sorted(values)[rank - 1])))
+
+    currency_corrections = {
+        currency: {"correction_days": correction(values), "count": len(values)}
+        for currency, values in sorted(by_currency.items()) if len(values) >= 20
+    }
+    return {
+        "method": "split conformal interval correction fitted on validation paid invoices, with per-currency calibration when n ≥ 20",
+        "correction_days": correction(scores), "count": len(scores), "target": target,
+        "currency_corrections": currency_corrections,
+        "caveat": "Paid-only calibration; censoring, small currency slices, and client dependence limit marginal coverage guarantees.",
+    }
+
+
+def correction_for_currency(calibration, currency):
+    return calibration.get("currency_corrections", {}).get(currency, {}).get(
+        "correction_days", calibration.get("correction_days", 0),
+    )
 
 
 def calibrated_band(curve, correction):

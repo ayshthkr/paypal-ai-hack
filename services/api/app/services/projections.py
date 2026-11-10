@@ -34,7 +34,8 @@ def refresh(db: Session, client_ids: set[str] | None = None, as_of=None):
             db.merge(ReadModel(key=f"forecast:{row.id}", as_of=day, version=str(row.material_version), payload=payload))
             summary = {key: value for key, value in payload.items() if key in {
                 "quantiles", "probabilities", "probability_by_due", "model", "model_version", "limited_history",
-                "display_label", "collection_probability", "reasons", "history_count", "scoring_date"}}
+                "display_label", "collection_probability", "collection_method", "reasons", "history_count", "scoring_date",
+                "inference_revision", "artifact_revision"}}
             db.merge(ReadModel(key=f"forecast_summary:{row.id}", as_of=day, version=str(row.material_version), payload=summary))
         db.flush()
         db.info["projection_was_refreshed"] = True

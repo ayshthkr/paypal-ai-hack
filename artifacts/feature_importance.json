@@ -1,96 +1,106 @@
 {
-  "model_version": "lgbm-hazard-v4-seed-20261110-asof-2026-11-11",
+  "model_version": "lgbm-hazard-v5-seed-20261110-asof-2026-11-11",
   "method": "permutation importance on validation risk rows (negative log loss)",
   "features": [
     {
       "feature": "days_until_due",
-      "importance": 0.04669621803257188,
-      "std": 0.0015982571295851255
-    },
-    {
-      "feature": "weekday_sin",
-      "importance": 0.030291309823217802,
-      "std": 0.0006707297734275167
+      "importance": 0.044878207546404224,
+      "std": 0.002477609688434432
     },
     {
       "feature": "recent_delay_days",
-      "importance": 0.018676590923351628,
-      "std": 0.0010740007746757423
+      "importance": 0.0146063272784282,
+      "std": 0.00024298977437829186
     },
     {
       "feature": "days_since_last_reminder",
-      "importance": 0.009188807141595557,
-      "std": 0.00014496286738773529
-    },
-    {
-      "feature": "history_late_rate",
-      "importance": 0.0012265901267579278,
-      "std": 0.00020869016853655682
-    },
-    {
-      "feature": "age_days",
-      "importance": 0.0007764659783762959,
-      "std": 8.989092468646144e-05
-    },
-    {
-      "feature": "history_count",
-      "importance": 0.00021604703394174454,
-      "std": 0.00012256412132515525
-    },
-    {
-      "feature": "issue_month_cos",
-      "importance": 0.00010736636653583172,
-      "std": 3.43589904565998e-05
-    },
-    {
-      "feature": "overdue_days",
-      "importance": 0.00010613130967968935,
-      "std": 7.882230279561601e-05
-    },
-    {
-      "feature": "weekday_cos",
-      "importance": 9.670430502347245e-05,
-      "std": 0.00026459935456973324
-    },
-    {
-      "feature": "overdue_1_7",
-      "importance": 6.23647213004221e-05,
-      "std": 1.8455649789164558e-05
-    },
-    {
-      "feature": "currency_is_gbp",
-      "importance": 5.418706337726823e-05,
-      "std": 2.6472998920055177e-05
-    },
-    {
-      "feature": "term_net_15",
-      "importance": 3.6239397782985204e-05,
-      "std": 1.87110653392992e-05
-    },
-    {
-      "feature": "days_since_last_partial_payment",
-      "importance": 2.044561424885405e-05,
-      "std": 3.811870381299294e-05
+      "importance": 0.005915334258792412,
+      "std": 0.0004398872944473655
     },
     {
       "feature": "reminder_count",
-      "importance": 1.8560692881997947e-05,
-      "std": 2.3296440191699215e-05
+      "importance": 0.003477629527235413,
+      "std": 0.00013391121682381683
     },
     {
-      "feature": "term_due_on_receipt",
-      "importance": 2.6888112804416644e-06,
-      "std": 7.484393820240528e-06
+      "feature": "history_late_rate",
+      "importance": 0.002615615828948495,
+      "std": 0.0003569751707522792
+    },
+    {
+      "feature": "history_count",
+      "importance": 0.0011909347665890284,
+      "std": 4.892602771382957e-05
+    },
+    {
+      "feature": "overdue_days",
+      "importance": 0.000823913242305079,
+      "std": 9.262004758550385e-05
+    },
+    {
+      "feature": "amount_vs_client_median_log",
+      "importance": 0.0005630476989753145,
+      "std": 0.00021514324269800072
+    },
+    {
+      "feature": "log_outstanding",
+      "importance": 0.0003539941588206706,
+      "std": 0.00018728227062996957
+    },
+    {
+      "feature": "prior_paid_invoice_count",
+      "importance": 0.0002508090602755854,
+      "std": 1.2056054667266829e-05
+    },
+    {
+      "feature": "currency_is_gbp",
+      "importance": 0.00016932450674229013,
+      "std": 4.267078674556885e-05
     },
     {
       "feature": "as_of_month_cos",
-      "importance": 2.585216929469151e-06,
-      "std": 0.00011090348182918846
+      "importance": 9.917700305246228e-05,
+      "std": 5.570494640612075e-05
     },
     {
-      "feature": "partial_share",
-      "importance": 5.521295099221909e-07,
-      "std": 1.8691692301124337e-06
+      "feature": "issue_month_sin",
+      "importance": 6.27610778713104e-05,
+      "std": 5.689437231168827e-05
+    },
+    {
+      "feature": "delay_std_days",
+      "importance": 5.302435511077286e-05,
+      "std": 0.0002466158809655585
+    },
+    {
+      "feature": "currency_is_usd",
+      "importance": 5.1953648968044074e-05,
+      "std": 1.1196093050797157e-05
+    },
+    {
+      "feature": "overdue_1_7",
+      "importance": 3.9621680931009595e-05,
+      "std": 9.167933083176665e-05
+    },
+    {
+      "feature": "term_net_15",
+      "importance": 2.0801357460191922e-05,
+      "std": 2.098700654360356e-05
+    },
+    {
+      "feature": "partial_payment_allowed",
+      "importance": 1.2153212076995712e-05,
+      "std": 4.238514869423907e-06
+    },
+    {
+      "feature": "viewed_by_recipient",
+      "importance": 4.896967860180494e-06,
+      "std": 6.340782782622274e-07
+    },
+    {
+      "feature": "currency_is_eur",
+      "importance": 2.8035557187167104e-06,
+      "std": 2.1177958334207693e-05
     },
     {
       "feature": "overdue_8_30",
@@ -98,12 +108,7 @@
       "std": 0.0
     },
     {
-      "feature": "overdue_31_90",
-      "importance": 0.0,
-      "std": 0.0
-    },
-    {
-      "feature": "overdue_91_plus",
+      "feature": "overdue_90_plus",
       "importance": 0.0,
       "std": 0.0
     },
@@ -114,78 +119,63 @@
     },
     {
       "feature": "term_net_30",
-      "importance": -4.000574976963563e-06,
-      "std": 2.545169428817415e-06
+      "importance": 0.0,
+      "std": 0.0
     },
     {
-      "feature": "viewed_by_recipient",
-      "importance": -5.426052291507277e-06,
-      "std": 4.399207997026013e-06
+      "feature": "term_due_on_receipt",
+      "importance": -1.4502400521920755e-05,
+      "std": 2.595975750621998e-05
     },
     {
-      "feature": "partial_payment_allowed",
-      "importance": -9.34886971324748e-06,
-      "std": 2.517154145786307e-05
+      "feature": "partial_share",
+      "importance": -1.742254790834674e-05,
+      "std": 4.576530026555858e-07
     },
     {
-      "feature": "prior_paid_invoice_count",
-      "importance": -9.839925568660979e-06,
-      "std": 1.747289574547997e-05
-    },
-    {
-      "feature": "currency_is_usd",
-      "importance": -1.101784166370375e-05,
-      "std": 2.3232926068677e-06
+      "feature": "days_since_last_partial_payment",
+      "importance": -3.948645227168368e-05,
+      "std": 5.6924843448553306e-06
     },
     {
       "feature": "terms_days",
-      "importance": -1.6453113863015845e-05,
-      "std": 1.645434207346065e-05
+      "importance": -5.658780770267472e-05,
+      "std": 2.6464936024828755e-05
     },
     {
-      "feature": "currency_is_eur",
-      "importance": -2.1880372698073376e-05,
-      "std": 4.362588255139313e-06
+      "feature": "issue_month_cos",
+      "importance": -0.00013000877965894017,
+      "std": 2.9045222108692543e-05
     },
     {
-      "feature": "amount_vs_client_median_log",
-      "importance": -8.61003742237317e-05,
-      "std": 4.1297473262359126e-05
-    },
-    {
-      "feature": "delay_std_days",
-      "importance": -0.00016087027986969962,
-      "std": 9.63195121197295e-05
-    },
-    {
-      "feature": "issue_month_sin",
-      "importance": -0.00018038342800671958,
-      "std": 0.00012658099512949194
-    },
-    {
-      "feature": "log_outstanding",
-      "importance": -0.00024196748177800673,
-      "std": 3.7878945506782046e-05
-    },
-    {
-      "feature": "days_since_viewed",
-      "importance": -0.00028021018296255085,
-      "std": 6.408078802723237e-05
+      "feature": "overdue_31_89",
+      "importance": -0.0003826718730904575,
+      "std": 1.2241620567847913e-05
     },
     {
       "feature": "as_of_month_sin",
-      "importance": -0.0005492706153383126,
-      "std": 0.00014364928125470188
+      "importance": -0.0003833114084424716,
+      "std": 6.029340701654863e-05
+    },
+    {
+      "feature": "days_since_viewed",
+      "importance": -0.0005219700873551752,
+      "std": 0.00010197228839714046
+    },
+    {
+      "feature": "age_days",
+      "importance": -0.0009796084742968263,
+      "std": 3.683486622053555e-05
     },
     {
       "feature": "other_open_exposure_log",
-      "importance": -0.0010963290540591298,
-      "std": 0.0001861486261953297
+      "importance": -0.0027432513377422343,
+      "std": 7.103576451405281e-05
     },
     {
       "feature": "client_open_balance_log",
-      "importance": -0.002264434988773235,
-      "std": 0.0002646209841068431
+      "importance": -0.00462745332795092,
+      "std": 0.0001486278826647197
     }
   ]
 }

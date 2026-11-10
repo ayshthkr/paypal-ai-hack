@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import Date, DateTime, Numeric, bindparam, delete, insert, select, update
 from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
 
-SNAPSHOT_VERSION = "task2-v4"
+SNAPSHOT_VERSION = "task3-v5"
 
 
 def _json(value):

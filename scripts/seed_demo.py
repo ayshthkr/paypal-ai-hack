@@ -40,7 +40,7 @@ def seed(as_of=None) -> dict[str, object]:
                 id=row["id"], invoice_number=row["number"], client_id=row["client_id"],
                 issue_date=row["issue_date"], due_date=row["due_date"], total=row["total"], paid=row["paid"],
                 outstanding=row["outstanding"], currency=row["currency"], status=row["status"],
-                disputed=False, source="demo", provider_payload={}, synced_at=utc_datetime(cutoff), material_version=1,
+                disputed=row.get("disputed", False), source="demo", provider_payload={}, synced_at=utc_datetime(cutoff), material_version=1,
                 viewed_at=utc_datetime(row["viewed_at"]) if row["viewed_at"] else None,
                 viewed_by_recipient=bool(row["viewed_at"]),
                 viewed_observed_at=utc_datetime(row["viewed_at"]) if row["viewed_at"] else None,

@@ -29,7 +29,7 @@ NAMES = (
 # labelling almost the whole book as drift.
 PROFILE_COUNTS = {"prompt": 10, "due_date": 10, "chronic_late": 10, "deteriorating": 8, "erratic": 14}
 CHURNED_CLIENT_INDEXES = {2, 16, 43}
-OPEN_BUCKET_COUNTS = {"not_due": 20, "late_1_30": 18, "late_31_90": 7, "late_90_plus": 5}
+OPEN_BUCKET_COUNTS = {"not_due": 20, "late_1_30": 18, "late_31_89": 6, "late_90_plus": 6}
 OPEN_COUNT = sum(OPEN_BUCKET_COUNTS.values())
 PAYMENT_TERMS = (("DUE_ON_RECEIPT", 0), ("NET_15", 15), ("NET_30", 30))
 HISTORY_SETTLEMENT_BUFFER_DAYS = {
@@ -74,10 +74,10 @@ def _open_specs() -> list[tuple[str, int]]:
                                                10, 21, 12, 19, 14, 17, 16, 15, 3, 28)]
     specs += [("late_1_30", days) for days in (1, 30, 3, 28, 5, 26, 7, 24, 9,
                                                 22, 11, 20, 13, 18, 15, 16, 2, 29)]
-    specs += [("late_31_90", days) for days in (31, 90, 38, 82, 48, 70, 59)]
+    specs += [("late_31_89", days) for days in (31, 38, 82, 48, 70, 59)]
     # Four ordinary collections cases stay within 120 days of invoice age;
     # the last is the single deliberate older collections case.
-    specs += [("late_90_plus", days) for days in (91, 96, 100, 105, 125)]
+    specs += [("late_90_plus", days) for days in (90, 91, 96, 100, 105, 125)]
     return specs
 
 
@@ -168,9 +168,14 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
             issue_dates.extend(open_issue_dates)
         issue_dates.sort(key=lambda item: item[0])
 
+        firm_story_assigned = False
         for i, (issue, open_bucket, open_lateness, fixed_term_type, fixed_terms) in enumerate(issue_dates, start=1):
             invoice_id = f"demo-invoice-{c_index + 1:02}-{i:03}"
             term_type, terms = (fixed_term_type, fixed_terms) if fixed_term_type else PAYMENT_TERMS[(c_index + i) % len(PAYMENT_TERMS)]
+            # Blue Cedar Labs moves from NET 30 to NET 15 at a visible regime
+            # boundary; the remaining clients keep their existing terms mix.
+            if c_index == 3 and not fixed_term_type:
+                term_type, terms = ("NET_30", 30) if issue < cutoff - timedelta(days=180) else ("NET_15", 15)
             due = issue + timedelta(days=terms)
             currency = ("USD", "EUR", "GBP")[c_index % 3]
             amount = Decimal(str(rng.randrange(180, 8200))).quantize(Decimal("0.01"))
@@ -183,6 +188,11 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
             delay += 5 if issue.month in {12, 1} else 0
             if rng.random() < .035:
                 delay += rng.randint(15, 45)
+            # Harborlight has one paid invoice that settles after a firm
+            # reminder, making the reminder ladder visible in its timeline.
+            if c_index == 51 and not firm_story_assigned and not is_open and issue >= cutoff - timedelta(days=240):
+                delay = max(delay, 15)
+                firm_story_assigned = True
             candidate = max(issue, due + timedelta(days=delay))
             if c_index % 4 == 0:
                 from calendar import monthrange
@@ -226,6 +236,7 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
                 settled_at = pay_date
                 paid = amount
                 status = "PAID"
+            disputed = bool(is_open and c_index == 5)  # Cinder & Co has one explicit open dispute.
 
             viewed_at = issue + timedelta(days=rng.randint(0, min(8, max(0, (cutoff - issue).days)))) if rng.random() < 0.78 and issue <= cutoff else None
             reminder_events = []
@@ -249,6 +260,7 @@ def generate_records(seed: int = SEED, observation_cutoff: date | None = None) -
                 "due_date": due, "terms_days": terms, "payment_term_type": term_type,
                 "total": amount, "paid": paid, "outstanding": max(Decimal("0.00"), amount - paid),
                 "currency": currency, "status": status, "source": "demo", "settled_at": settled_at,
+                "disputed": disputed,
                 "partial_at": partial_at if partial_at and partial_at <= cutoff else None,
                 "partial_amount": partial_amount, "cancelled": cancelled,
                 "cancelled_at": issue + timedelta(days=2) if cancelled else None,

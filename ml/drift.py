@@ -8,6 +8,8 @@ from ml.activity import fit_bgnbd
 
 
 MIN_SETTLED_FOR_TREND = 4
+RECENT_DELAY_INCREASE_THRESHOLD_DAYS = 2.0
+PAYING_LATER_SLOPE_THRESHOLD_DAYS_PER_INVOICE = 0.8
 
 
 def theil_sen_slope(values: list[float]) -> float | None:
@@ -26,6 +28,7 @@ def client_drift(
 ) -> dict:
     """Return one named signal after requiring enough paid history for delay trends."""
     settled = []
+    censored = []
     for invoice in invoices:
         status = _get(invoice, "status", "")
         settled_at = _get(invoice, "settled_at") or _get(invoice, "paid_at")
@@ -40,7 +43,19 @@ def client_drift(
                 if isinstance(issue, str):
                     issue = date.fromisoformat(issue[:10])
                 settled.append((issue or settled_at, settled_at, (settled_at - due).days))
+        elif status not in {"PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"} and float(_get(invoice, "outstanding", 0) or 0) > 0:
+            due = _get(invoice, "due_date")
+            issue = _get(invoice, "issue_date")
+            if isinstance(due, str):
+                due = date.fromisoformat(due[:10])
+            if isinstance(issue, str):
+                issue = date.fromisoformat(issue[:10])
+            if due and due < as_of:
+                # An unpaid invoice only tells us that its eventual delay is at
+                # least this long; retain that right-censored lower bound.
+                censored.append((issue or due, None, (as_of - due).days))
     settled.sort(key=lambda item: item[0])
+    censored.sort(key=lambda item: item[0])
 
     issued = []
     for invoice in invoices:
@@ -56,6 +71,8 @@ def client_drift(
         cadence_days = float(median([(issued[index] - issued[index - 1]).days for index in range(1, len(issued))]))
 
     delays = [delay for _, _, delay in settled]
+    observations = sorted([*settled, *censored], key=lambda item: item[0])
+    recent_observations = observations[-5:]
     recency_days = (as_of - max(item[1] for item in settled)).days if settled else None
     latest_issue_gap = (as_of - issued[-1]).days if issued else None
     cadence_supported = cadence_days is not None and cadence_days > 0 and len(issued) >= 3
@@ -79,6 +96,8 @@ def client_drift(
         "cadence_days": round(cadence_days, 1) if cadence_supported else None,
         "activity_probability": round(activity_probability, 4) if activity_probability is not None else None,
         "money_at_risk_by_currency": money_at_risk_by_currency or {},
+        "right_censored_overdue_count": len(censored),
+        "max_open_overdue_days": max((delay for _, _, delay in censored), default=None),
         "signal_strength": 0.0,
         "severity_score": 0.0,
     }
@@ -98,12 +117,15 @@ def client_drift(
             "message": f"Not enough history: {len(delays)} settled invoices; at least {MIN_SETTLED_FOR_TREND} are needed for a delay trend.",
         })
     else:
-        tail = delays[-5:]
-        recent = float(median(tail[-3:]))
-        usual = float(median(delays[:-3] or delays))
-        slope = theil_sen_slope([float(value) for value in tail]) or 0.0
-        above_usual = recent >= usual + 7
-        signal_type = "paying_later" if slope > 2 and above_usual else ("later_than_usual" if above_usual else "stable")
+        recent = float(median([item[2] for item in recent_observations[-3:]]))
+        recent_settled = settled[-3:]
+        usual_delays = [item[2] for item in settled if item not in recent_settled]
+        usual = float(median(usual_delays or delays))
+        slope = theil_sen_slope([float(item[2]) for item in recent_observations]) or 0.0
+        oldest_open_delay = max((delay for _, _, delay in censored), default=None)
+        overdue_outlier = oldest_open_delay is not None and oldest_open_delay >= max(30, usual + 21, usual * 3)
+        above_usual = recent >= usual + RECENT_DELAY_INCREASE_THRESHOLD_DAYS or overdue_outlier
+        signal_type = "paying_later" if slope > PAYING_LATER_SLOPE_THRESHOLD_DAYS_PER_INVOICE and above_usual else ("later_than_usual" if above_usual else "stable")
         late_share = sum(delay > 0 for delay in delays) / len(delays)
         if signal_type == "stable" and late_share >= 0.8 and usual >= 14:
             signal_type = "habitually_late"
@@ -117,7 +139,10 @@ def client_drift(
             "theil_sen_days_per_invoice": round(slope, 2),
             "recent_median_delay_days": recent, "usual_delay_days": usual,
             "signal_strength": round(strength, 3),
-            "message": f"Recent median payment delay is {recent:g} days versus a usual {usual:g} days; the trend is {slope:.1f} days per invoice.",
+            "message": (
+                f"Recent observed delay is {recent:g} days versus a usual {usual:g} days; {late_share:.0%} of prior settled invoices were late. "
+                + (f"Open balances are right-censored; the oldest is at least {oldest_open_delay} days overdue, well beyond that usual delay." if overdue_outlier else f"Trend is {slope:.1f} days per invoice.")
+            ),
         })
 
     risk_amount = max((amount for amount in (money_at_risk_by_currency or {}).values()), default=0.0)
@@ -180,7 +205,7 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
         drift = client_drift(history, evaluation_date, cadence, activity.get(client_id), money_at_risk)
         if cadence and issued:
             recency.append((client_id, (evaluation_date - issued[-1]).days / cadence))
-        if drift["signal_type"] in {"paying_later", "later_than_usual", "gone_quiet"}:
+        if drift["signal_type"] in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
             flagged.append((client_id, float(drift["severity_score"]), drift["signal_type"]))
 
         prior_delays = [

@@ -13,7 +13,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.inspection import permutation_importance
 
 from ml.policy_simulation import replay
-from ml.evaluation import fit_conformal, calibrated_band, grouped_errors, client_bootstrap
+from ml.evaluation import fit_conformal, calibrated_band, correction_for_currency, grouped_errors, client_bootstrap
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
     GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
@@ -342,7 +342,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         if not event:
             continue
         curve = test_predictions[invoice["id"]]
-        p10, p50, p90 = calibrated_band(curve, conformal["correction_days"])
+        p10, p50, p90 = calibrated_band(curve, correction_for_currency(conformal, invoice["currency"]))
         actual = invoice["issue_date"] + timedelta(days=duration)
         predicted = invoice["issue_date"] + timedelta(days=p50) if p50 is not None else None
         error = abs(p50 - duration) if p50 is not None else None
@@ -375,7 +375,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
-    model_version = f"lgbm-hazard-v4-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    model_version = f"lgbm-hazard-v5-seed-{SEED}-asof-{history_cutoff.isoformat()}"
     if len(X_validation) and len(y_validation):
         permutation = permutation_importance(
             model, X_validation, y_validation, scoring="neg_log_loss", n_repeats=3,
@@ -403,14 +403,18 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         if not event:
             continue
         terms = (row["due_date"] - row["issue_date"]).days
-        for label, age in [("not_due", max(0, terms-1)), ("1–30", terms+1), ("31–90", terms+31), ("90+", terms+91)]:
+        for label, age in [("not_due", max(0, terms-1)), ("1–30", terms+1), ("31–89", terms+31), ("90+", terms+90)]:
             if age >= duration or age >= HORIZON:
                 continue
             curve = test_predictions[row["id"]]
             denominator = max(1e-12, curve[age])
             conditional = [min(1, value/denominator) for value in curve[age:]]
             conditional += [conditional[-1]] * (HORIZON+1-len(conditional))
-            lo, med, hi = calibrated_band(conditional, conformal["correction_days"])
+            overdue_at_observation = max(0, age - terms)
+            age_widening = int(np.ceil(max(0, overdue_at_observation - 60) / 6))
+            lo, med, hi = calibrated_band(
+                conditional, correction_for_currency(conformal, row["currency"]) + age_widening,
+            )
             age_errors.append({"age_bucket": label, "absolute_error_days": abs(age+med-duration) if med else None, "within_p10_p90": bool(lo and hi and lo <= duration-age <= hi)})
     training_issue_dates = [row["issue_date"] for row, _, _ in train_subjects]
     schema = {
@@ -438,13 +442,17 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "policy_simulation": replay(test_subjects),
         "survival_metrics": test_metrics,
         "concordance_confidence_intervals": confidence_intervals,
-        "model_comparison_note": "Client-cluster bootstrap intervals quantify uncertainty. Prefer the simpler Cox model when intervals overlap unless calibration or operational value justifies LightGBM.",
+        "model_comparison_note": (
+            f"Release model selected: {active_model}. Selection uses the preselected validation integrated Brier criterion (LightGBM {val_ibs:.3f} vs pooled Kaplan–Meier {val_km_ibs:.3f}); the held-out table includes Cox as a comparator and does not establish broad superiority because client-bootstrap intervals overlap. Issue weekday features were removed from the v5 model."
+            if val_ibs is not None and val_km_ibs is not None else
+            f"Release model selected: {active_model}. Validation integrated Brier estimates were unavailable, so no measured superiority claim is supported. Issue weekday features were removed from the v5 model."
+        ),
         "shap_summary": shap_summary,
         "interval_calibration": conformal,
         "error_by_currency": grouped_errors(backtest_rows, "currency"),
         "error_by_age_bucket": grouped_errors(age_errors, "age_bucket"),
         "drift_backtest": backtest_drift(records, history_cutoff),
-        "calibration_14d": test_calibration_metrics | {"validation_deciles": calibration_deciles},
+        "calibration_14d": test_calibration_metrics | {"count_unit": "held-out invoice-probability observations", "validation_deciles": calibration_deciles},
         "backtest": {
             "paid_invoice_count": len(backtest_rows), "p50_median_absolute_error_days": float(np.median(p50_errors)) if p50_errors else None,
             "p10_p90_coverage": coverage, "coverage_invoice_count": eligible_for_coverage,

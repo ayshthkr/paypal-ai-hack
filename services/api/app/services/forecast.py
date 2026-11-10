@@ -20,6 +20,61 @@ from ml.evaluation import calibrated_band
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
 
 HORIZON = 180
+DISPLAY_CURVE_POINTS = 60
+FORECAST_REVISION = "calibrated-survival-v6"
+
+
+def _display_curve(curve: list[float]) -> list[float]:
+    """Keep the forecast payload compact while retaining the full-resolution fit in storage."""
+    if len(curve) <= DISPLAY_CURVE_POINTS:
+        return curve
+    last = len(curve) - 1
+    indexes = [round(index * last / (DISPLAY_CURVE_POINTS - 1)) for index in range(DISPLAY_CURVE_POINTS)]
+    return [curve[index] for index in indexes]
+
+
+def _calibrate_survival_curve(curve: list[float], calibration: dict) -> list[float]:
+    """Anchor the full monotone curve to the held-out 14-day calibration map."""
+    if not calibration.get("applied") or len(curve) <= 14:
+        return curve
+    thresholds_x = np.asarray(calibration.get("thresholds_x", [0.0, 1.0]), dtype=float)
+    thresholds_y = np.asarray(calibration.get("thresholds_y", [0.0, 1.0]), dtype=float)
+    if not len(thresholds_x) or len(thresholds_x) != len(thresholds_y):
+        return curve
+    raw_p14 = min(1.0, max(0.0, 1.0 - curve[14]))
+    target_p14 = min(1.0, max(0.0, float(np.interp(raw_p14, thresholds_x, thresholds_y))))
+    if abs(target_p14 - raw_p14) < 1e-12:
+        return curve
+
+    calibrated: list[float] = []
+    for day, survival in enumerate(curve):
+        raw_probability = 1.0 - survival
+        if day <= 14:
+            probability = raw_probability * target_p14 / raw_p14 if raw_p14 > 1e-12 else target_p14 * day / 14
+        elif raw_p14 < 1.0 - 1e-12:
+            probability = target_p14 + (raw_probability - raw_p14) * (1.0 - target_p14) / (1.0 - raw_p14)
+        else:
+            probability = target_p14
+        calibrated.append(1.0 - min(1.0, max(0.0, probability)))
+    return calibrated
+
+
+def _consistent_quantiles(quantiles: dict, probabilities: dict, today: date) -> dict:
+    """Keep reported payment quantiles consistent with the same probability curve."""
+    output = dict(quantiles)
+    p10, p50, p90 = output.get("p10"), output.get("p50"), output.get("p90")
+    if probabilities.get("14d", 0.0) < 0.50 and p50 and p50.get("days", 0) <= 14:
+        p50 = {"days": 15.0, "date": (today + timedelta(days=15)).isoformat()}
+        output["p50"] = p50
+    if probabilities.get("14d", 0.0) < 0.10 and p10 and p10.get("days", 0) <= 14:
+        minimum_day = max(15, int(math.ceil(p50["days"]))) if p50 else 15
+        p10 = {"days": float(minimum_day), "date": (today + timedelta(days=minimum_day)).isoformat()}
+        output["p10"] = p10
+    if p50 and output.get("p10") and output["p10"]["days"] > p50["days"]:
+        output["p10"] = p50
+    if p50 and p90 and p90["days"] < p50["days"]:
+        output["p90"] = p50
+    return output
 
 
 def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
@@ -45,6 +100,7 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         "outstanding": invoice.outstanding,
         "currency": invoice.currency,
         "status": invoice.status,
+        "disputed": invoice.disputed,
         "viewed_at": business_date(invoice.viewed_at) if invoice.viewed_at else None,
         "viewed_by_recipient": bool(invoice.viewed_at or invoice.viewed_by_recipient),
         "viewed_observed_at": business_date(invoice.viewed_observed_at) if invoice.viewed_observed_at else None,
@@ -66,6 +122,19 @@ def _file_revision(path: Path) -> tuple[int, int] | None:
     except OSError:
         return None
     return stat.st_mtime_ns, stat.st_size
+
+
+def _artifact_revision() -> str:
+    settings = get_settings()
+    model_path = Path(settings.model_path)
+    schema_path = Path(settings.feature_schema_path)
+    paths = (
+        model_path, model_path.with_name("model_metadata.json"),
+        model_path.with_name("kaplan_meier.json"), model_path.with_name("calibration.json"),
+        schema_path,
+    )
+    signatures = [(str(path), _file_revision(path)) for path in paths]
+    return hashlib.sha256(json.dumps(signatures, separators=(",", ":")).encode()).hexdigest()
 
 
 @timed("model_load")
@@ -145,11 +214,15 @@ def forecast_invoice(
     scenario: dict | None = None, detail: bool = True,
 ) -> dict:
     today = today or date.today()
+    artifact_revision = _artifact_revision()
     if persist and not scenario and not db.info.get("precomputing"):
         context = db.info.get("latepayer_portfolio_context")
         key = f"forecast:{invoice.id}" if detail else f"forecast_summary:{invoice.id}"
         snapshot = (context["read_models"].get((key, today)) if context else None) or db.get(ReadModel, (key, today))
-        if snapshot and snapshot.version == str(invoice.material_version):
+        payload = snapshot.payload if snapshot else None
+        if (snapshot and snapshot.version == str(invoice.material_version) and payload
+                and payload.get("inference_revision") == FORECAST_REVISION
+                and payload.get("artifact_revision") == artifact_revision):
             return snapshot.payload
     portfolio = db.info.get("latepayer_portfolio_context")
     if portfolio is not None and invoice.client_id in portfolio["records_by_client"]:
@@ -186,7 +259,8 @@ def forecast_invoice(
         ) for item in client_invoices),
         "payments": sorted((p.provider_payment_id, str(p.amount), p.occurred_at.isoformat()) for p in payments),
         "today": today.isoformat(),
-        "inference_revision": "conditional-tail-v5-business-dates",
+        "inference_revision": FORECAST_REVISION,
+        "artifact_revision": artifact_revision,
     }, sort_keys=True)
     fingerprint = hashlib.sha256(fingerprint_raw.encode()).hexdigest()
     existing = None
@@ -236,17 +310,22 @@ def forecast_invoice(
             # Beyond 30 days late, sparse daily hazard extrapolation is unstable.
             weight = min(1.0, overdue / 30.0)
             curve = [(1 - weight) * modeled + weight * empirical for modeled, empirical in zip(curve, tail, strict=True)]
+        collection = collection_probability(records, today) if overdue >= 90 else 1.0
+        curve = _calibrate_survival_curve(curve, calibration)
         if overdue >= 90:
-            collection = collection_probability(records, today)
-            curve = [1.0 - collection * (1.0 - survival) for survival in curve]
+            # Keep all calibrated probabilities below the historical recovery
+            # ceiling while preserving a non-increasing survival curve.
+            curve = [max(1.0 - collection, survival) for survival in curve]
         model_label = active_model if use_model else "kaplan_meier"
         history_count = int(base_features["history_count"])
         late_rate = base_features["history_late_rate"]
         reasons = [
             f"{history_count} prior fully settled invoices were known at scoring time.",
-            f"Prior late-payment share: {late_rate:.0%}." if history_count else "No prior settled-payment history; using pooled Kaplan–Meier baseline.",
+            f"Prior late-payment share: {late_rate:.0%} of prior settled invoices." if history_count else "No prior settled-payment history; using pooled Kaplan–Meier baseline.",
             f"Current open balance: {invoice.currency} {invoice.outstanding:,.2f}.",
         ]
+        if invoice.payment_term_type == "DUE_ON_RECEIPT" or invoice.due_date == invoice.issue_date:
+            reasons.append("Due on receipt means there is no contractual days-to-pay estimate; this forecast estimates settlement timing from observed history and invoice facts.")
         if history_count >= 3 and base_features["recent_delay_days"] > 0:
             reasons.append(f"Recent settled invoices had a median delay of {base_features['recent_delay_days']:.0f} days.")
         overdue_days_for_reason = max(0, (today - invoice.due_date).days)
@@ -259,17 +338,15 @@ def forecast_invoice(
         }
         interval = calibration.get("interval_calibration", {})
         if interval.get("count", 0) > 0:
-            lo, median, hi = calibrated_band(curve, interval.get("correction_days", 0))
+            currency_correction = interval.get("currency_corrections", {}).get(invoice.currency, {}).get(
+                "correction_days", interval.get("correction_days", 0),
+            )
+            age_widening = math.ceil(max(0, overdue_days_for_reason - 60) / 6)
+            lo, median, hi = calibrated_band(curve, int(currency_correction) + age_widening)
             quantiles["p10"] = {"days": lo, "date": (today + timedelta(days=lo)).isoformat()} if lo else None
             quantiles["p90"] = {"days": hi, "date": (today + timedelta(days=hi)).isoformat()} if hi else None
         probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30)}
-        if calibration.get("applied") and probabilities.get("14d") is not None:
-            thresholds_x = np.asarray(calibration.get("thresholds_x", [0.0, 1.0]), dtype=float)
-            thresholds_y = np.asarray(calibration.get("thresholds_y", [0.0, 1.0]), dtype=float)
-            if len(thresholds_x) and len(thresholds_x) == len(thresholds_y):
-                probabilities["14d"] = round(float(np.interp(probabilities["14d"], thresholds_x, thresholds_y)), 6)
-        if overdue >= 90:
-            probabilities = {key: min(value, collection) for key, value in probabilities.items()}
+        quantiles = _consistent_quantiles(quantiles, probabilities, today)
         scored_at = datetime.now(timezone.utc)
         if persist:
             prediction = Prediction(
@@ -285,7 +362,7 @@ def forecast_invoice(
                 db.flush()
     overdue_days = max(0, (today - invoice.due_date).days)
     return {
-        "curve": curve,
+        "curve": _display_curve(curve),
         "quantiles": quantiles,
         "probabilities": probabilities,
         "probability_by_due": round(1.0 - curve[min(HORIZON, max(0, (invoice.due_date - today).days))], 6) if invoice.due_date >= today else 0.0,
@@ -304,10 +381,12 @@ def forecast_invoice(
         "scoring_date": today.isoformat(),
         "scored_at": scored_at.isoformat() if isinstance(scored_at, datetime) else scored_at,
         "forecast_horizon_days": HORIZON,
+        "inference_revision": FORECAST_REVISION,
+        "artifact_revision": artifact_revision,
         "already_overdue": overdue_days > 0,
         "history_count": history_count,
         "limited_history": history_count < 5,
-        "display_label": "90+ days, low confidence" if overdue_days >= 90 else None,
+        "display_label": "Lower confidence · 60+ days overdue" if overdue_days >= 60 else None,
         "collection_probability": collection_probability(records, today) if overdue_days >= 90 else 1.0,
         "interval_method": calibration.get("interval_calibration", {}).get("method", "Raw survival quantiles"),
         "collection_method": "Beta-shrunk historical recovery; sparse tail evidence" if overdue_days >= 90 else None,

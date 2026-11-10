@@ -2,21 +2,26 @@
 
 import Link from "next/link";
 import { requestJson, clearReads } from "../lib/api";
+import { decisionLabel } from "../lib/labels";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type QueueItem = {
   id: string; invoice_number: string; client_name: string; client_id: string; source: string; currency: string; outstanding: string;
-  due_date: string; decision: { action: string; reason: string; expected_cash_gain: number };
+  due_date: string; days_late?: number; decision: { action: string; reason: string; expected_cash_gain: number };
   recommendation: { id: string; action: string; tone: string; edited_text: string; reason: string; state: string } | null;
 };
-type QueueResult = { items: QueueItem[]; count: number; daily_cap: number; as_of: string; synthetic_demo: boolean; pending_count: number; skipped_count: number; skipped: { id: string; invoice_id: string }[] };
+export type QueueResult = { items: QueueItem[]; count: number; daily_cap: number; as_of: string; synthetic_demo: boolean; pending_count: number; skipped_count: number; skipped: { id: string; invoice_id: string }[]; collections_review?: QueueItem[] };
 
 function money(currency: string, value: number | string) { return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function readDrafts(items: QueueItem[]) {
+  return Object.fromEntries(items.map(item => [item.recommendation?.id || item.id,
+    sessionStorage.getItem(`latepayer-draft:${item.recommendation?.id}`) ?? item.recommendation?.edited_text ?? ""]));
+}
 
-export default function ActionQueue() {
-  const [data, setData] = useState<QueueResult | null>(null);
+export default function ActionQueue({ initialData }: { initialData: QueueResult | null }) {
+  const [data, setData] = useState<QueueResult | null>(initialData);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialData);
   const [busyId, setBusyId] = useState("");
   const saveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -26,11 +31,18 @@ export default function ActionQueue() {
     try {
       const result = await requestJson<QueueResult>("/api/action-queue");
       setData(result);
-      setDrafts(Object.fromEntries(result.items.map(item => [item.recommendation?.id || item.id, sessionStorage.getItem(`latepayer-draft:${item.recommendation?.id}`) ?? item.recommendation?.edited_text ?? ""])));
+      setDrafts(readDrafts(result.items));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load today's action queue."); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { const timer = window.setTimeout(() => void refresh(), 0); return () => window.clearTimeout(timer); }, [refresh]);
+  useEffect(() => {
+    if (initialData) {
+      const timer = window.setTimeout(() => setDrafts(readDrafts(initialData.items)), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
+  }, [initialData, refresh]);
 
   const editDraft = (id: string, text: string) => {
     setDrafts(current => ({ ...current, [id]: text }));
@@ -71,8 +83,9 @@ export default function ActionQueue() {
     finally { setBulkBusy(false); }
   };
   return <>
-    <div className="heading-row"><div><div className="eyebrow">Daily workflow</div><h1>Action queue</h1><p className="subheading">Today&apos;s suggested actions, ranked by expected cash gained. Review each draft, then approve or skip.</p></div><button data-queue-refresh className="btn" disabled={loading || Boolean(busyId)} onClick={() => void refresh()}>↻ Refresh queue</button></div>
+    <div className="heading-row"><div><div className="eyebrow">Daily workflow</div><h1>Action queue</h1><p className="subheading">Review suggested reminders and partial-payment changes. The five-action cap is shared across currencies by currency lane.</p></div><button data-queue-refresh className="btn" disabled={loading || Boolean(busyId)} onClick={() => void refresh()}>↻ Refresh queue</button></div>
     {data && <div className="fine-print" style={{ marginBottom: 12 }}>As of {data.as_of} · {data.pending_count} pending · {data.skipped_count} skipped · cap {data.daily_cap} · {data.synthetic_demo ? "Synthetic actions are simulated" : "PayPal actions use Sandbox"}</div>}
+    {data?.items.length ? <div className="fine-print" style={{ marginBottom: 12 }}>Assumed 14-day cash uplift uses each invoice&apos;s forecast and a 10% reminder-effect scenario; it is not measured causal impact. Amounts are ranked within currency.</div> : null}
     {data && <div className="action-buttons"><button className="btn primary" disabled={bulkBusy || Boolean(busyId) || !data.items.some(item => item.recommendation?.action === "friendly")} onClick={() => void approveFriendly()}>Approve all friendly</button>{data.skipped.map(item => <button key={item.id} className="btn" disabled={Boolean(busyId) || bulkBusy} onClick={() => { void requestJson(`/api/recommendations/${item.id}/undo-skip`, { method: "POST" }).then(() => refresh()).catch(cause => setError(cause.message)); }}>Undo skip · {item.invoice_id}</button>)}</div>}
     {error && <div className="error-box" role="alert">{error}</div>}
     {loading && !data ? <div className="empty-box">Loading today&apos;s suggested actions…</div> : error && !data ? <div className="empty-box">The action queue could not load. Check the service connection and refresh to try again.</div> : !data?.items.length ? <div className="empty-box">No reminder or partial-payment action is pending today. The policy may recommend waiting, or all suggestions may already be reviewed.</div> : <div className="queue-list">{data.items.map(item => {
@@ -81,12 +94,21 @@ export default function ActionQueue() {
       const busy = busyId === recommendation.id;
       const partial = recommendation.action === "offer_partial_payment";
       return <article className="queue-card" key={recommendation.id}>
-        <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">{recommendation.action.replaceAll("_", " ")}</span></div>
-        <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Expected cash gain <strong>{money(item.currency, item.decision.expected_cash_gain)}</strong></span></div>
+        <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">{decisionLabel(recommendation.action)}</span></div>
+        <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Assumed 14-day cash uplift <strong>{money(item.currency, item.decision.expected_cash_gain)}</strong></span></div>
         <p className="panel-subtitle">{item.decision.reason}</p>
         {partial ? <div className="delivery-note">Approval will enable partial payments on this invoice; it does not send a reminder email.</div> : <label className="field-label">Reminder draft<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label>}
         <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? "Approve partial payments" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
       </article>;
     })}</div>}
+    {data?.collections_review?.length ? <section className="collections-lane" aria-labelledby="collections-review-title">
+      <div className="panel-head"><div><div className="panel-title" id="collections-review-title">Collections review</div><div className="panel-subtitle">Open balances at least 90 days overdue. These need a person to review disputes, lost invoices, write-off, or collections options; no reminder is sent from this lane.</div></div></div>
+      <div className="queue-list">{data.collections_review.map(item => <article className="queue-card collection-card" key={item.id}>
+        <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">Collections review</span></div>
+        <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Overdue <strong>{item.days_late} days</strong></span></div>
+        <p className="panel-subtitle">{item.decision.reason}</p>
+        <div className="action-buttons"><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice for review</Link></div>
+      </article>)}</div>
+    </section> : null}
   </>;
 }

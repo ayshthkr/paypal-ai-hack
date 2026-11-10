@@ -1,5 +1,5 @@
 {
-  "version": "latepayer-features-v4",
+  "version": "latepayer-features-v5",
   "features": [
     "log_outstanding",
     "terms_days",
@@ -8,14 +8,12 @@
     "overdue_days",
     "overdue_1_7",
     "overdue_8_30",
-    "overdue_31_90",
-    "overdue_91_plus",
+    "overdue_31_89",
+    "overdue_90_plus",
     "issue_month_sin",
     "issue_month_cos",
     "as_of_month_sin",
     "as_of_month_cos",
-    "weekday_sin",
-    "weekday_cos",
     "history_count",
     "history_late_rate",
     "recent_delay_days",
@@ -74,7 +72,7 @@
       "deteriorating",
       "erratic"
     ],
-    "invoice_count": 2154,
+    "invoice_count": 2129,
     "clients": 52,
     "horizon_days": 180
   }

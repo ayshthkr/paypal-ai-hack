@@ -45,7 +45,8 @@ def decide(
     settings = get_settings()
     today = today or date.today()
     wait_probability = _bounded_probability(probability_14d)
-    sent_probability = min(1.0, wait_probability + REMINDER_UPLIFT_ASSUMPTION)
+    uplift = REMINDER_UPLIFT_ASSUMPTION * (1.0 - wait_probability)
+    sent_probability = min(1.0, wait_probability + uplift)
     uplift = sent_probability - wait_probability
     expected_cash_gain = float(Decimal(str(invoice.outstanding)) * Decimal(str(uplift)))
     probabilities = {

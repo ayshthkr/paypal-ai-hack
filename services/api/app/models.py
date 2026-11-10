@@ -219,3 +219,26 @@ class AIAudit(Base):
     facts: Mapped[dict] = mapped_column(JSON, nullable=False)
     output: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class OperatorSession(Base):
+    __tablename__ = "operator_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(128), nullable=False)
+    issued_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    revoked_at: Mapped[int | None] = mapped_column(Integer)
+
+
+class SandboxInvoiceOperation(Base):
+    __tablename__ = "sandbox_invoice_operations"
+
+    idempotency_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invoice_number: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    paypal_invoice_id: Mapped[str | None] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="reserved", index=True)
+    response: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)

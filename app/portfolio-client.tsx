@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 
 import { requestJson as getJson, clearReads } from "./lib/api";
+import { decisionLabel, signalLabel, statusLabel } from "./lib/labels";
 import { useAuth } from "./providers";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -27,6 +28,7 @@ type InvoiceRow = {
   id: string; invoice_number: string; client_id: string; client_name: string; due_date: string;
   days_to_due: number; outstanding: string; currency: string; status: string; source: string;
   forecast: Forecast; drift: Drift;
+  disputed?: boolean;
   decision: { action: string; tone: string; reason: string; expected_cash_gain: number; expected_cash_gain_currency: string | null; daily_rank?: number };
 };
 type AgingBucket = { count: number; amounts: Record<string, string> };
@@ -35,7 +37,8 @@ type InvoiceResult = {
   view_counts: Record<string, number>; currency_totals: Record<string, string>;
   aging_buckets: Record<string, AgingBucket>;
   expected_cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[];
-  synthetic_demo: boolean; models: string[]; ready_for_review_count: number; drifting_client_count: number;
+  synthetic_demo: boolean; models: string[]; ready_for_review_count: number; daily_suggestion_cap: number; drifting_client_count: number;
+  drifting_signal_counts?: Record<string, number>;
   as_of: string; as_of_max: string; client_signals?: ClientRow[];
 };
 type ClientRow = { id: string; name: string; drift: Drift };
@@ -60,7 +63,7 @@ const viewTabs = [
 const columnChoices = [
   ["invoice_number", "Invoice"], ["client_name", "Client"], ["outstanding", "Balance"], ["due_date", "Due"],
   ["status", "Status"], ["p50", "Predicted"], ["window", "p10–p90 range"], ["p14", "Paid in 14d"],
-  ["drift", "Client drift"], ["action", "Next action"], ["expected_cash", "Expected cash gain"],
+  ["drift", "Client drift"], ["action", "Next action"], ["expected_cash", "Assumed 14-day cash uplift"],
 ] as const;
 const defaultColumns = columnChoices.map(([id]) => id).filter(id => !["status", "window", "expected_cash"].includes(id));
 const MAX_API_WAKE_RETRIES = 30;
@@ -129,6 +132,7 @@ export default function PortfolioClient() {
   const [newInvoicePartial, setNewInvoicePartial] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [createdInvoice, setCreatedInvoice] = useState<{ id: string; number: string } | null>(null);
+  const createInvoiceKey = useRef<{ fingerprint: string; key: string } | null>(null);
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -225,7 +229,7 @@ export default function PortfolioClient() {
     setBusy(true); setError("");
     try {
       const result = await getJson<{ errors?: string[]; created?: number; updated?: number }>("/api/sync", { method: "POST" });
-      setLastSync(new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }));
+      setLastSync(new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }));
       await refresh();
       if (result.errors?.length) setError(`Sync completed with ${result.errors.length} invoice error(s).`);
       else setError(`Sync complete · ${result.created || 0} imported, ${result.updated || 0} updated.`);
@@ -256,11 +260,25 @@ export default function PortfolioClient() {
     event.preventDefault();
     if (!newInvoiceClient || !newInvoiceAmount) return;
     setCreatingInvoice(true); setError(""); setCreatedInvoice(null);
+    const invoiceRequest = { client_id: newInvoiceClient, amount: newInvoiceAmount, payment_term_type: newInvoiceTerm, partial_payment_allowed: newInvoicePartial };
+    const fingerprint = JSON.stringify(invoiceRequest);
+    let pending = createInvoiceKey.current;
+    if (!pending) {
+      try { pending = JSON.parse(sessionStorage.getItem("latepayer-sandbox-invoice-create") || "null") as typeof pending; }
+      catch { pending = null; }
+    }
+    if (!pending || pending.fingerprint !== fingerprint) {
+      pending = { fingerprint, key: crypto.randomUUID() };
+      sessionStorage.setItem("latepayer-sandbox-invoice-create", JSON.stringify(pending));
+    }
+    createInvoiceKey.current = pending;
     try {
       const result = await getJson<{ invoice_id: string; invoice_number: string; status: string }>("/api/paypal/invoices", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: newInvoiceClient, amount: newInvoiceAmount, payment_term_type: newInvoiceTerm, partial_payment_allowed: newInvoicePartial }),
+        method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": pending.key },
+        body: JSON.stringify(invoiceRequest),
       });
+      sessionStorage.removeItem("latepayer-sandbox-invoice-create");
+      createInvoiceKey.current = null;
       setCreatedInvoice({ id: result.invoice_id, number: result.invoice_number });
       setNewInvoiceAmount(""); setNewInvoicePartial(false);
       await refresh();
@@ -302,7 +320,7 @@ export default function PortfolioClient() {
     { colId: "due_date", field: "due_date", headerName: "Due", minWidth: 115,
       valueFormatter: cell => cell.value ? new Date(`${cell.value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "" },
     { colId: "status", field: "status", headerName: "Status", minWidth: 125,
-      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill ${String(cell.value).toLowerCase()}`}>{String(cell.value).replaceAll("_", " ")}</span> },
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill ${cell.data?.disputed ? "disputed" : String(cell.value).toLowerCase()}`}>{cell.data ? statusLabel(cell.data.status, Boolean(cell.data.disputed)) : "—"}</span> },
     { colId: "p50", headerName: "Predicted", minWidth: 120,
       valueGetter: cell => cell.data?.forecast?.quantiles.p50?.date || null,
       valueFormatter: cell => !cell.data?.forecast ? "—" : cell.data.forecast.display_label || (cell.value ? new Date(`${cell.value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" }) : "After 180 days") },
@@ -320,8 +338,8 @@ export default function PortfolioClient() {
       valueGetter: cell => cell.data?.drift?.signal_type,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`drift-badge ${cell.value === "stable" ? "stable" : ""}`}>{String(cell.value || "—").replaceAll("_", " ")}</span> },
     { colId: "action", headerName: "Next action", minWidth: 145,
-      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill decision-pill ${cell.data?.decision.action}`}>{cell.data?.decision.action.replaceAll("_", " ")}</span> },
-    { colId: "expected_cash", headerName: "Expected cash gain", minWidth: 160,
+      cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <span className={`status-pill decision-pill ${cell.data?.decision.action}`}>{cell.data ? decisionLabel(cell.data.decision.action, cell.data.status, Boolean(cell.data.disputed)) : "—"}</span> },
+    { colId: "expected_cash", headerName: "Assumed 14-day cash uplift", minWidth: 190,
       valueGetter: cell => cell.data?.decision.expected_cash_gain,
       valueFormatter: cell => cell.data?.decision.expected_cash_gain_currency ? money(cell.data.decision.expected_cash_gain_currency, cell.value || 0) : "—" },
   ], [detailHref, router]);
@@ -329,9 +347,10 @@ export default function PortfolioClient() {
   const rowData = useMemo(() => data?.items || [], [data]);
   const drifting = data?.client_signals || [];
   const driftCounts = {
-    payingLater: drifting.filter(client => client.drift.signal_type === "paying_later").length,
-    laterThanUsual: drifting.filter(client => client.drift.signal_type === "later_than_usual").length,
-    goneQuiet: drifting.filter(client => client.drift.signal_type === "gone_quiet").length,
+    payingLater: data?.drifting_signal_counts?.paying_later ?? drifting.filter(client => client.drift.signal_type === "paying_later").length,
+    laterThanUsual: data?.drifting_signal_counts?.later_than_usual ?? drifting.filter(client => client.drift.signal_type === "later_than_usual").length,
+    goneQuiet: data?.drifting_signal_counts?.gone_quiet ?? drifting.filter(client => client.drift.signal_type === "gone_quiet").length,
+    habituallyLate: data?.drifting_signal_counts?.habitually_late ?? drifting.filter(client => client.drift.signal_type === "habitually_late").length,
   };
   const pageCount = data?.page_count || 1;
 
@@ -358,12 +377,12 @@ export default function PortfolioClient() {
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
           {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
             <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>{item.invoice_count} p50 settlement{item.invoice_count === 1 ? "" : "s"}</small></div>) : <div className="empty-inline">No p50 settlements fall this week.</div>}</div>
-            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{item.action.replaceAll("_", " ")}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
-            <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${client.signal_type.replaceAll("_", " ")})`).join(" · ") || "none"}</div>
+            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{decisionLabel(item.action)}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
+            <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${signalLabel(client.signal_type)})`).join(" · ") || "none"}</div>
           </> : null)}
         </section>
         {authenticated && <section className="panel"><div className="panel-head"><div><div className="panel-title">PayPal Sandbox</div><div className="panel-subtitle">Create a controlled test invoice and review the last import.</div></div><span className="status-pill">Sandbox only</span></div>
-          <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
+          <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · times shown in IST · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
           {syncStatus?.last_run?.errors?.length ? <div className="error-box" style={{ marginTop: 10 }}>{syncStatus.last_run.errors.join(" · ")}</div> : null}
           <form className="toolbar-tools" onSubmit={createInvoice} style={{ marginTop: 14 }}>
             <select className="select" aria-label="Sandbox invoice recipient" value={newInvoiceClient} onChange={event => setNewInvoiceClient(event.target.value)} required>
@@ -384,21 +403,22 @@ export default function PortfolioClient() {
           <section className="stats-grid">
             <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
             <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("actions")}><div className="stat-label">Ready for review</div><div className="stat-value">{data.ready_for_review_count}</div><div className="stat-note">Pending proposed reminders from today</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">Client timing signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet}</div></button>
+            <button className="stat-card stat-button" onClick={() => setCardFilter("actions")}><div className="stat-label">Ready for review</div><div className="stat-value">{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} of {data.ready_for_review_count}</div><div className="stat-note">Daily cap {data.daily_suggestion_cap} · pending proposed actions</div></button>
+            <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">Client timing signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet} · Habitually late {driftCounts.habituallyLate}</div></button>
           </section>
-          <section className="insight-strip"><div className="drift-strip-head"><div><div className="insight-title">Client payment timing</div><div className="insight-text">Signals sorted by money at risk and signal strength.</div></div><span className="fine-print">Activity signal · not a churn score</span></div>
+          <p className="fine-print" style={{ marginTop: -8, marginBottom: 14 }}>The demo cohort has {data.view_counts.all.toLocaleString("en-US")} invoices: {data.view_counts.paid.toLocaleString("en-US")} historical paid records provide model context, alongside {data.view_counts.open.toLocaleString("en-US")} currently open invoices.</p>
+          <section className="insight-strip"><div className="drift-strip-head"><div><div className="insight-title">Client payment timing</div><div className="insight-text">Signals sorted by money at risk and signal strength. Risk equals open balances plus the median settled invoice amount, kept separate by currency.</div></div><span className="fine-print">Activity signal · not a churn score</span></div>
             {drifting.length ? <div className="drift-signal-grid">{drifting.slice(0, 5).map(client => {
               const drift = client.drift;
               const trigger = drift.signal_type === "gone_quiet"
                 ? `${drift.days_since_last_invoice ?? 0} days since last invoice · usual gap ${Math.round(drift.cadence_days || 0)} days`
                 : `${Math.round(drift.recent_median_delay_days || 0)}d recent delay · ${Math.round(drift.usual_delay_days || 0)}d usual`;
-              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong><Link className="table-link" href={`/clients/${encodeURIComponent(client.id)}`}>{client.name}</Link></strong><span className="drift-badge">{drift.signal_type.replaceAll("_", " ")}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
+              return <article className="drift-signal-card" key={client.id}><div className="drift-signal-top"><strong><Link className="table-link" href={`/clients/${encodeURIComponent(client.id)}`}>{client.name}</Link></strong><span className="drift-badge">{signalLabel(drift.signal_type)}</span></div><p>{trigger}</p><div className="fine-print">Risk factor {drift.signal_strength.toFixed(2)} · {Object.entries(drift.money_at_risk_by_currency || {}).map(([currency, amount]) => `${currency} ${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} at risk`).join(" · ") || "No current exposure"}</div></article>;
             })}</div> : <div className="insight-text">No client has a current delay or cadence signal.</div>}
           </section>
 
           <section className="aging-panel"><div className="panel-head"><div><div className="panel-title">Open invoice aging</div><div className="panel-subtitle">Select a bucket to filter the current portfolio view.</div></div>{selectedAge && <button className="btn" onClick={() => updateUrl({ age_bucket: null })}>Clear bucket</button>}</div>
-            <div className="aging-grid">{[["not_due", "Not due"], ["late_1_30", "1–30 days"], ["late_31_60", "31–60 days"], ["late_61_90", "61–90 days"], ["late_90_plus", "90+ days"]].map(([key, label]) => {
+            <div className="aging-grid">{[["not_due", "Not due"], ["late_1_30", "1–30 days"], ["late_31_60", "31–60 days"], ["late_61_89", "61–89 days"], ["late_90_plus", "90+ days"]].map(([key, label]) => {
               const bucket = data.aging_buckets[key] || { count: 0, amounts: {} };
               return <button className={`aging-bucket ${selectedAge === key ? "selected" : ""}`} key={key} onClick={() => updateUrl({ view: "open", age_bucket: selectedAge === key ? null : key, action_only: null, drifting_only: null })}>
                 <span>{label}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => money(currency, amount)).join(" · ") || "No balance"}</small>
@@ -416,7 +436,7 @@ export default function PortfolioClient() {
               <div className="toolbar-tools"><SearchInput key={urlQuery} query={urlQuery} onDebouncedQuery={value => updateUrl({ q: value || null }, "replace")} />
                 <div className="client-combobox"><input className="search" role="combobox" aria-autocomplete="list" aria-expanded={clientOptionsOpen} aria-controls="client-options" aria-label="Search clients" placeholder={selectedClient ? "Client filter active · search to change" : "All clients · search"} value={clientSearch} onFocus={() => setClientOptionsOpen(true)} onChange={event => { setClientSearch(event.target.value); setClientOptionsOpen(true); }} onKeyDown={event => { if (event.key === "Escape") setClientOptionsOpen(false); if (event.key === "ArrowDown") { event.preventDefault(); document.querySelector<HTMLButtonElement>("#client-options button")?.focus(); } }} />{clientOptionsOpen && <div id="client-options" role="listbox"><button role="option" aria-selected={!selectedClient} onClick={() => { updateUrl({ client_id: null }); setClientSearch(""); setClientOptionsOpen(false); }}>All clients</button>{clients.map(client => <button role="option" aria-selected={selectedClient === client.id} key={client.id} onKeyDown={event => { if (event.key === "ArrowDown") (event.currentTarget.nextElementSibling as HTMLElement)?.focus(); if (event.key === "ArrowUp") (event.currentTarget.previousElementSibling as HTMLElement)?.focus(); if (event.key === "Escape") setClientOptionsOpen(false); }} onClick={() => { updateUrl({ client_id: client.id }); setClientSearch(client.name); setClientOptionsOpen(false); }}>{client.name}</button>)}</div>}</div>
                 <select className="select" aria-label="Sort invoices" value={`${currentSort}:${currentDirection}`} onChange={event => { const [sort, direction] = event.target.value.split(":"); updateUrl({ sort, direction }); }}>
-                  <option value="action:asc">Action queue · expected gain rank</option><option value="predicted:asc">Predicted date · earliest</option><option value="drift:asc">Client drift state</option><option value="expected_cash:desc">Expected cash gain</option><option value="p14:desc">Paid in 14d · high to low</option><option value="p14:asc">Paid in 14d · low to high</option><option value="due:asc">Due date · earliest</option><option value="balance:desc">Balance · high to low</option><option value="client:asc">Client · A to Z</option>
+                  <option value="action:asc">Action queue · daily rank</option><option value="predicted:asc">Predicted date · earliest</option><option value="drift:asc">Client drift state</option><option value="expected_cash:desc">Assumed 14-day uplift · within currency</option><option value="p14:desc">Paid in 14d · high to low</option><option value="p14:asc">Paid in 14d · low to high</option><option value="due:asc">Due date · earliest</option><option value="balance:desc">Balance · high to low</option><option value="client:asc">Client · A to Z</option>
                 </select>
                 <details className="column-chooser"><summary>Columns</summary><div className="column-menu">{columnChoices.map(([id, label]) => <label key={id}><input type="checkbox" checked={visibleColumns.includes(id)} onChange={event => setVisibleColumns(columns => event.target.checked ? [...columns, id] : columns.filter(column => column !== id))}/>{label}</label>)}</div></details>
                 <a className="btn" href={`/api/exports/invoices.csv?${searchKey}`}>Export all filtered rows</a>

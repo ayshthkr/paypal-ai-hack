@@ -9,8 +9,8 @@ import pytest
 
 from app import main
 from app.config import Settings
-from app.models import Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
-from app.security import COOKIE_NAME, create_session
+from app.models import Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
+from app.security import COOKIE_NAME, create_session, session_claims
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
 from app.services.forecast import _as_record
@@ -33,6 +33,21 @@ def _invoice(invoice_id: str, client_id: str, *, source="demo", status="OVERDUE"
         currency="USD", status=status, disputed=False, source=source, provider_payload={},
         material_version=1,
     )
+
+
+def _set_operator_cookie(client, Session, settings=None, now=None):
+    settings = settings or main.settings
+    issued_at = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+    token = create_session(settings, now=issued_at)
+    username, token_issued_at, session_id = session_claims(token, settings, now=issued_at)
+    with Session() as db:
+        db.add(OperatorSession(
+            id=session_id, username=username, issued_at=token_issued_at,
+            expires_at=token_issued_at + settings.session_max_age_seconds,
+        ))
+        db.commit()
+    client.cookies.set(COOKIE_NAME, token)
+    return token
 
 
 def test_feature_history_is_cut_off_at_scoring_date_and_ignores_later_settlement():
@@ -162,6 +177,18 @@ def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():
     assert decide(invoice, 0.0, today=today)["action"] == "wait"
 
 
+def test_reminder_cash_uplift_scales_with_forecast_probability():
+    today = date(2026, 11, 10)
+    invoice = SimpleNamespace(disputed=False, status="OVERDUE", outstanding=Decimal("1000"),
+                              currency="USD", due_date=today-timedelta(days=3), reminder_step=0,
+                              partial_payment_allowed=False)
+    low = decide(invoice, .1, today=today, probability_14d=.1)
+    high = decide(invoice, .1, today=today, probability_14d=.4)
+    assert low["expected_cash_gain"] == 90
+    assert high["expected_cash_gain"] == 60
+    assert low["reminder_uplift_assumption"] == .1
+
+
 def test_policy_ladder_cooldown_payment_pause_and_cash_gain():
     today = date(2026, 11, 10)
     invoice = SimpleNamespace(
@@ -171,8 +198,8 @@ def test_policy_ladder_cooldown_payment_pause_and_cash_gain():
     partial = decide(invoice, 0, today=today, probability_14d=0.25, has_partial_history=True)
     assert partial["action"] == "offer_partial_payment"
     assert partial["probability_if_wait"] == 0.25
-    assert partial["probability_if_sent"] == 0.35
-    assert partial["expected_cash_gain"] == 300
+    assert partial["probability_if_sent"] == 0.325
+    assert partial["expected_cash_gain"] == 225
 
     invoice.due_date = today - timedelta(days=45)
     invoice.reminder_step = 3
@@ -189,12 +216,33 @@ def test_policy_ladder_cooldown_payment_pause_and_cash_gain():
 
 
 def test_signed_operator_session_rejects_tampering(api):
-    client, _ = api
-    token = create_session(main.settings, now=int(datetime.now(timezone.utc).timestamp()))
-    client.cookies.set(COOKIE_NAME, token)
+    client, Session = api
+    token = _set_operator_cookie(client, Session)
     assert client.get("/auth/me").json()["authenticated"] is True
     client.cookies.set(COOKIE_NAME, token + "x")
     assert client.get("/auth/me").json()["authenticated"] is False
+
+
+def test_logout_revokes_operator_session_server_side(api):
+    client, Session = api
+    token = _set_operator_cookie(client, Session)
+    assert client.get("/auth/me").json()["authenticated"] is True
+    assert client.post("/auth/logout").status_code == 200
+    client.cookies.set(COOKIE_NAME, token)
+    assert client.get("/auth/me").json()["authenticated"] is False
+    assert client.get("/sync/status").status_code == 401
+
+
+def test_login_limits_failed_attempts_per_ip(api, monkeypatch):
+    client, _ = api
+    with main._AUTH_LOCK:
+        main._AUTH_FAILURES.clear()
+    monkeypatch.setattr(main, "_verify_login", lambda username, password: False)
+    for _ in range(5):
+        assert client.post("/auth/login", json={"username": "wrong", "password": "wrong"}).status_code == 401
+    limited = client.post("/auth/login", json={"username": "wrong", "password": "wrong"})
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
 
 
 def test_production_refuses_default_operator_credentials(api, monkeypatch):
@@ -204,6 +252,17 @@ def test_production_refuses_default_operator_credentials(api, monkeypatch):
     client.cookies.set(COOKIE_NAME, create_session(insecure))
     assert client.get("/auth/me").json()["authenticated"] is False
     assert client.post("/auth/login", json={"username": "operator", "password": "change-this-local-password"}).status_code == 401
+
+
+def test_operator_paypal_and_sync_routes_require_a_valid_session(api):
+    client, _ = api
+    assert client.post("/sync").status_code == 401
+    assert client.get("/sync/status").status_code == 401
+    body = {"client_id": "missing", "amount": "10.00", "payment_term_type": "NET_15"}
+    assert client.post("/paypal/invoices", json=body, headers={"Idempotency-Key": "d2fe94452cb34ecf9b9a591f00000002"}).status_code == 401
+    assert client.post("/paypal/invoices", json=body).status_code == 401
+    assert client.post("/recommendations/missing/send", json={"text": "review"}).status_code == 401
+    assert client.post("/recommendations/missing/approve-partial-payment").status_code == 401
 
 
 def test_public_routes_only_expose_demo_and_demo_payment_partial_then_full(api):
@@ -381,6 +440,72 @@ def test_action_queue_generates_five_or_fewer_reviewable_recommendations(api, mo
     assert payload["count"] == 1
     assert payload["items"][0]["recommendation"]["state"] == "proposed"
     assert payload["items"][0]["decision"]["expected_cash_gain"] > 0
+
+
+def test_currency_lane_order_and_ninety_day_collections_lane(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "forecast_invoice", lambda db, invoice, **kwargs: {
+        "probability_by_due": .1, "probabilities": {"14d": .1}, "quantiles": {"p50": None},
+        "reasons": [], "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    today = date.today()
+    with Session() as db:
+        db.add(DemoState(id="demo", as_of_date=today))
+        owner = Client(id="multi-currency-owner", display_name="Multi Currency", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoices = []
+        for invoice_id, currency, amount, days_late in [
+            ("currency-gbp-large", "GBP", 9000, 10),
+            ("currency-gbp-small", "GBP", 1000, 10),
+            ("currency-usd", "USD", 250, 10),
+            ("collection-old", "USD", 12000, 90),
+        ]:
+            row = _invoice(invoice_id, owner.id)
+            row.currency = currency
+            row.total = row.outstanding = Decimal(amount)
+            row.due_date = today - timedelta(days=days_late)
+            invoices.append(row)
+        db.add_all(invoices)
+        db.commit()
+
+    with Session() as db:
+        rows = db.query(Invoice).all()
+        main._prepare_portfolio_context(db, rows)
+        ranked = main._rank_policy_candidates(db, "demo")
+    assert ranked == ["currency-gbp-large", "currency-usd", "currency-gbp-small"]
+    queue = client.get("/action-queue").json()
+    assert [row["id"] for row in queue["collections_review"]] == ["collection-old"]
+    assert queue["collections_review"][0]["decision"]["action"] == "review_for_writeoff_or_collections"
+
+
+def test_portfolio_signal_total_equals_all_visible_signal_counts(api, monkeypatch):
+    client, Session = api
+    signal_types = ["paying_later", "later_than_usual", "gone_quiet", "habitually_late"]
+    monkeypatch.setattr(main, "_drift_for", lambda db, owner, activity_probability=None: {
+        "signal": signal_types[int(owner.id.rsplit("-", 1)[1])],
+        "signal_type": signal_types[int(owner.id.rsplit("-", 1)[1])],
+        "available": True, "severity_score": 1, "signal_strength": .5,
+        "recent_median_delay_days": 20, "usual_delay_days": 10,
+        "money_at_risk_by_currency": {"USD": 100},
+    })
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": .1, "probabilities": {"14d": .1}, "quantiles": {"p50": None},
+        "reasons": [], "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    today = date.today()
+    with Session() as db:
+        for index in range(4):
+            owner = Client(id=f"signal-owner-{index}", display_name=f"Signal {index}", source="demo", drift={})
+            db.add(owner)
+            db.flush()
+            db.add(_invoice(f"signal-invoice-{index}", owner.id, due=today-timedelta(days=10)))
+        db.commit()
+    payload = client.get("/invoices?view=open").json()
+    assert payload["drifting_client_count"] == 4
+    assert sum(payload["drifting_signal_counts"].values()) == 4
+    assert payload["drifting_signal_counts"]["habitually_late"] == 1
 
 
 def test_public_demo_reset_reseeds_only_after_rate_limit_and_preserves_cooldown(api, monkeypatch):
@@ -588,6 +713,13 @@ def test_facts_endpoints_and_receivables_questions_are_structured_and_scoped(api
         db.add(owner)
         db.flush()
         db.add(_invoice("facts-invoice", owner.id))
+        bigger_eur = Client(id="facts-eur-owner", display_name="EUR Balance", source="demo", drift={})
+        db.add(bigger_eur)
+        db.flush()
+        eur_invoice = _invoice("facts-eur-invoice", bigger_eur.id)
+        eur_invoice.currency = "EUR"
+        eur_invoice.total = eur_invoice.outstanding = Decimal("999999.00")
+        db.add(eur_invoice)
         db.commit()
 
     invoice_facts = client.get("/facts/invoices/facts-invoice")
@@ -604,6 +736,9 @@ def test_facts_endpoints_and_receivables_questions_are_structured_and_scoped(api
     assert answer.status_code == 200
     assert answer.json()["intent"] == "largest_client_balance"
     assert answer.json()["data"]["client_name"] == "Facts Client"
+    eur_answer = client.post("/ask", json={"question": "Who owes me the most in EUR?"})
+    assert eur_answer.json()["data"]["client_name"] == "EUR Balance"
+    assert eur_answer.json()["data"]["currency"] == "EUR"
     unsupported = client.post("/ask", json={"question": "Tell me what I should do next year."})
     assert unsupported.json()["intent"] == "unsupported"
 
@@ -949,8 +1084,7 @@ def test_paypal_partial_payment_update_uses_full_invoice_put_and_notifies_recipi
 
 def test_sync_status_records_import_failure_and_webhook_retry_count(api, monkeypatch):
     client, Session = api
-    cookie = create_session(main.settings, now=int(datetime.now(timezone.utc).timestamp()))
-    client.cookies.set(COOKIE_NAME, cookie)
+    _set_operator_cookie(client, Session)
     with Session() as db:
         db.add(InvoiceEvent(
             provider_event_id="retry-status-event", event_type="INVOICING.INVOICE.PAID",
@@ -983,7 +1117,7 @@ def test_operator_can_create_and_send_allowlisted_sandbox_invoice(api, monkeypat
         paypal_sandbox_currency="USD",
     )
     monkeypatch.setattr(main, "settings", settings)
-    client.cookies.set(COOKIE_NAME, create_session(settings, now=int(datetime.now(timezone.utc).timestamp())))
+    _set_operator_cookie(client, Session, settings)
     with Session() as db:
         owner = Client(
             id="create-invoice-owner", provider_customer_id=allowed_email, display_name="Allowed Buyer",
@@ -1007,8 +1141,8 @@ def test_operator_can_create_and_send_allowlisted_sandbox_invoice(api, monkeypat
             calls.append(("create", args, kwargs))
             return invoice_data
 
-        def send_invoice(self, paypal_id):
-            calls.append(("send", paypal_id))
+        def send_invoice(self, paypal_id, **kwargs):
+            calls.append(("send", paypal_id, kwargs))
             return paypal_id
 
         def get_invoice(self, paypal_id):
@@ -1020,16 +1154,25 @@ def test_operator_can_create_and_send_allowlisted_sandbox_invoice(api, monkeypat
 
     monkeypatch.setattr(main, "PayPalAdapter", FakeAdapter)
     monkeypatch.setattr(main, "refresh_paypal_invoice", refresh)
-    response = client.post("/paypal/invoices", json={
+    request_body = {
         "client_id": "create-invoice-owner", "amount": "125.50",
         "payment_term_type": "NET_15", "partial_payment_allowed": True,
-    })
+    }
+    headers = {"Idempotency-Key": "d2fe94452cb34ecf9b9a591f00000001"}
+    response = client.post("/paypal/invoices", json=request_body, headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "UNPAID"
     assert [call[0] for call in calls] == ["create", "send"]
     assert calls[0][1][0] == allowed_email
     assert calls[0][2]["payment_term_type"] == "NET_15"
     assert calls[0][2]["partial_payment_allowed"] is True
+    assert calls[0][2]["request_id"] == headers["Idempotency-Key"]
+    assert calls[1][2]["request_id"] == f"{headers['Idempotency-Key']}-send"
+    retry = client.post("/paypal/invoices", json=request_body, headers=headers)
+    assert retry.status_code == 200 and retry.json() == response.json()
+    assert [call[0] for call in calls] == ["create", "send"]
+    conflict = client.post("/paypal/invoices", json={**request_body, "amount": "130.00"}, headers=headers)
+    assert conflict.status_code == 409
     with Session() as db:
         invoice = db.query(Invoice).filter_by(paypal_id="paypal-created-1").one()
         assert invoice.source == "paypal" and invoice.partial_payment_allowed is True
@@ -1043,7 +1186,7 @@ def test_operator_partial_payment_approval_updates_provider_then_resyncs(api, mo
         paypal_mode="sandbox", paypal_allowed_recipient_emails="partial@example.test",
     )
     monkeypatch.setattr(main, "settings", settings)
-    client.cookies.set(COOKIE_NAME, create_session(settings, now=int(datetime.now(timezone.utc).timestamp())))
+    _set_operator_cookie(client, Session, settings)
     today = date(2026, 11, 10)
     monkeypatch.setattr(main, "_today", lambda db=None, source=None: today)
     monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {

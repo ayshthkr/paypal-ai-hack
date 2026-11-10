@@ -143,7 +143,7 @@ class PayPalAdapter:
     def create_invoice(
         self, recipient_email: str, amount: Decimal, currency: str, invoice_number: str,
         due_date: date, note: str, *, payment_term_type: str = "DUE_ON_DATE_SPECIFIED",
-        partial_payment_allowed: bool = False, issue_date: date | None = None,
+        partial_payment_allowed: bool = False, issue_date: date | None = None, request_id: str | None = None,
     ) -> dict[str, Any]:
         email = recipient_email.strip().lower()
         self._require_sandbox()
@@ -168,7 +168,10 @@ class PayPalAdapter:
         }
         if partial_payment_allowed:
             payload["configuration"] = {"partial_payment": {"allow_partial_payment": True}}
-        response = self._request("POST", "/v2/invoicing/invoices", payload=payload)
+        response = self._request(
+            "POST", "/v2/invoicing/invoices", payload=payload,
+            extra_headers={"PayPal-Request-Id": request_id} if request_id else None,
+        )
         try:
             created = response.json()
         except ValueError:
@@ -206,9 +209,12 @@ class PayPalAdapter:
             ambiguous=True,
         )
 
-    def send_invoice(self, invoice_id: str) -> str:
+    def send_invoice(self, invoice_id: str, request_id: str | None = None) -> str:
         self._require_sandbox()
-        response = self._request("POST", f"/v2/invoicing/invoices/{invoice_id}/send", payload={"send_to_recipient": True})
+        response = self._request(
+            "POST", f"/v2/invoicing/invoices/{invoice_id}/send", payload={"send_to_recipient": True},
+            extra_headers={"PayPal-Request-Id": request_id} if request_id else None,
+        )
         return str(response.headers.get("PayPal-Debug-Id") or invoice_id)
 
     def enable_partial_payment(self, invoice_id: str) -> None:

@@ -27,13 +27,15 @@ class PrivateReadCache:
             return await self.app(scope, receive, send)
         method, path = scope["method"], scope["path"]
         headers = dict(scope["headers"])
+        # Authenticated responses are evaluated against durable session state by
+        # the route. Bypassing this cache prevents a revoked session from replaying
+        # a previously cached private response.
+        if b"latepayer_session=" in headers.get(b"cookie", b""):
+            return await self.app(scope, receive, send)
         eligible = method == "GET" and path not in {"/health", "/ready", "/auth/me"} and not path.endswith(".csv")
         if method == "GET" and not eligible:
             return await self.app(scope, receive, send)
-        from starlette.requests import Request
-        from app.security import session_user
-        user = session_user(Request(scope))
-        key = (user, path, scope["query_string"], hashlib.sha256(headers.get(b"cookie", b"")).digest())
+        key = (None, path, scope["query_string"], hashlib.sha256(headers.get(b"cookie", b"")).digest())
         with _lock:
             generation = _generation
             entry = _entries.get(key) if eligible else None

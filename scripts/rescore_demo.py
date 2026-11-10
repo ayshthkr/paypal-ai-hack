@@ -19,8 +19,8 @@ def _age_bucket(days_until_due: int) -> str:
     overdue = -days_until_due
     if overdue <= 30:
         return "late_1_30"
-    if overdue <= 90:
-        return "late_31_90"
+    if overdue < 90:
+        return "late_31_89"
     return "late_90_plus"
 
 
@@ -46,7 +46,9 @@ def rescore_and_report(validate_seed: bool = True) -> dict:
         # BG/NBD a second time during every service restart.
         drift_results = [client.drift for client in db.scalars(select(Client).where(Client.source == "demo"))]
         signal_counts = Counter(row["signal_type"] for row in drift_results)
-        drifting_clients = sum(signal_counts[name] for name in ("paying_later", "later_than_usual"))
+        drifting_clients = sum(signal_counts[name] for name in (
+            "paying_later", "later_than_usual", "gone_quiet", "habitually_late",
+        ))
         in_horizon = sum(item["quantiles"].get("p50") is not None for item in forecasts)
         share_in_horizon = in_horizon / len(forecasts) if forecasts else 0.0
         invoice_age_days = [(as_of - row.issue_date).days for row in open_invoices]

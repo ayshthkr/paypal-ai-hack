@@ -8,7 +8,8 @@ import json
 import re
 import statistics
 import logging
-from time import perf_counter
+from collections import Counter, deque
+from time import monotonic, perf_counter
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -21,7 +22,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -35,10 +36,10 @@ from app.http_cache import PrivateReadCache, cached_aggregate
 from app.telemetry import metrics, timed
 from app.config import get_settings
 from app.db import get_db
-from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SyncRun, ReadModel, AIAudit
+from app.models import ActionAttempt, Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, SandboxInvoiceOperation, SyncRun, ReadModel, AIAudit
 from app.services.ai import classify_reply, extract_promised_date, generate_reminder_draft
-from app.security import COOKIE_NAME, create_session, require_operator, session_user
-from app.services.dates import business_date
+from app.security import COOKIE_NAME, create_session, require_operator, session_claims, session_user
+from app.services.dates import business_date, event_date
 from app.services.drift import client_drift
 from app.services.forecast import _as_record, forecast_invoice, warm_model
 from app.services.paypal import PayPalAdapter, PayPalError, webhook_invoice_id
@@ -52,6 +53,9 @@ ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELET
 PORTFOLIO_CONTEXT_KEY = "latepayer_portfolio_context"
 _ACTIVITY_CACHE: dict[tuple, dict] = {}
 _ACTIVITY_CACHE_LOCK = Lock()
+_AUTH_FAILURES: dict[str, deque[float]] = {}
+_AUTH_LOCK = Lock()
+_MAX_AUTH_FAILURE_KEYS = 4096
 @asynccontextmanager
 async def lifespan(app):
     warm_model()
@@ -84,6 +88,13 @@ async def demo_time_travel_context(request: Request, call_next):
         response = await call_next(request)
         timings["total"] = (perf_counter() - started) * 1000
         response.headers["Server-Timing"] = ", ".join(f"{key};dur={value:.2f}" for key, value in timings.items())
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        if settings.app_env == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         logging.getLogger("uvicorn.error").info("%s %s %s", request.method, request.url.path, timings)
         return response
     finally:
@@ -120,6 +131,12 @@ class CreateInvoiceInput(BaseModel):
     amount: Decimal = Field(gt=Decimal("0"), le=Decimal("1000000"))
     payment_term_type: Literal["DUE_ON_RECEIPT", "NET_15", "NET_30"]
     partial_payment_allowed: bool = False
+
+
+def _sandbox_operation_stale(updated_at: datetime, now: datetime, after: timedelta = timedelta(minutes=2)) -> bool:
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return now - updated_at >= after
 
 
 class WhatIfInput(BaseModel):
@@ -160,6 +177,42 @@ def _verify_login(username: str, password: str) -> bool:
     expected_user = hmac.compare_digest(username.encode(), settings.operator_username.encode())
     expected_password = hmac.compare_digest(password.encode(), settings.operator_password.encode())
     return expected_user and expected_password
+
+
+def _auth_attempts_remaining(ip_address: str, now: float | None = None) -> int:
+    current = monotonic() if now is None else now
+    with _AUTH_LOCK:
+        failures = _AUTH_FAILURES.get(ip_address)
+        if failures is None:
+            return 5
+        while failures and failures[0] <= current - 60:
+            failures.popleft()
+        if not failures:
+            _AUTH_FAILURES.pop(ip_address, None)
+            return 5
+        return max(0, 5 - len(failures))
+
+
+def _record_auth_failure(ip_address: str, now: float | None = None) -> None:
+    current = monotonic() if now is None else now
+    with _AUTH_LOCK:
+        failures = _AUTH_FAILURES.setdefault(ip_address, deque())
+        while failures and failures[0] <= current - 60:
+            failures.popleft()
+        failures.append(current)
+        stale_keys = [key for key, attempts in _AUTH_FAILURES.items() if not attempts or attempts[-1] <= current - 60]
+        for key in stale_keys:
+            _AUTH_FAILURES.pop(key, None)
+        overflow = len(_AUTH_FAILURES) - _MAX_AUTH_FAILURE_KEYS
+        if overflow > 0:
+            oldest = sorted(_AUTH_FAILURES, key=lambda key: _AUTH_FAILURES[key][-1])
+            for key in oldest[:overflow]:
+                _AUTH_FAILURES.pop(key, None)
+
+
+def _clear_auth_failures(ip_address: str) -> None:
+    with _AUTH_LOCK:
+        _AUTH_FAILURES.pop(ip_address, None)
 
 
 def _client_records(db: Session, client_id: str) -> list[dict]:
@@ -333,6 +386,7 @@ def _drift_for(db: Session, client: Client, activity_probability: float | None =
         records, _today(db, client.source), cadence_days=cadence,
         activity_probability=activity_probability, money_at_risk_by_currency=risk,
     )
+    drift["money_at_risk_basis"] = "Open balances plus the median settled invoice amount, kept separate by currency."
     if not _historical_demo(db, client.source):
         client.drift = drift
         client.scored_at = datetime.now(timezone.utc)
@@ -405,6 +459,42 @@ def _client_history_facts(db: Session, client_id: str) -> dict:
     }
 
 
+def _client_stories(records: list[dict], as_of: date, invoice_numbers: dict[str, str]) -> list[str]:
+    stories: list[str] = []
+    cutoff = as_of - timedelta(days=180)
+    older_terms = Counter(row.get("payment_term_type") for row in records
+                          if row.get("issue_date") and row["issue_date"] < cutoff and row.get("payment_term_type"))
+    recent_terms = Counter(row.get("payment_term_type") for row in records
+                           if row.get("issue_date") and row["issue_date"] >= cutoff and row.get("payment_term_type"))
+    if older_terms and recent_terms:
+        previous = older_terms.most_common(1)[0][0]
+        current = recent_terms.most_common(1)[0][0]
+        if previous != current and previous in {"NET_30", "NET_15"} and current in {"NET_30", "NET_15"}:
+            effective_date = min(row["issue_date"] for row in records
+                                 if row.get("issue_date") and row["issue_date"] >= cutoff
+                                 and row.get("payment_term_type") == current)
+            previous_label = previous.replace("_", " ").title()
+            current_label = current.replace("_", " ").title()
+            stories.append(f"Payment terms shifted from {previous_label} to {current_label} for invoices issued from {effective_date.isoformat()}.")
+
+    for row in records:
+        if not row.get("settled_at"):
+            continue
+        firm_events = [event_date(event.get("sent_at")) for event in row.get("reminder_events", [])
+                       if isinstance(event, dict) and str(event.get("tone", "")).casefold() == "firm"]
+        firm_sent = max((sent for sent in firm_events if sent and sent < row["settled_at"]), default=None)
+        if firm_sent:
+            days_after = (row["settled_at"] - firm_sent).days
+            stories.append(f"{invoice_numbers.get(row['id'], 'An invoice')} settled {days_after} days after its recorded firm reminder.")
+            break
+
+    for row in records:
+        if row.get("disputed") and Decimal(str(row.get("outstanding", 0))) > 0:
+            stories.append(f"{invoice_numbers.get(row['id'], 'An open invoice')} has an active dispute; reminders are paused while it is reviewed.")
+            break
+    return stories[:3]
+
+
 def _draft_facts(invoice: Invoice, client: Client, forecast: dict | None, drift: dict, action: dict,
                  payment_url: str | None, history: dict) -> dict:
     return {
@@ -432,7 +522,7 @@ def _draft_facts(invoice: Invoice, client: Client, forecast: dict | None, drift:
 
 
 def _why_line(forecast: dict | None, drift: dict) -> str:
-    if drift.get("available") and drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+    if drift.get("available") and drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
         message = str(drift.get("message") or "").strip()
         if message:
             return message if message.endswith((".", "!", "?")) else f"{message}."
@@ -619,6 +709,16 @@ def _invoice_dict(
         drift = _drift_for(db, client, (activity_scores or {}).get(client.id))
         if drift_cache is not None:
             drift_cache[client.id] = drift
+    if forecast:
+        forecast_reasons = [reason for reason in forecast.get("reasons", [])
+                            if not str(reason).startswith("Recent settled invoices had a median delay")]
+        recent_delay = drift.get("recent_median_delay_days")
+        usual_delay = drift.get("usual_delay_days")
+        if recent_delay is not None and usual_delay is not None:
+            forecast_reasons.append(
+                f"Client timing signal uses recent median observed delay of {recent_delay:g} days versus a usual {usual_delay:g} days."
+            )
+        forecast["reasons"] = forecast_reasons
     last_attempt, unresolved, last_tone, last_payment = _last_attempt(db, invoice.id) if _payable(invoice) else (None, False, None, None)
     action = decide(
         invoice, forecast["probability_by_due"] if forecast else None,
@@ -671,6 +771,17 @@ def _invoice_dict(
         recommendation = db.scalar(select(Recommendation).where(Recommendation.invoice_id == invoice.id,
             Recommendation.invoice_version == invoice.material_version, Recommendation.state == "proposed"))
     currency_due = max(0, (invoice.due_date - today).days)
+    days_overdue = max(0, (today - invoice.due_date).days)
+    usual_delay = drift.get("usual_delay_days")
+    outlier_threshold = max(30, float(usual_delay or 0) + 21, float(usual_delay or 0) * 3)
+    outlier_hint = None
+    if _has_open_balance(invoice) and days_overdue >= outlier_threshold:
+        outlier_hint = (
+            f"This invoice is at least {days_overdue} days overdue, far beyond this client’s usual "
+            f"{float(usual_delay):g}-day delay. Check whether it is disputed or the invoice was lost."
+            if usual_delay is not None else
+            f"This invoice is at least {days_overdue} days overdue. Check whether it is disputed or the invoice was lost."
+        )
     summary = {
         "id": invoice.id, "paypal_id": invoice.paypal_id, "invoice_number": invoice.invoice_number,
         "client_id": client.id, "client_name": client.display_name, "client_email": client.email,
@@ -691,6 +802,7 @@ def _invoice_dict(
         "reminder_events": invoice.reminder_events or [],
         "payment_url": (((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")) if invoice.source == "paypal" else None,
         "forecast": forecast, "drift": drift, "decision": action,
+        "outlier_hint": outlier_hint,
         "why": _why_line(forecast, drift),
         "recommendation": _recommendation_dict(recommendation),
         "days_until_due_nonnegative": currency_due,
@@ -740,7 +852,7 @@ def _get_invoice_or_404(db: Session, invoice_id: str) -> Invoice:
 
 
 def _authorize_invoice(request: Request, invoice: Invoice, db: Session) -> str | None:
-    user = session_user(request)
+    user = session_user(request, db=db)
     if invoice.source != "demo" and not user:
         raise HTTPException(status_code=401, detail="Operator login required to view PayPal invoices.")
     if request.method not in {"GET", "HEAD"} and _historical_demo(db, invoice.source):
@@ -750,6 +862,10 @@ def _authorize_invoice(request: Request, invoice: Invoice, db: Session) -> str |
 
 def _payable(invoice: Invoice) -> bool:
     return invoice.status not in CLOSED_STATUSES and not invoice.disputed and invoice.outstanding > 0
+
+
+def _has_open_balance(invoice: Invoice) -> bool:
+    return invoice.status not in CLOSED_STATUSES and invoice.outstanding > 0
 
 
 def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cache: dict[str, dict] | None = None) -> list[str]:
@@ -781,9 +897,22 @@ def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cac
             _client_has_partial_history(db, invoice.client_id),
         )
         if action["action"] in {"friendly", "firm", "offer_partial_payment"} and not holdback_assignment(invoice.id, invoice_today):
-            candidates.append((action["expected_cash_gain"], invoice.due_date, invoice.id))
-    candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
-    return [invoice_id for _, _, invoice_id in candidates]
+            candidates.append((invoice.currency, action["expected_cash_gain"], invoice.due_date, invoice.id))
+
+    # Currency amounts cannot be compared without conversion. Rank within each
+    # currency, then round-robin the lanes so the daily cap is shared.
+    by_currency: dict[str, list[tuple[float, date, str]]] = {}
+    for currency, score, due_date, invoice_id in candidates:
+        by_currency.setdefault(currency, []).append((score, due_date, invoice_id))
+    for values in by_currency.values():
+        values.sort(key=lambda row: (-row[0], row[1], row[2]))
+    ranked: list[str] = []
+    currencies = sorted(by_currency)
+    while any(by_currency.values()):
+        for currency in currencies:
+            if by_currency[currency]:
+                ranked.append(by_currency[currency].pop(0)[2])
+    return ranked
 
 
 def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
@@ -930,30 +1059,52 @@ def ready(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/auth/me")
-def auth_me(request: Request) -> dict:
-    user = session_user(request)
+def auth_me(request: Request, db: Session = Depends(get_db)) -> dict:
+    user = session_user(request, db=db)
     return {"authenticated": bool(user), "username": user}
 
 
 @app.post("/auth/login")
-def login(payload: LoginInput, response: Response) -> dict:
+def login(payload: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    ip_address = request.client.host if request.client else "unknown"
+    if _auth_attempts_remaining(ip_address) == 0:
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in one minute.", headers={"Retry-After": "60"})
     if not _verify_login(payload.username, payload.password):
+        _record_auth_failure(ip_address)
         raise HTTPException(status_code=401, detail="Username or password is incorrect.")
+    _clear_auth_failures(ip_address)
+    token = create_session()
+    claims = session_claims(token, settings)
+    if claims is None:
+        raise HTTPException(status_code=503, detail="Operator session could not be created.")
+    username, issued_at, session_id = claims
+    db.add(OperatorSession(
+        id=session_id, username=username, issued_at=issued_at,
+        expires_at=issued_at + settings.session_max_age_seconds,
+    ))
+    db.commit()
     response.set_cookie(
-        COOKIE_NAME, create_session(), max_age=settings.session_max_age_seconds, path="/",
+        COOKIE_NAME, token, max_age=settings.session_max_age_seconds, path="/",
         httponly=True, secure=settings.app_env == "production", samesite="lax",
     )
     return {"authenticated": True, "username": settings.operator_username}
 
 
 @app.post("/auth/logout")
-def logout(response: Response) -> dict:
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    claims = session_claims(request.cookies.get(COOKIE_NAME, ""), settings)
+    if claims:
+        _, _, session_id = claims
+        operator_session = db.get(OperatorSession, session_id)
+        if operator_session and operator_session.revoked_at is None:
+            operator_session.revoked_at = int(datetime.now(timezone.utc).timestamp())
+            db.commit()
     response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=settings.app_env == "production", samesite="lax")
     return {"authenticated": False}
 
 
 def _age_bucket(invoice: Invoice, today: date) -> str | None:
-    if not _payable(invoice):
+    if not _has_open_balance(invoice):
         return None
     days_late = (today - invoice.due_date).days
     if days_late <= 0:
@@ -962,8 +1113,8 @@ def _age_bucket(invoice: Invoice, today: date) -> str | None:
         return "late_1_30"
     if days_late <= 60:
         return "late_31_60"
-    if days_late <= 90:
-        return "late_61_90"
+    if days_late < 90:
+        return "late_61_89"
     return "late_90_plus"
 
 
@@ -1021,7 +1172,7 @@ def invoices(
     as_of: date | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
-    user = session_user(request)
+    user = session_user(request, db=db)
     page = max(1, page)
     if limit is not None and page_size == 25:
         page_size = limit
@@ -1031,7 +1182,7 @@ def invoices(
         raise HTTPException(status_code=422, detail="Due date range is reversed.")
     allowed_views = {"open", "due_this_week", "overdue", "paid", "all"}
     view = view if view in allowed_views else "open"
-    allowed_buckets = {"not_due", "late_1_30", "late_31_60", "late_61_90", "late_90_plus"}
+    allowed_buckets = {"not_due", "late_1_30", "late_31_60", "late_61_89", "late_90_plus"}
     age_bucket = age_bucket if age_bucket in allowed_buckets else None
     allowed_sorts = {"action", "expected_cash", "p14", "due", "client", "balance", "invoice", "status", "predicted", "drift"}
     sort = sort if sort in allowed_sorts else "action"
@@ -1104,8 +1255,14 @@ def invoices(
     drift_cache: dict[str, dict] = {}
     for client in clients_in_scope:
         drift_cache[client.id] = _drift_for(db, client, activity_by_source.get(client.source, {}).get(client.id))
+    client_signal_types = ("paying_later", "later_than_usual", "gone_quiet", "habitually_late")
     drifting_ids = {client_id for client_id, drift in drift_cache.items()
-                    if drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}}
+                    if drift.get("signal_type") in client_signal_types}
+    drift_signal_counts = {
+        signal: sum(client_id in drifting_ids and drift.get("signal_type") == signal
+                    for client_id, drift in drift_cache.items())
+        for signal in client_signal_types
+    }
 
     ready_recommendations = set()
     for source in source_names:
@@ -1115,7 +1272,7 @@ def invoices(
             Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
             Recommendation.policy_date == today,
         )).all())
-    open_condition = and_(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0, Invoice.disputed.is_(False))
+    open_condition = and_(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0)
     due_week_condition = or_(*[and_(Invoice.source == source, Invoice.due_date >= _today(db, source),
                                   Invoice.due_date <= _today(db, source) + timedelta(days=7)) for source in source_names])
     overdue_condition = or_(*[and_(Invoice.source == source, Invoice.due_date < _today(db, source)) for source in source_names])
@@ -1140,11 +1297,11 @@ def invoices(
     view_counts = {name: int(value or 0) for name, value in zip(("all", "open", "due_this_week", "overdue", "paid"), counts, strict=True)}
 
     if view == "open":
-        rows = [row for row in base_rows if _payable(row)]
+        rows = [row for row in base_rows if _has_open_balance(row)]
     elif view == "due_this_week":
-        rows = [row for row in base_rows if _payable(row) and 0 <= (row.due_date - _today(db, row.source)).days <= 7]
+        rows = [row for row in base_rows if _has_open_balance(row) and 0 <= (row.due_date - _today(db, row.source)).days <= 7]
     elif view == "overdue":
-        rows = [row for row in base_rows if _payable(row) and row.due_date < _today(db, row.source)]
+        rows = [row for row in base_rows if _has_open_balance(row) and row.due_date < _today(db, row.source)]
     elif view == "paid":
         rows = [row for row in base_rows if row.status == "PAID"]
     else:
@@ -1246,7 +1403,9 @@ def invoices(
         "expected_cash_by_week": [{**entry, "amount": str(entry["amount"])} for key, entry in sorted(expected_cash.items())],
         "models": model_names, "synthetic_demo": not user,
         "ready_for_review_count": ready_for_review_count,
+        "daily_suggestion_cap": DAILY_SUGGESTION_CAP,
         "drifting_client_count": len(drifting_ids),
+        "drifting_signal_counts": drift_signal_counts,
         "client_signals": sorted([{"id": client.id, "name":client.display_name, "drift":drift_cache[client.id]}
                                   for client in clients_in_scope if client.id in drifting_ids],
                                  key=lambda row: -row["drift"].get("severity_score", 0))[:5],
@@ -1259,7 +1418,7 @@ def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_
     invoice = _get_invoice_or_404(db, invoice_id)
     _authorize_invoice(request, invoice, db)
     activity_scores = _activity_for_source(db, invoice.source)
-    daily_candidate_ids = _top_policy_candidates(db, None if session_user(request) else "demo")
+    daily_candidate_ids = _top_policy_candidates(db, None if session_user(request, db=db) else "demo")
     payload = _invoice_dict(db, invoice, include_detail=True, activity_scores=activity_scores,
                             daily_candidate_ids=daily_candidate_ids)
     _record_policy_decision(db, invoice, payload)
@@ -1269,7 +1428,7 @@ def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_
 
 @app.get("/action-queue")
 def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
-    scope = None if session_user(request) else "demo"
+    scope = None if session_user(request, db=db) else "demo"
     query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0)
     if scope:
         query = query.where(Invoice.source == scope)
@@ -1287,8 +1446,9 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
     ranked = ranked[:DAILY_SUGGESTION_CAP]
     candidate_ids = set(ranked)
     items = []
+    rows_by_id = {row.id: row for row in rows}
     for invoice_id in ranked[:DAILY_SUGGESTION_CAP]:
-        invoice = next((row for row in rows if row.id == invoice_id), None)
+        invoice = rows_by_id.get(invoice_id)
         if invoice is None:
             continue
         item = _invoice_dict(db, invoice, include_detail=True, include_timeline=False, daily_candidate_ids=candidate_ids,
@@ -1296,7 +1456,26 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
         if item.get("recommendation") and item["recommendation"].get("state") == "proposed":
             _record_policy_decision(db, invoice, item)
             items.append({key: item[key] for key in ("id", "invoice_number", "client_name", "client_id", "source", "currency", "outstanding", "due_date", "decision", "recommendation")})
-    items.sort(key=lambda row: (-float(row["decision"].get("expected_cash_gain") or 0), row["due_date"], row["invoice_number"]))
+    collections_review = []
+    for invoice in rows:
+        days_late = (_today(db, invoice.source) - invoice.due_date).days
+        if not _payable(invoice) or days_late < 90:
+            continue
+        summary = _invoice_dict(
+            db, invoice, include_detail=False, include_timeline=False,
+            forecast_cache=forecast_cache, create_recommendation=False,
+        )
+        if summary["decision"]["action"] != "review_for_writeoff_or_collections":
+            continue
+        collections_review.append({
+            "id": invoice.id, "invoice_number": invoice.invoice_number,
+            "client_name": invoice.client.display_name, "client_id": invoice.client_id,
+            "source": invoice.source, "currency": invoice.currency,
+            "outstanding": str(invoice.outstanding), "due_date": invoice.due_date.isoformat(),
+            "days_late": days_late, "decision": summary["decision"],
+            "recommendation": None,
+        })
+    collections_review.sort(key=lambda row: (row["currency"], -row["days_late"], row["due_date"], row["invoice_number"]))
     db.commit()
     skipped = list(db.scalars(select(Recommendation).join(Invoice).where(
         Recommendation.state == "skipped", Invoice.source == "demo" if scope else text("1=1"),
@@ -1304,6 +1483,7 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
     )).all())
     return {"items": items, "count": len(items), "pending_count": len(items), "skipped_count": len(skipped),
             "skipped": [{"id": row.id, "invoice_id": row.invoice_id} for row in skipped], "daily_cap": DAILY_SUGGESTION_CAP,
+            "collections_review": collections_review,
             "as_of": _today(db, scope).isoformat() if scope else _today(db).isoformat(),
             "synthetic_demo": scope == "demo"}
 
@@ -1388,7 +1568,7 @@ def triage_invoice_reply(invoice_id: str, payload: ReplyInput, request: Request,
 
 @app.get("/clients")
 def clients(request: Request, q: str | None = None, options_only: bool = False, db: Session = Depends(get_db)) -> dict:
-    user = session_user(request)
+    user = session_user(request, db=db)
     query = select(Client).order_by(Client.display_name.asc())
     if not user:
         query = query.where(Client.source == "demo")
@@ -1408,7 +1588,7 @@ def clients(request: Request, q: str | None = None, options_only: bool = False, 
                        "drift": saved_signals.get(client.id) or _drift_for(db, client)})
     output.sort(key=lambda row: (-row["drift"].get("severity_score", 0), row["name"].casefold()))
     counts = {name: sum(row["drift"].get("signal_type") == name for row in output)
-              for name in ("paying_later", "later_than_usual", "gone_quiet", "insufficient_history")}
+              for name in ("paying_later", "later_than_usual", "gone_quiet", "habitually_late", "insufficient_history")}
     return {"items": output, "signal_counts": counts}
 
 
@@ -1417,7 +1597,7 @@ def client_terms_what_if(client_id: str, payload: WhatIfInput, request: Request,
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found.")
-    if client.source != "demo" and not session_user(request):
+    if client.source != "demo" and not session_user(request, db=db):
         raise HTTPException(status_code=401, detail="Operator login required to simulate PayPal client terms.")
     records = _client_records(db, client.id)
     eligible = [row for row in records if row["status"] not in CLOSED_STATUSES and Decimal(str(row["outstanding"])) > 0]
@@ -1466,14 +1646,14 @@ def client_terms_what_if(client_id: str, payload: WhatIfInput, request: Request,
 
 def _scoped_invoice_rows(request: Request, db: Session) -> list[Invoice]:
     query = select(Invoice).options(joinedload(Invoice.client)).order_by(Invoice.due_date.asc())
-    if not session_user(request):
+    if not session_user(request, db=db):
         query = query.where(Invoice.source == "demo")
     return list(db.scalars(query).all())
 
 
 def _scoped_clients(request: Request, db: Session) -> list[Client]:
     query = select(Client).order_by(Client.display_name.asc())
-    if not session_user(request):
+    if not session_user(request, db=db):
         query = query.where(Client.source == "demo")
     return list(db.scalars(query).all())
 
@@ -1511,7 +1691,7 @@ def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found.")
-    if client.source != "demo" and not session_user(request):
+    if client.source != "demo" and not session_user(request, db=db):
         raise HTTPException(status_code=401, detail="Operator login required to view PayPal client facts.")
     query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.client_id == client.id).order_by(Invoice.issue_date.desc())
     rows = list(db.scalars(query).all())
@@ -1530,15 +1710,22 @@ def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)
             "id", "invoice_number", "issue_date", "due_date", "days_to_due", "total", "paid", "outstanding",
             "currency", "status", "forecast", "why", "decision",
         )}
+        values["payment_term_type"] = row.payment_term_type
+        values["disputed"] = row.disputed
         settled_at = history_rows[row.id].get("settled_at")
         values["settled_at"] = settled_at.isoformat() if settled_at else None
         values["days_late"] = (settled_at - row.due_date).days if settled_at else None
         invoice_facts.append(values)
+    stories = _client_stories(
+        list(history_rows.values()), _today(db, client.source),
+        {row.id: row.invoice_number for row in rows},
+    )
     return {
         "as_of": _today(db, client.source).isoformat(),
         "client": {"id": client.id, "name": client.display_name, "source": client.source},
         "history": history,
         "drift": drift,
+        "stories": stories,
         "invoices": invoice_facts,
     }
 
@@ -1547,12 +1734,12 @@ def client_facts(client_id: str, request: Request, db: Session = Depends(get_db)
 def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
     rows = _scoped_invoice_rows(request, db)
     open_rows = [row for row in rows if _payable(row)]
-    candidate_ids = _top_policy_candidates(db, None if session_user(request) else "demo")
+    candidate_ids = _top_policy_candidates(db, None if session_user(request, db=db) else "demo")
     forecast_cache: dict[str, dict] = {}
     totals: dict[str, Decimal] = {}
     invoice_counts: dict[str, int] = {}
     candidates = []
-    today = _today(db, "demo" if not session_user(request) else None)
+    today = _today(db, "demo" if not session_user(request, db=db) else None)
     week_end = today + timedelta(days=6 - today.weekday())
     for row in open_rows:
         item = _invoice_dict(db, row, daily_candidate_ids=candidate_ids, forecast_cache=forecast_cache,
@@ -1577,7 +1764,7 @@ def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
     drifting = []
     for client in _scoped_clients(request, db):
         signal = _drift_for(db, client)
-        if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+        if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
             drifting.append({"client_id": client.id, "client_name": client.display_name, **signal})
     drifting.sort(key=lambda item: (-float(item.get("severity_score", 0)), item["client_name"].casefold()))
     return {
@@ -1596,7 +1783,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
     question = " ".join(payload.question.split())
     lowered = question.casefold()
     rows = _scoped_invoice_rows(request, db)
-    facts = {"as_of": _today(db, "demo" if not session_user(request) else None).isoformat(),
+    facts = {"as_of": _today(db, "demo" if not session_user(request, db=db) else None).isoformat(),
              "invoices": [{"id": row.id, "client_id": row.client_id, "client_name": row.client.display_name,
                             "status": row.status, "currency":row.currency, "outstanding":str(row.outstanding),
                             "due_date":row.due_date.isoformat()} for row in rows]}
@@ -1633,7 +1820,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
         signals = []
         for client in clients_by_id.values():
             signal = _drift_for(db, client)
-            if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
+            if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
                 signals.append({"client_id": client.id, "client_name": client.display_name,
                                 "signal_type": signal["signal_type"], "message": signal["message"],
                                 "severity_score": signal.get("severity_score", 0)})
@@ -1677,7 +1864,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
 
 @app.post("/sync")
 def sync(request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+    require_operator(request, db)
     try:
         return sync_paypal(db, PayPalAdapter())
     except PayPalError as exc:
@@ -1686,7 +1873,7 @@ def sync(request: Request, db: Session = Depends(get_db)) -> dict:
 
 @app.get("/sync/status")
 def sync_status(request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+    require_operator(request, db)
     latest = db.scalar(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(1))
     webhook_failures = db.scalar(select(func.count(InvoiceEvent.id)).where(
         InvoiceEvent.verified.is_(True), InvoiceEvent.processing_status.in_(["retry", "verification_retry"]),
@@ -1704,7 +1891,7 @@ def sync_status(request: Request, db: Session = Depends(get_db)) -> dict:
 
 @app.get("/paypal/recipients")
 def paypal_recipients(request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+    require_operator(request, db)
     allowed = settings.allowed_recipients
     clients = list(db.scalars(select(Client).where(Client.source == "paypal").order_by(Client.display_name)).all())
     return {"items": [{"id": client.id, "name": client.display_name, "email": client.email}
@@ -1713,8 +1900,15 @@ def paypal_recipients(request: Request, db: Session = Depends(get_db)) -> dict:
 
 
 @app.post("/paypal/invoices")
-def create_paypal_invoice(payload: CreateInvoiceInput, request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+def create_paypal_invoice(
+    payload: CreateInvoiceInput,
+    request: Request,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=32, max_length=64),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_operator(request, db)
+    if not idempotency_key or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", idempotency_key):
+        raise HTTPException(status_code=422, detail="Idempotency-Key must be a random URL-safe identifier.")
     if settings.paypal_mode.lower() != "sandbox":
         raise HTTPException(status_code=403, detail="Invoice creation is restricted to PayPal Sandbox.")
     client = db.get(Client, payload.client_id)
@@ -1726,29 +1920,103 @@ def create_paypal_invoice(payload: CreateInvoiceInput, request: Request, db: Ses
     issue_date = _today(db, "paypal")
     term_days = {"DUE_ON_RECEIPT": 0, "NET_15": 15, "NET_30": 30}[payload.payment_term_type]
     due_date = issue_date + timedelta(days=term_days)
-    invoice_number = f"LP-{issue_date:%Y%m%d}-{uuid4().hex[:8].upper()}"
+    request_facts = {
+        "client_id": payload.client_id, "amount": format(payload.amount, "f"),
+        "payment_term_type": payload.payment_term_type,
+        "partial_payment_allowed": payload.partial_payment_allowed,
+    }
+    request_hash = hashlib.sha256(json.dumps(request_facts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    operation = db.get(SandboxInvoiceOperation, idempotency_key)
+    now = datetime.now(timezone.utc)
+    if operation and operation.request_hash != request_hash:
+        raise HTTPException(status_code=409, detail="This Idempotency-Key was already used with different invoice details.")
+    if operation and operation.state == "completed":
+        return operation.response or {}
+    inserted = operation is None
+    if inserted:
+        invoice_number = f"LP-{issue_date:%Y%m%d}-{uuid4().hex[:8].upper()}"
+        operation = SandboxInvoiceOperation(
+            idempotency_key=idempotency_key, request_hash=request_hash,
+            invoice_number=invoice_number, state="processing", created_at=now, updated_at=now,
+        )
+        db.add(operation)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            operation = db.get(SandboxInvoiceOperation, idempotency_key)
+            if operation is None:
+                raise
+            inserted = False
+    if not inserted:
+        assert operation is not None
+        if operation.request_hash != request_hash:
+            raise HTTPException(status_code=409, detail="This Idempotency-Key was already used with different invoice details.")
+        if operation.state == "completed":
+            return operation.response or {}
+        if operation.state in {"processing", "sending"} and not _sandbox_operation_stale(operation.updated_at, now):
+            raise HTTPException(status_code=409, detail="This Sandbox invoice request is already being processed; retry with the same key shortly.")
+        create_phase = operation.paypal_invoice_id is None
+        next_state = "processing" if create_phase else "sending"
+        claimed = db.execute(update(SandboxInvoiceOperation).where(
+            SandboxInvoiceOperation.idempotency_key == idempotency_key,
+            SandboxInvoiceOperation.state == operation.state,
+            SandboxInvoiceOperation.updated_at == operation.updated_at,
+        ).values(state=next_state, updated_at=now))
+        if claimed.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="This Sandbox invoice request is already being processed; retry with the same key shortly.")
+        db.commit()
+        operation = db.get(SandboxInvoiceOperation, idempotency_key)
+    assert operation is not None
     adapter = PayPalAdapter()
     try:
-        draft = adapter.create_invoice(
-            client.email, payload.amount, currency, invoice_number, due_date,
-            "Thank you for your work with us.", payment_term_type=payload.payment_term_type,
-            partial_payment_allowed=payload.partial_payment_allowed, issue_date=issue_date,
-        )
-        paypal_id = str(draft.get("id") or "")
+        if not operation.paypal_invoice_id:
+            draft = adapter.create_invoice(
+                client.email, payload.amount, currency, operation.invoice_number, due_date,
+                "Thank you for your work with us.", payment_term_type=payload.payment_term_type,
+                partial_payment_allowed=payload.partial_payment_allowed, issue_date=issue_date,
+                request_id=idempotency_key,
+            )
+            paypal_id = str(draft.get("id") or "")
+            if not paypal_id:
+                raise PayPalError("PayPal created a draft without returning its invoice ID.", ambiguous=True)
+            upsert_paypal_invoice(db, draft)
+            operation.paypal_invoice_id = paypal_id
+            operation.state = "created"
+            operation.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            # Claim the send stage with a compare-and-set so duplicate requests
+            # cannot deliver the same invoice at the same time.
+            claimed = db.execute(update(SandboxInvoiceOperation).where(
+                SandboxInvoiceOperation.idempotency_key == idempotency_key,
+                SandboxInvoiceOperation.state == "created",
+                SandboxInvoiceOperation.paypal_invoice_id == paypal_id,
+            ).values(state="sending", updated_at=datetime.now(timezone.utc)))
+            if claimed.rowcount != 1:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="The Sandbox invoice was created and is waiting for its send step; retry with the same key.")
+            db.commit()
+            operation = db.get(SandboxInvoiceOperation, idempotency_key)
+        paypal_id = operation.paypal_invoice_id
         if not paypal_id:
-            raise PayPalError("PayPal created a draft without returning its invoice ID.", ambiguous=True)
-        invoice, _ = upsert_paypal_invoice(db, draft)
-        db.commit()
-        adapter.send_invoice(paypal_id)
+            raise PayPalError("Sandbox invoice creation is still unresolved; retry with the same Idempotency-Key.", ambiguous=True)
+        adapter.send_invoice(paypal_id, request_id=f"{idempotency_key}-send")
         invoice = refresh_paypal_invoice(db, adapter, paypal_id)
+        response = {"invoice_id": invoice.id, "invoice_number": invoice.invoice_number, "status": invoice.status}
+        operation.state = "completed"
+        operation.response = response
+        operation.updated_at = datetime.now(timezone.utc)
         db.commit()
     except PayPalError as exc:
-        db.commit()
-        detail = str(exc)
-        if "invoice_number" in locals():
-            detail = f"Sandbox invoice {invoice_number} may need reconciliation before creating another invoice. {detail}"
-        raise HTTPException(status_code=502, detail=detail) from exc
-    return {"invoice_id": invoice.id, "invoice_number": invoice.invoice_number, "status": invoice.status}
+        db.rollback()
+        operation = db.get(SandboxInvoiceOperation, idempotency_key)
+        if operation:
+            operation.state = "created" if operation.paypal_invoice_id else "reserved"
+            operation.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        raise HTTPException(status_code=502, detail=f"Sandbox invoice request could not be completed. Retry safely with the same Idempotency-Key. {exc}") from exc
+    return response
 
 
 @app.post("/webhooks/paypal")
@@ -1881,7 +2149,7 @@ def _finish_attempt(db: Session, attempt: ActionAttempt, recommendation: Recomme
 
 @app.post("/recommendations/{recommendation_id}/send")
 def send_recommendation(recommendation_id: str, payload: SendInput, request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+    require_operator(request, db)
     recommendation = db.get(Recommendation, recommendation_id)
     if not recommendation:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
@@ -1917,7 +2185,7 @@ def send_recommendation(recommendation_id: str, payload: SendInput, request: Req
 
 @app.post("/recommendations/{recommendation_id}/approve-partial-payment")
 def approve_partial_payment(recommendation_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
-    require_operator(request)
+    require_operator(request, db)
     recommendation = db.get(Recommendation, recommendation_id)
     if not recommendation:
         raise HTTPException(status_code=404, detail="Recommendation not found.")
