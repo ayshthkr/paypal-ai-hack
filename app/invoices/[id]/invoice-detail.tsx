@@ -9,11 +9,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import SurvivalCurve from "./survival-curve";
 
 type Quantile = { days: number; date: string } | null;
-type Forecast = { interval_method?: string; display_label?: string; collection_probability?: number; collection_method?: string | null; limited_history?: boolean; curve: number[]; quantiles: Record<string, Quantile>; probabilities: Record<string, number>; probability_by_due: number; reasons: string[]; model: string; model_version: string; already_overdue: boolean; forecast_horizon_days: number; history_count: number; scoring_date: string; scored_at: string } | null;
+type Forecast = { interval_method?: string; coverage_interval?: { lower_date: string | null; upper_date: string | null; target_coverage: number; method: string; caveat?: string }; promise_adjustment?: { applied: boolean; status: string; date?: string; weight: number; method?: string; caveat?: string }; display_label?: string; collection_probability?: number; collection_method?: string | null; limited_history?: boolean; curve: number[]; quantiles: Record<string, Quantile>; probabilities: Record<string, number>; probability_by_due: number; reasons: string[]; model: string; model_version: string; already_overdue: boolean; forecast_horizon_days: number; history_count: number; scoring_date: string; scored_at: string } | null;
 type Recommendation = { id: string; action: string; tone: string; reason: string; draft_text: string; draft_source: string; drafted_at: string | null; edited_text: string; invoice_version: number; state: string; approved_text: string | null } | null;
 type IssueForecast = { source: string; model_version: string | null; p10_date: string | null; p50_date: string | null; p90_date: string | null; probabilities: Record<string, number> | null; absolute_error_days?: number | null; within_p10_p90?: boolean | null } | null;
 type Outcome = { paid_at: string | null; days_from_due: number | null; timing: "late" | "early" | "on_time" | "date_unavailable"; issue_forecast: IssueForecast } | null;
 type TimelineEvent = { kind: string; at: string; detail: string | null };
+type ReminderOutcome = { sent_at: string; tone: string; status: "paid" | "partial" | "silent" | "checking"; amount_paid: string; currency: string; observed_through: string; window_ends: string };
 type Neighbor = { id: string; invoice_number: string; query: string };
 type InvoiceData = {
   id: string; paypal_id: string | null; invoice_number: string; client_id: string; client_name: string; client_email: string | null;
@@ -23,6 +24,7 @@ type InvoiceData = {
   drift: { signal: string; available: boolean; settled_count: number; message: string };
   decision: { action: string; tone: string; reason: string }; recommendation: Recommendation;
   outcome: Outcome; timeline: TimelineEvent[];
+  reminder_outcomes?: ReminderOutcome[];
   attempts?: { state: string; provider_reference: string | null; started_at: string; finished_at: string | null; error: string | null }[];
   reminder_delivery_note?: string;
   outlier_hint?: string | null;
@@ -220,7 +222,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="drift-card" style={{ marginTop: 12 }}><strong>Why this forecast</strong><p>{data.why}</p></div>
               <SurvivalCurve curve={data.forecast.curve} quantiles={data.forecast.quantiles}/>
               {data.forecast.limited_history && <div className="delivery-note">Limited history · fewer than 5 settled invoices; estimates use pooled priors.</div>}
-              <div className="fine-print">{data.forecast.interval_method}</div><div className="legend"><span className="legend-item"><i className="legend-line"/>Unpaid probability</span><span className="legend-item"><i className="legend-band"/>p10–p90 payment window</span></div>
+              <div className="fine-print">{data.forecast.coverage_interval?.method || data.forecast.interval_method}</div><div className="legend"><span className="legend-item"><i className="legend-line"/>Unpaid probability</span><span className="legend-item"><i className="legend-band"/>Curve P10–P90 range</span></div>
+              {data.forecast.coverage_interval && <div className="delivery-note" style={{ marginTop: 8 }}>Validation-calibrated {Math.round(data.forecast.coverage_interval.target_coverage * 100)}% coverage interval: {shortDate(data.forecast.coverage_interval.lower_date)} – {shortDate(data.forecast.coverage_interval.upper_date)}. This wider interval is separate from the curve percentiles. {data.forecast.coverage_interval.caveat}</div>}
+              {data.forecast.promise_adjustment?.applied && <div className="delivery-note" style={{ marginTop: 8 }}><strong>Promise scenario · {shortDate(data.forecast.promise_adjustment.date)}</strong><p>{data.forecast.promise_adjustment.method} {data.forecast.promise_adjustment.caveat}</p></div>}
               <div className="quantiles"><div className="quantile"><div className="quantile-label">Paid by due date</div><div className="quantile-value">{Math.round(data.forecast.probability_by_due * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 14 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["14d"] * 100)}%</div></div><div className="quantile"><div className="quantile-label">Paid in 30 days</div><div className="quantile-value">{Math.round(data.forecast.probabilities["30d"] * 100)}%</div></div></div>
               <div className="quantiles">{(["p10", "p50", "p90"] as const).map(key => <div className="quantile" key={key}><div className="quantile-label">{key.toUpperCase()} payment date</div><div className="quantile-value">{shortDate(data.forecast?.quantiles[key]?.date)}</div></div>)}</div>
               <ul className="reasons">{data.forecast.reasons.map((reason, index) => <li key={index}><span className="reason-mark">✓</span>{reason}</li>)}</ul>
@@ -279,7 +283,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
             </> : <div className="empty-box">No reminder proposed. {data.decision.action === "personal_call" ? "Make a personal call and record the outcome." : data.decision.action === "offer_partial_payment" ? "Review a partial-payment option for this client." : data.decision.action === "review_for_writeoff_or_collections" ? "Review this stale balance for write-off or collections." : data.decision.action === "wait" ? "The current policy says to wait." : "Open this invoice again to refresh its recommendation."}</div>}
             {notice && <div className="action-message" role="status">{notice}</div>}
           </div>
-          <div className="panel"><div className="panel-head"><div><div className="panel-title">Client reply triage</div><div className="panel-subtitle">Paste a reply to record a promise, dispute, question, or other note.</div></div></div>
+          <div className="panel" id="reply-triage"><div className="panel-head"><div><div className="panel-title">Client reply triage</div><div className="panel-subtitle">Paste a reply to record a promise, dispute, question, or other note.</div></div></div>
             <textarea aria-label="Paste client reply" placeholder="Example: We will pay Friday." value={replyText} onChange={event => setReplyText(event.target.value)} disabled={busy}/>
             <div className="action-buttons"><button className="btn" disabled={busy || !replyText.trim()} onClick={() => void triageReply()}>{busy ? "Checking…" : "Classify reply"}</button>
               {data.disputed && <span className="status-pill">Reminders paused · disputed</span>}
@@ -287,6 +291,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
             </div>
             {replyTriage && <div className="action-message" role="status">{replyTriage.classification.replaceAll("_", " ")} · {replyTriage.classifier} · {replyTriage.note}</div>}
           </div>
+          {data.reminder_outcomes?.length ? <div className="panel"><div className="panel-title">Next-week reminder outcomes</div><p className="fine-print">Payments are checked for seven days after each recorded reminder. Partial payments are kept separate from full settlement.</p><div className="history-list">{data.reminder_outcomes.map((outcome, index) => <div className="history-row" key={`${outcome.sent_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{outcome.tone} reminder · {outcome.status === "checking" ? "checking through " + shortDate(outcome.window_ends) : outcome.status}</div><div className="history-meta">Sent {shortDate(outcome.sent_at)} · {outcome.amount_paid !== "0.00" ? `${outcome.currency} ${outcome.amount_paid} received` : `Observed through ${shortDate(outcome.observed_through)}`}</div></div></div>)}</div></div> : null}
           {rec && <div className="panel"><div className="panel-head"><div><div className="panel-title">Action history</div><div className="panel-subtitle">Dispatch attempts</div></div></div><div className="history-list">{(data.attempts || []).length ? data.attempts?.map((attempt, index) => <div className="history-row" key={`${attempt.started_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{attempt.state}{attempt.provider_reference ? ` · ${attempt.provider_reference}` : ""}</div><div className="history-meta">{formatIST(attempt.started_at)}</div>{attempt.error && <div className="history-meta">{attempt.error}</div>}</div></div>) : <div className="fine-print">No send attempts recorded.</div>}</div></div>}
         </aside>
       </div>

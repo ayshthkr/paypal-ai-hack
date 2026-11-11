@@ -37,6 +37,8 @@ type InvoiceResult = {
   view_counts: Record<string, number>; currency_totals: Record<string, string>;
   aging_buckets: Record<string, AgingBucket>;
   expected_cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[];
+  cash_horizon: Record<string, AgingBucket>;
+  top_late_scenario: { assumption: string; client_count: number; clients: { id: string; name: string; late_invoice_count: number }[]; invoice_count: number; cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[] };
   synthetic_demo: boolean; models: string[]; ready_for_review_count: number; daily_suggestion_cap: number; drifting_client_count: number;
   drifting_signal_counts?: Record<string, number>;
   as_of: string; as_of_max: string; client_signals?: ClientRow[];
@@ -54,6 +56,7 @@ type SyncStatus = {
   webhook_failures: number;
 };
 type PaypalRecipient = { id: string; name: string; email: string };
+type DemoStory = { key: string; title: string; summary: string; href: string };
 
 const modules = [AllCommunityModule];
 const gridTheme = themeQuartz.withParams({ accentColor: "#155eef", backgroundColor: "#ffffff", borderColor: "#e6ebee", fontFamily: "Arial, sans-serif", fontSize: "12px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f5f8fc" });
@@ -68,6 +71,7 @@ const columnChoices = [
 const defaultColumns = columnChoices.map(([id]) => id).filter(id => !["status", "window", "expected_cash"].includes(id));
 const MAX_API_WAKE_RETRIES = 30;
 const API_WAKE_RETRY_DELAY_MS = 2500;
+const DEMO_FX_TO_USD: Record<string, number> = { USD: 1, EUR: 1.08, GBP: 1.27, CAD: 0.74 };
 
 
 function SearchInput({ query, onDebouncedQuery }: { query: string; onDebouncedQuery: (value: string) => void }) {
@@ -95,6 +99,29 @@ function money(currency: string, value: number | string) {
   return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function DemoStoriesMenu() {
+  const [stories, setStories] = useState<DemoStory[] | null>(null);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (stories) return;
+    try {
+      const result = await getJson<{ items: DemoStory[] }>("/api/demo-stories");
+      setStories(result.items);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Demo stories are unavailable.");
+    }
+  };
+  return <details className="column-chooser" onToggle={event => { if (event.currentTarget.open) void load(); }}>
+    <summary>Demo stories</summary>
+    <div className="column-menu demo-story-menu">
+      {stories?.map(story => <Link href={story.href} key={story.key}><strong>{story.title}</strong><span>{story.summary}</span></Link>)}
+      {!stories && !error && <span>Loading demo stories…</span>}
+      {error && <span role="alert">{error} <button className="btn" onClick={() => { setStories(null); setError(""); void load(); }}>Retry</button></span>}
+    </div>
+  </details>;
+}
+
 export default function PortfolioClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -115,6 +142,8 @@ export default function PortfolioClient() {
   const detailHref = useCallback((id: string, query = searchKey) => `/invoices/${encodeURIComponent(id)}${query ? `?${query}` : ""}`, [searchKey]);
 
   const [data, setData] = useState<InvoiceResult | null>(null);
+  const [usdMode, setUsdMode] = useState(false);
+  const [scenarioOpen, setScenarioOpen] = useState(false);
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(defaultColumns);
   const [loading, setLoading] = useState(true);
@@ -353,6 +382,31 @@ export default function PortfolioClient() {
     habituallyLate: data?.drifting_signal_counts?.habitually_late ?? drifting.filter(client => client.drift.signal_type === "habitually_late").length,
   };
   const pageCount = data?.page_count || 1;
+  const formatAmounts = (amounts: Record<string, string | number>) => {
+    const entries = Object.entries(amounts);
+    if (!entries.length) return "No balance";
+    if (usdMode) {
+      const supported = entries.filter(([currency]) => DEMO_FX_TO_USD[currency] !== undefined);
+      const unsupported = entries.filter(([currency]) => DEMO_FX_TO_USD[currency] === undefined);
+      const usd = supported.reduce((sum, [currency, amount]) => sum + Number(amount) * DEMO_FX_TO_USD[currency], 0);
+      const converted = supported.length ? `${money("USD", usd)} · FX not live` : "USD equivalent unavailable";
+      const unconverted = unsupported.map(([currency, amount]) => money(currency, amount));
+      return [converted, ...(unconverted.length ? [`Not converted: ${unconverted.join(", ")}`] : [])].join(" · ");
+    }
+    return entries.map(([currency, amount]) => money(currency, amount)).join(" · ");
+  };
+  const formatCashEntries = (entries: { currency: string; amount: string; invoice_count: number }[]) => {
+    if (!entries.length) return "No forecast cash";
+    if (usdMode) {
+      const supported = entries.filter(entry => DEMO_FX_TO_USD[entry.currency] !== undefined);
+      const unsupported = entries.filter(entry => DEMO_FX_TO_USD[entry.currency] === undefined);
+      const usd = supported.reduce((sum, entry) => sum + Number(entry.amount) * DEMO_FX_TO_USD[entry.currency], 0);
+      const converted = supported.length ? `${money("USD", usd)} (${supported.reduce((sum, entry) => sum + entry.invoice_count, 0)}) · FX not live` : "USD equivalent unavailable";
+      const unconverted = unsupported.map(entry => `${money(entry.currency, entry.amount)} (${entry.invoice_count})`);
+      return [converted, ...(unconverted.length ? [`Not converted: ${unconverted.join(", ")}`] : [])].join(" · ");
+    }
+    return entries.map(entry => `${money(entry.currency, entry.amount)} (${entry.invoice_count})`).join(" · ");
+  };
 
   const selectView = (view: string) => updateUrl({ view, age_bucket: null, action_only: null, drifting_only: null });
   const setCardFilter = (filter: "open" | "overdue" | "actions" | "drifting") => {
@@ -364,10 +418,10 @@ export default function PortfolioClient() {
 
   return <AgGridProvider modules={modules}>
     <div className="app-shell">
-      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
+      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/tour">Guided tour</Link><DemoStoriesMenu/><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
-        <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools">{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
+        <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools"><button className="btn" onClick={() => setUsdMode(value => !value)}>{usdMode ? "Show source currencies" : "Show USD equivalent"}</button>{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
         {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => { void getJson(`/api/demo/clock?as_of=${value}`, { method: "POST" }).then(() => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")).catch(cause => setError(cause.message)); }} onReset={() => void resetDemo()} />}
         {error && <div className="error-box" role="alert">{error}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
@@ -400,6 +454,7 @@ export default function PortfolioClient() {
         {loading && !data && <div role="status" aria-label="Loading portfolio" className="portfolio-skeleton"><div className="stats-grid">{[1,2,3,4].map(key => <div className="skeleton-card" key={key} />)}</div><div className="skeleton-grid" /></div>}
         {data && <>
           {data.as_of !== data.as_of_max && <div className="demo-banner" role="status">Viewing as of {data.as_of} · simulation is disabled while the clock is moved back.</div>}
+          <section className="panel"><div className="eyebrow">Open book · {data.as_of}</div><h2>{usdMode ? formatAmounts(data.currency_totals) : formatAmounts(data.currency_totals)} open across {data.view_counts.open.toLocaleString("en-US")} invoices</h2><p className="subheading">{data.view_counts.overdue.toLocaleString("en-US")} past due · {data.drifting_client_count.toLocaleString("en-US")} client timing signals</p><p className="fine-print">{usdMode ? "Fixed demo rates: EUR 1.08 USD · GBP 1.27 USD · CAD 0.74 USD. FX is not live." : "Balances remain separated by source currency; toggle to a fixed USD equivalent when presenting."}</p></section>
           <section className="stats-grid">
             <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
             <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
@@ -421,14 +476,16 @@ export default function PortfolioClient() {
             <div className="aging-grid">{[["not_due", "Not due"], ["late_1_30", "1–30 days"], ["late_31_60", "31–60 days"], ["late_61_89", "61–89 days"], ["late_90_plus", "90+ days"]].map(([key, label]) => {
               const bucket = data.aging_buckets[key] || { count: 0, amounts: {} };
               return <button className={`aging-bucket ${selectedAge === key ? "selected" : ""}`} key={key} onClick={() => updateUrl({ view: "open", age_bucket: selectedAge === key ? null : key, action_only: null, drifting_only: null })}>
-                <span>{label}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => money(currency, amount)).join(" · ") || "No balance"}</small>
+                <span>{label}</span><strong>{bucket.count}</strong><small>{formatAmounts(bucket.amounts)}</small>
               </button>;
             })}</div>
           </section>
 
-          <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Outstanding balances grouped by their p50 settlement week.</div></div></div>
-            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span>{data.expected_cash_by_week.filter(entry => entry.week_start === week).map(entry => <strong key={entry.currency}>{money(entry.currency, entry.amount)} <small>({entry.invoice_count})</small></strong>)}</button>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
+          <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Risk-weighted cash grouped by the curve’s p50 settlement week.</div></div></div>
+            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === week))}</strong></button>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
           </section>
+          <section className="panel"><div className="panel-title">Open balance by forecast horizon</div><div className="panel-subtitle">Principal balance and invoice count are grouped by the same p50 curve; these amounts reconcile to the open book.</div><div className="aging-grid">{[["next_8_weeks", "Next 8 weeks"], ["after_8_weeks", "After 8 weeks · within 180 days"], ["beyond_180_days", "Beyond 180 days / no median"]].map(([key, label]) => { const bucket = data.cash_horizon[key] || { count: 0, amounts: {} }; return <article className="aging-bucket" key={key}><span>{label}</span><strong>{bucket.count}</strong><small>{formatAmounts(bucket.amounts)}</small></article>; })}</div></section>
+          <section className="panel"><div className="panel-head"><div><div className="panel-title">If the top five late clients pay within 14 days</div><div className="panel-subtitle">A hypothetical scenario; it is not the forecast.</div></div><button className="btn" onClick={() => setScenarioOpen(value => !value)}>{scenarioOpen ? "Hide scenario" : "Show week-by-week cash"}</button></div>{scenarioOpen && <><p className="fine-print">{data.top_late_scenario.assumption}</p><p>{data.top_late_scenario.clients.map(client => `${client.name} (${client.late_invoice_count} late)`).join(" · ") || "No currently late client is available."}</p><div className="cash-week-grid">{data.top_late_scenario.cash_by_week.map(entry => <article className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {entry.week_start}</span><strong>{formatCashEntries([entry])}</strong></article>)}</div>{!data.top_late_scenario.cash_by_week.length && <div className="empty-inline">No overdue balance is available for this scenario.</div>}</>}</section>
 
           <section className="grid-panel" id="invoice-grid">
             <div className="toolbar-tools filter-toolbar"><label>Status <select multiple aria-label="Filter statuses" value={(params.get("statuses") || "").split(",").filter(Boolean)} onChange={event => updateUrl({ statuses: Array.from(event.target.selectedOptions).map(option => option.value).join(",") || null })}>{["SENT","OVERDUE","PARTIALLY_PAID","PAID","CANCELLED"].map(value => <option key={value}>{value}</option>)}</select></label><button className="btn" onClick={() => updateUrl({ statuses: null })}>All statuses</button><label>Due from <input type="date" aria-label="Due from" value={params.get("due_from") || ""} onChange={event => updateUrl({ due_from: event.target.value || null })} /></label><label>Due to <input type="date" aria-label="Due to" value={params.get("due_to") || ""} onChange={event => updateUrl({ due_to: event.target.value || null })} /></label>{params.has("predicted_week") && <button className="btn" onClick={() => updateUrl({ predicted_week: null })}>Clear settlement week</button>}</div>
@@ -446,7 +503,7 @@ export default function PortfolioClient() {
             {actionOnly && <div className="filter-note">Showing only today&apos;s pending proposed reminders. <button onClick={() => updateUrl({ action_only: null })}>Clear</button></div>}
             {driftingOnly && <div className="filter-note">Showing invoices for clients with a timing signal. <button onClick={() => updateUrl({ drifting_only: null })}>Clear</button></div>}
             <div className="grid-wrap">{rowData.length ? <AgGridReact<InvoiceRow> rowData={rowData} columnDefs={columns} theme={gridTheme} defaultColDef={{ sortable: false, filter: false, resizable: true }} rowHeight={57} headerHeight={44} animateRows={false} suppressCellFocus={false} onGridReady={event => { gridApi.current = event.api; }} /> : <div className="empty-box">No invoices match this view and its filters. Change a filter or select another view.</div>}</div>
-            <div className="grid-footer"><div className="currency-total-row">{Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · not converted · open {currency} <strong>{Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
+            <div className="grid-footer"><div className="currency-total-row">{usdMode ? <span>All pages · open balance <strong>{formatAmounts(data.currency_totals)}</strong></span> : Object.entries(data.currency_totals).map(([currency, amount]) => <span key={currency}>All pages · not converted · open {currency} <strong>{Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>)}</div>
               <div className="pager"><label>Rows <select className="select" aria-label="Rows per page" value={pageSize} onChange={event => updateUrl({ page_size: event.target.value })}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><span>Page {currentPage} of {pageCount}</span><button className="btn" disabled={currentPage <= 1} onClick={() => updateUrl({ page: String(currentPage - 1) }, "push", false)}>Previous</button><button className="btn" disabled={currentPage >= pageCount} onClick={() => updateUrl({ page: String(currentPage + 1) }, "push", false)}>Next</button></div>
             </div>
           </section>

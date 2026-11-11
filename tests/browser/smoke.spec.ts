@@ -72,3 +72,31 @@ test("an editable synthetic invoice draft survives a reload", async ({ page }) =
     await page.request.post(`/api/recommendations/${recommendationId}/draft`, { data: { text: original } });
   }
 });
+
+test("queue explains an empty successful response", async ({ page }) => {
+  await page.goto("/actions");
+  await page.route("**/api/action-queue", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      items: [], count: 0, daily_cap: 5, as_of: "2026-11-11", synthetic_demo: true,
+      pending_count: 0, skipped_count: 0, skipped: [], collections_review: [], collections_totals: {},
+    }),
+  }));
+  await page.getByRole("button", { name: "Refresh queue" }).click();
+  await expect(page.getByText(/No reminder or partial-payment action is pending today/)).toBeVisible();
+});
+
+test("queue reports the waking state and stops retrying after a 30-second API outage", async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.goto("/actions");
+  await page.route("**/api/action-queue", route => route.fulfill({
+    status: 500,
+    contentType: "application/json",
+    body: JSON.stringify({ detail: "Synthetic API outage for queue recovery test." }),
+  }));
+  await page.getByRole("button", { name: "Refresh queue" }).click();
+  await expect(page.getByRole("status").getByText(/Waking the API/)).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText(/API did not wake within 30 seconds/)).toBeVisible({ timeout: 37_000 });
+  await expect(page.getByRole("button", { name: "Refresh queue" })).toBeEnabled();
+});

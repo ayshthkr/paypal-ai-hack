@@ -89,6 +89,21 @@ def test_feature_inputs_are_point_in_time_and_cold_start_is_shrunk():
     assert prior["partial_share"] == 0
 
 
+def test_reminder_recency_ignores_events_after_scoring_timestamp():
+    as_of = date(2026, 6, 1)
+    invoice = {
+        "id": "reminder-cutoff", "client_id": "client", "issue_date": as_of - timedelta(days=40),
+        "due_date": as_of - timedelta(days=10), "total": 500, "outstanding": 500,
+        "reminder_events": [
+            {"sent_at": (as_of - timedelta(days=5)).isoformat()},
+            {"sent_at": (as_of + timedelta(days=1)).isoformat()},
+        ],
+    }
+    values = features(invoice, as_of, [], [invoice])
+    assert values["reminder_count"] == 1
+    assert values["days_since_last_reminder"] == 5
+
+
 def test_exposure_from_synthetic_records_uses_as_of_timeline_not_final_balance():
     target = {"id": "target", "client_id": "c", "issue_date": date(2026, 1, 1), "due_date": date(2026, 1, 20), "total": 100, "outstanding": 100, "currency": "EUR"}
     other = {"id": "other", "client_id": "c", "issue_date": date(2025, 12, 1), "due_date": date(2025, 12, 20), "total": 100, "outstanding": 0, "status": "PAID", "settled_at": date(2026, 1, 10), "outcome_paid_at": date(2026, 1, 10), "cancelled_at": None, "partial_at": None, "partial_amount": Decimal("0")}
@@ -329,6 +344,13 @@ def test_mixed_currency_open_totals_remain_separate_in_api(api):
     assert payload["currency_totals"] == {"EUR": "80.00", "USD": "120.00"}
     amounts = payload["aging_buckets"]["late_1_30"]["amounts"]
     assert amounts == {"EUR": "80.00", "USD": "120.00"}
+    assert payload["cash_horizon"]["next_8_weeks"]["count"] + payload["cash_horizon"]["after_8_weeks"]["count"] + payload["cash_horizon"]["beyond_180_days"]["count"] == payload["view_counts"]["open"]
+    horizon_amounts = {}
+    for bucket in payload["cash_horizon"].values():
+        for currency, amount in bucket["amounts"].items():
+            horizon_amounts[currency] = horizon_amounts.get(currency, Decimal("0")) + Decimal(amount)
+    assert horizon_amounts == {currency: Decimal(amount) for currency, amount in payload["currency_totals"].items()}
+    assert "within the next 14 days" in payload["top_late_scenario"]["assumption"]
 
 
 def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
@@ -353,12 +375,16 @@ def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
     assert page["view_counts"]["open"] == 32
     assert page["view_counts"]["paid"] == 4
     assert page["aging_buckets"]["late_1_30"]["count"] == 32
+    assert sum(bucket["count"] for bucket in page["cash_horizon"].values()) == 32
+    assert sum(bucket["count"] for bucket in page["aging_buckets"].values()) == page["view_counts"]["open"]
 
     overdue = client.get("/invoices?view=overdue&page_size=50").json()
     assert overdue["count"] == 32
     paid = client.get("/invoices?view=paid&page_size=50").json()
     assert paid["count"] == 4
-    assert paid["currency_totals"] == {}
+    # The header totals describe the open book and stay stable while paging
+    # historical paid rows.
+    assert paid["currency_totals"] == {"USD": "3200.00"}
 
     filtered = client.get(f"/invoices?view=open&client_id={owners[0].id}&page_size=50").json()
     assert filtered["count"] == 16
@@ -440,6 +466,10 @@ def test_action_queue_generates_five_or_fewer_reviewable_recommendations(api, mo
     assert payload["count"] == 1
     assert payload["items"][0]["recommendation"]["state"] == "proposed"
     assert payload["items"][0]["decision"]["expected_cash_gain"] > 0
+    portfolio = client.get("/invoices?view=all").json()
+    assert portfolio["ready_for_review_count"] == payload["pending_count"] == 1
+    assert sum(bucket["count"] for bucket in portfolio["aging_buckets"].values()) == portfolio["view_counts"]["open"]
+    assert sum(portfolio["drifting_signal_counts"].values()) == portfolio["drifting_client_count"]
 
 
 def test_currency_lane_order_and_ninety_day_collections_lane(api, monkeypatch):
@@ -506,6 +536,39 @@ def test_portfolio_signal_total_equals_all_visible_signal_counts(api, monkeypatc
     assert payload["drifting_client_count"] == 4
     assert sum(payload["drifting_signal_counts"].values()) == 4
     assert payload["drifting_signal_counts"]["habitually_late"] == 1
+
+
+def test_health_probe_is_minimal_and_ready_does_not_expose_configuration(api):
+    client, _ = api
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.json() == {"ok": True}
+    assert health.headers["x-content-type-options"] == "nosniff"
+    assert health.headers["x-frame-options"] == "DENY"
+    assert health.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    assert client.get("/ready").status_code == 404
+
+
+def test_named_demo_stories_are_safe_when_the_synthetic_fixture_is_empty(api):
+    client, _ = api
+    response = client.get("/demo-stories")
+    assert response.status_code == 200
+    stories = response.json()["items"]
+    assert {story["key"] for story in stories} == {"verdant_outlier", "dispute", "firm_reminder", "terms_shift"}
+    assert all(story["href"].startswith(("/clients/", "/invoices/", "/")) for story in stories)
+
+
+def test_http_logs_exclude_operator_password_session_cookie_paypal_ids_and_webhook_body(api, caplog):
+    import logging
+
+    client, _ = api
+    sentinels = ["operator-password-sentinel", "session-cookie-sentinel", "paypal-invoice-id-sentinel", "webhook-body-sentinel"]
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        client.post("/auth/login", json={"username": "demo-user", "password": sentinels[0]})
+        client.get("/healthz", cookies={COOKIE_NAME: sentinels[1]})
+        client.post("/webhooks/paypal", json={"id": sentinels[2], "resource": {"body": sentinels[3]}})
+    for value in sentinels:
+        assert value not in caplog.text
 
 
 def test_public_demo_reset_reseeds_only_after_rate_limit_and_preserves_cooldown(api, monkeypatch):
@@ -597,6 +660,9 @@ def test_demo_send_is_idempotent_and_does_not_call_paypal(api, monkeypatch):
     assert first.status_code == 200, first.text
     assert first.json()["simulated"] is True
     assert second.status_code == 409
+    detail = client.get("/invoices/demo-send")
+    assert detail.status_code == 200
+    assert detail.json()["reminder_outcomes"][0]["status"] == "checking"
 
 
 def test_invalid_webhook_is_stored_but_never_mutates_invoice(api, monkeypatch):
@@ -806,6 +872,7 @@ def test_paid_invoice_detail_shows_issue_forecast_actual_outcome_and_timeline(ap
     assert payload["outcome"]["days_from_due"] == 5
     assert payload["outcome"]["issue_forecast"]["p50_date"] == "2026-10-14"
     assert payload["outcome"]["issue_forecast"]["absolute_error_days"] == 1
+    assert payload["reminder_outcomes"][0]["status"] == "paid"
     kinds = [event["kind"] for event in payload["timeline"]]
     assert {"Issued", "Sent", "Viewed by recipient", "Reminder sent", "Partial payment", "Paid"}.issubset(kinds)
 

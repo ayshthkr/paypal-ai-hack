@@ -521,16 +521,66 @@ def _draft_facts(invoice: Invoice, client: Client, forecast: dict | None, drift:
     }
 
 
-def _why_line(forecast: dict | None, drift: dict) -> str:
+def _why_line(forecast: dict | None, drift: dict, decision: dict | None = None) -> str:
+    parts = []
     if drift.get("available") and drift.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
         message = str(drift.get("message") or "").strip()
         if message:
-            return message if message.endswith((".", "!", "?")) else f"{message}."
-    reasons = (forecast or {}).get("reasons") or []
-    if reasons:
-        sentence = str(reasons[0]).strip()
-        return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
-    return "This forecast uses the portfolio baseline because no invoice-specific driver is available."
+            parts.append(message if message.endswith((".", "!", "?")) else f"{message}.")
+    probability = (forecast or {}).get("probabilities", {}).get("14d")
+    if probability is not None:
+        parts.append(f"The forecast estimates a {probability:.0%} chance of full payment within 14 days.")
+    policy_reason = str((decision or {}).get("reason") or "").strip()
+    if policy_reason:
+        if not policy_reason.endswith((".", "!", "?")):
+            policy_reason += "."
+        parts.append(f"Policy: {policy_reason}")
+    if not parts:
+        reasons = (forecast or {}).get("reasons") or []
+        if reasons:
+            sentence = str(reasons[0]).strip()
+            parts.append(sentence if sentence.endswith((".", "!", "?")) else f"{sentence}.")
+    return " ".join(parts) or "This forecast uses the portfolio baseline because no invoice-specific driver is available."
+
+
+def _reminder_outcomes(db: Session, invoice: Invoice) -> list[dict]:
+    """Summarize observed payment outcomes in the seven days after each reminder."""
+    events = []
+    for event in invoice.reminder_events or []:
+        if not isinstance(event, dict):
+            continue
+        sent = event_date(event.get("sent_at"))
+        if sent:
+            events.append((sent, event))
+    events.sort(key=lambda item: item[0])
+    if not events:
+        return []
+    # Detail outcomes must reflect the current transaction, including payments
+    # recorded after a request-scoped portfolio snapshot was assembled.
+    payments = list(
+        db.scalars(select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.occurred_at)).all()
+    )
+    payment_days = [(business_date(payment.occurred_at), payment.amount) for payment in payments]
+    today = _today(db, invoice.source)
+    output = []
+    for index, (sent, event) in enumerate(events):
+        observed_end = sent + timedelta(days=7)
+        if index + 1 < len(events):
+            observed_end = min(observed_end, events[index + 1][0])
+        amount = sum((value for paid_at, value in payment_days if sent < paid_at <= observed_end), Decimal("0"))
+        mature = today >= observed_end
+        state = "paid" if amount >= invoice.total else "partial" if amount > 0 else "silent" if mature else "checking"
+        output.append({
+            "sent_at": sent.isoformat(),
+            "tone": str(event.get("tone") or "reminder"),
+            "status": state,
+            "amount_paid": str(min(invoice.total, amount).quantize(Decimal("0.01"))),
+            "currency": invoice.currency,
+            "observed_through": min(today, observed_end).isoformat(),
+            "window_ends": observed_end.isoformat(),
+            "window_days": max(0, (observed_end - sent).days),
+        })
+    return output
 
 
 @lru_cache(maxsize=4)
@@ -803,10 +853,12 @@ def _invoice_dict(
         "payment_url": (((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")) if invoice.source == "paypal" else None,
         "forecast": forecast, "drift": drift, "decision": action,
         "outlier_hint": outlier_hint,
-        "why": _why_line(forecast, drift),
+        "why": _why_line(forecast, drift, action),
         "recommendation": _recommendation_dict(recommendation),
         "days_until_due_nonnegative": currency_due,
     }
+    if include_detail:
+        summary["reminder_outcomes"] = _reminder_outcomes(db, invoice)
     if include_detail and include_timeline:
         summary["outcome"] = _paid_outcome(db, invoice)
         summary["timeline"] = _invoice_timeline(db, invoice)
@@ -981,6 +1033,12 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/healthz")
+def healthz() -> dict:
+    """Minimal liveness probe; it exposes no deployment or credential state."""
+    return {"ok": True}
+
+
 @app.post("/demo/reset")
 def reset_demo(db: Session = Depends(get_db)) -> dict:
     state = db.scalar(select(DemoState).where(DemoState.id == "demo").with_for_update())
@@ -1037,25 +1095,13 @@ def model_evaluation() -> dict:
     shap_path = path.with_name("shap_summary.json")
     if shap_path.exists():
         payload["shap_summary"] = json.loads(shap_path.read_text()).get("features", [])
+    public_path = path.with_name("public_eval.json")
+    try:
+        payload["public_evaluation"] = json.loads(public_path.read_text()) if public_path.exists() else None
+    except (OSError, ValueError):
+        payload["public_evaluation"] = None
     payload["available"] = True
     return payload
-
-
-@app.get("/ready")
-def ready(db: Session = Depends(get_db)) -> dict:
-    if not settings.production_auth_configured:
-        raise HTTPException(status_code=503, detail="Production operator credentials and session secret must be configured.")
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Database is not ready.") from exc
-    return {
-        "status": "ready", "database": "ok", "paypal_mode": settings.paypal_mode,
-        "operator_auth_configured": settings.production_auth_configured,
-        "paypal_credentials_configured": settings.live_configured,
-        "paypal_webhook_configured": bool(settings.paypal_webhook_id),
-        "model_artifact_configured": __import__("pathlib").Path(settings.model_path).exists(),
-    }
 
 
 @app.get("/auth/me")
@@ -1337,15 +1383,15 @@ def invoices(
     _sort_invoice_items(items, sort, direction)
 
     totals: dict[str, Decimal] = {}
-    if sql_page and view == "all":
-        for row in base_rows:
-            if row.status not in CLOSED_STATUSES and row.outstanding > 0:
-                totals[row.currency] = totals.get(row.currency, Decimal("0")) + row.outstanding
-    for item in [] if sql_page else items:
-        if Decimal(item["outstanding"]) > 0 and item["status"] not in CLOSED_STATUSES:
-            totals[item["currency"]] = totals.get(item["currency"], Decimal("0")) + Decimal(item["outstanding"])
+    for row in base_rows:
+        if _has_open_balance(row):
+            totals[row.currency] = totals.get(row.currency, Decimal("0")) + row.outstanding
     def build_aggregates():
         aging = {name: {"count": 0, "amounts": {}} for name in allowed_buckets}
+        cash_horizon = {
+            name: {"count": 0, "amounts": {}}
+            for name in ("next_8_weeks", "after_8_weeks", "beyond_180_days")
+        }
         for row in base_rows:
             bucket = _age_bucket(row, _today(db, row.source))
             if not bucket:
@@ -1355,28 +1401,72 @@ def invoices(
             amounts[row.currency] = str(Decimal(amounts.get(row.currency, "0")) + Decimal(row.outstanding))
 
         expected_cash: dict[tuple[str, str], dict] = {}
+        late_client_counts: dict[str, int] = {}
+        late_rows = []
         for row in base_rows:
             if not _payable(row):
                 continue
             forecast = forecast_cache.get(row.id) or forecast_invoice(db, row, today=_today(db, row.source), persist=True, detail=False)
             forecast_cache[row.id] = forecast
-            p50 = forecast.get("quantiles", {}).get("p50")
-            if not p50 or not p50.get("date"):
-                continue
-            pay_date = date.fromisoformat(p50["date"])
             today = _today(db, row.source)
-            if not today <= pay_date <= today + timedelta(days=56):
+            if row.due_date < today:
+                late_client_counts[row.client_id] = late_client_counts.get(row.client_id, 0) + 1
+                late_rows.append(row)
+            p50 = forecast.get("quantiles", {}).get("p50")
+            pay_date = date.fromisoformat(p50["date"]) if p50 and p50.get("date") else None
+            if pay_date is None or pay_date > today + timedelta(days=180):
+                horizon_key = "beyond_180_days"
+            elif pay_date > today + timedelta(days=56):
+                horizon_key = "after_8_weeks"
+            else:
+                horizon_key = "next_8_weeks"
+                if today <= pay_date:
+                    week_start = pay_date - timedelta(days=pay_date.weekday())
+                    key = (week_start.isoformat(), row.currency)
+                    entry = expected_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
+                    entry["amount"] += Decimal(row.outstanding) * Decimal(str(forecast.get("collection_probability", 1)))
+                    entry["invoice_count"] += 1
+            bucket = cash_horizon[horizon_key]
+            bucket["count"] += 1
+            bucket["amounts"][row.currency] = str(
+                Decimal(bucket["amounts"].get(row.currency, "0")) + Decimal(row.outstanding)
+            )
+
+        clients_by_id = {client.id: client for client in clients_in_scope}
+        top_clients = sorted(
+            late_client_counts,
+            key=lambda client_id: (-late_client_counts[client_id], clients_by_id[client_id].display_name.casefold()),
+        )[:5]
+        selected = set(top_clients)
+        scenario_cash: dict[tuple[str, str], dict] = {}
+        scenario_invoice_count = 0
+        for row in late_rows:
+            if row.client_id not in selected:
                 continue
-            week_start = pay_date - timedelta(days=pay_date.weekday())
+            scenario_invoice_count += 1
+            today = _today(db, row.source)
+            forecast = forecast_cache[row.id]
+            p50 = (forecast.get("quantiles") or {}).get("p50") or {}
+            predicted = date.fromisoformat(p50["date"]) if p50.get("date") else today + timedelta(days=14)
+            assumed_date = min(today + timedelta(days=13), max(today, predicted))
+            week_start = assumed_date - timedelta(days=assumed_date.weekday())
             key = (week_start.isoformat(), row.currency)
-            entry = expected_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
-            entry["amount"] += Decimal(row.outstanding) * Decimal(str(forecast.get("collection_probability", 1)))
+            entry = scenario_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
+            entry["amount"] += Decimal(row.outstanding)
             entry["invoice_count"] += 1
-        return aging, expected_cash
+        top_late_scenario = {
+            "assumption": "All currently overdue invoices for the five clients with the most late invoices settle within the next 14 days; dates are illustrative, not a prediction or payment promise.",
+            "client_count": len(top_clients),
+            "clients": [{"id": client_id, "name": clients_by_id[client_id].display_name,
+                         "late_invoice_count": late_client_counts[client_id]} for client_id in top_clients],
+            "invoice_count": scenario_invoice_count,
+            "cash_by_week": [{**entry, "amount": str(entry["amount"])} for key, entry in sorted(scenario_cash.items())],
+        }
+        return aging, expected_cash, cash_horizon, top_late_scenario
 
     aggregate_key = (tuple(source_names), tuple((source, _today(db, source)) for source in source_names),
                      view, q, client_id, statuses, due_from, due_to)
-    aging, expected_cash = cached_aggregate(aggregate_key, build_aggregates)
+    aging, expected_cash, cash_horizon, top_late_scenario = cached_aggregate(aggregate_key, build_aggregates)
 
     filtered_count = view_counts[view] if sql_page else len(items)
     page_count = max(1, (filtered_count + page_size - 1) // page_size)
@@ -1401,6 +1491,8 @@ def invoices(
         "currency_totals": {key: str(value) for key, value in sorted(totals.items())},
         "aging_buckets": aging,
         "expected_cash_by_week": [{**entry, "amount": str(entry["amount"])} for key, entry in sorted(expected_cash.items())],
+        "cash_horizon": cash_horizon,
+        "top_late_scenario": top_late_scenario,
         "models": model_names, "synthetic_demo": not user,
         "ready_for_review_count": ready_for_review_count,
         "daily_suggestion_cap": DAILY_SUGGESTION_CAP,
@@ -1455,7 +1547,10 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
                              forecast_cache=forecast_cache)
         if item.get("recommendation") and item["recommendation"].get("state") == "proposed":
             _record_policy_decision(db, invoice, item)
-            items.append({key: item[key] for key in ("id", "invoice_number", "client_name", "client_id", "source", "currency", "outstanding", "due_date", "decision", "recommendation")})
+            items.append({key: item[key] for key in (
+                "id", "invoice_number", "client_name", "client_id", "source", "currency",
+                "outstanding", "due_date", "decision", "recommendation", "why", "reminder_outcomes",
+            )})
     collections_review = []
     for invoice in rows:
         days_late = (_today(db, invoice.source) - invoice.due_date).days
@@ -1474,8 +1569,13 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
             "outstanding": str(invoice.outstanding), "due_date": invoice.due_date.isoformat(),
             "days_late": days_late, "decision": summary["decision"],
             "recommendation": None,
+            "why": summary["why"],
+            "suggested_review_steps": ["call", "send_final_notice", "mark_disputed", "write_off"],
         })
     collections_review.sort(key=lambda row: (row["currency"], -row["days_late"], row["due_date"], row["invoice_number"]))
+    collections_totals: dict[str, Decimal] = {}
+    for row in collections_review:
+        collections_totals[row["currency"]] = collections_totals.get(row["currency"], Decimal("0")) + Decimal(row["outstanding"])
     db.commit()
     skipped = list(db.scalars(select(Recommendation).join(Invoice).where(
         Recommendation.state == "skipped", Invoice.source == "demo" if scope else text("1=1"),
@@ -1483,7 +1583,7 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
     )).all())
     return {"items": items, "count": len(items), "pending_count": len(items), "skipped_count": len(skipped),
             "skipped": [{"id": row.id, "invoice_id": row.invoice_id} for row in skipped], "daily_cap": DAILY_SUGGESTION_CAP,
-            "collections_review": collections_review,
+            "collections_review": collections_review, "collections_totals": {key: str(value) for key, value in sorted(collections_totals.items())},
             "as_of": _today(db, scope).isoformat() if scope else _today(db).isoformat(),
             "synthetic_demo": scope == "demo"}
 
@@ -1590,6 +1690,48 @@ def clients(request: Request, q: str | None = None, options_only: bool = False, 
     counts = {name: sum(row["drift"].get("signal_type") == name for row in output)
               for name in ("paying_later", "later_than_usual", "gone_quiet", "habitually_late", "insufficient_history")}
     return {"items": output, "signal_counts": counts}
+
+
+@app.get("/demo-stories")
+def demo_stories(db: Session = Depends(get_db)) -> dict:
+    """Return links to the synthetic narratives used by the guided demo."""
+    clients = list(db.scalars(select(Client).where(Client.source == "demo")).all())
+    by_name = {client.display_name.casefold(): client for client in clients}
+    invoices = list(db.scalars(
+        select(Invoice).options(joinedload(Invoice.client)).where(Invoice.source == "demo")
+    ).all())
+    today = _today(db, "demo")
+    verdant = [row for row in invoices if row.client.display_name.casefold() == "verdant market"
+               and row.outstanding > 0 and row.status not in CLOSED_STATUSES]
+    verdant.sort(key=lambda row: (row.due_date, row.invoice_number))
+    cinder_dispute = next((row for row in invoices if row.client.display_name.casefold() == "cinder & co" and row.disputed), None)
+    harbor_firm = next((row for row in invoices if row.client.display_name.casefold() == "harborlight design"
+                        and any(isinstance(event, dict) and str(event.get("tone", "")).casefold() == "firm"
+                                for event in (row.reminder_events or []))), None)
+    blue_cedar = by_name.get("blue cedar labs")
+
+    def story(key: str, title: str, summary: str, invoice: Invoice | None = None, client: Client | None = None) -> dict:
+        destination = f"/invoices/{invoice.id}" if invoice else f"/clients/{client.id}" if client else "/"
+        return {"key": key, "title": title, "summary": summary, "href": destination}
+
+    verdant_summary = (
+        f"Oldest selected open invoice is {(today - verdant[0].due_date).days} days past due; overdue age is a lower bound while unpaid."
+        if verdant else "No open Verdant invoice is available in this synthetic story."
+    )
+    return {"items": [
+        story("verdant_outlier", "Verdant Market · stale outlier",
+              verdant_summary,
+              verdant[0] if verdant else None, by_name.get("verdant market")),
+        story("dispute", "Cinder & Co · disputed invoice",
+              "A recorded dispute pauses reminder recommendations while the balance is reviewed.", cinder_dispute,
+              by_name.get("cinder & co")),
+        story("firm_reminder", "Harborlight Design · firm reminder",
+              "A synthetic payment settles after a recorded firm reminder; sequence does not establish causation.",
+              harbor_firm, by_name.get("harborlight design")),
+        story("terms_shift", "Blue Cedar Labs · terms changed",
+              "The synthetic history changes from NET 30 to NET 15 so the client story can be inspected.",
+              client=blue_cedar),
+    ]}
 
 
 @app.post("/clients/{client_id}/what-if")
@@ -2303,6 +2445,11 @@ def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(
     recommendation.state = "sent"
     if recommendation.policy_step is not None:
         invoice.reminder_step = max(invoice.reminder_step, recommendation.policy_step + 1)
+    sent_at = datetime.now(timezone.utc)
+    invoice.reminder_events = [*(invoice.reminder_events or []), {
+        "sent_at": sent_at.isoformat(), "tone": recommendation.tone, "simulated": True,
+    }]
+    invoice.material_version += 1
     _update_policy_outcomes(db, invoice.id, {
         "status": "sent", "action": recommendation.action, "recommendation_id": recommendation.id,
         "simulated": True, "recorded_at": datetime.now(timezone.utc).isoformat(),
