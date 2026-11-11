@@ -850,6 +850,9 @@ def test_action_queue_generates_five_or_fewer_reviewable_recommendations(api, mo
         db.add(invoice)
         db.commit()
 
+    portfolio_before_queue = client.get("/invoices?view=all").json()
+    assert portfolio_before_queue["ready_for_review_count"] == 1
+
     response = client.get("/action-queue")
     assert response.status_code == 200, response.text
     payload = response.json()

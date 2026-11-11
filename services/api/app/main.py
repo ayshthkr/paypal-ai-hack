@@ -1136,6 +1136,18 @@ def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cac
     return ranked
 
 
+def _pending_policy_candidate_ids(db: Session, ranked_ids: list[str], sources: list[str]) -> list[str]:
+    """Return the queue's current candidates before per-invoice review rows exist."""
+    reviewed_today: set[str] = set()
+    for source in sources:
+        today = _today(db, source)
+        reviewed_today.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
+            Invoice.source == source, Recommendation.state.in_(["skipped", "sent", "applied"]),
+            Recommendation.policy_date == today,
+        )).all())
+    return [invoice_id for invoice_id in ranked_ids if invoice_id not in reviewed_today]
+
+
 def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
     query = select(Invoice).where(
         Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0,
@@ -1512,14 +1524,7 @@ def invoices(
         for signal in client_signal_types
     }
 
-    ready_recommendations = set()
-    for source in source_names:
-        today = _today(db, source)
-        ready_recommendations.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
-            Invoice.source == source, Recommendation.state == "proposed",
-            Recommendation.action.in_(["friendly", "firm", "offer_partial_payment"]),
-            Recommendation.policy_date == today,
-        )).all())
+    ready_candidate_ids = set(_pending_policy_candidate_ids(db, candidate_order, source_names)[:DAILY_SUGGESTION_CAP])
     open_condition = and_(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0)
     due_week_condition = or_(*[and_(Invoice.source == source, Invoice.due_date >= _today(db, source),
                                   Invoice.due_date <= _today(db, source) + timedelta(days=7)) for source in source_names])
@@ -1597,7 +1602,7 @@ def invoices(
             contributors.append(item)
         items = contributors
     if action_only:
-        items = [item for item in items if item["id"] in ready_recommendations]
+        items = [item for item in items if item["id"] in ready_candidate_ids]
     _sort_invoice_items(items, sort, direction)
 
     totals: dict[str, Decimal] = {}
@@ -1728,7 +1733,7 @@ def invoices(
     page_count = max(1, (filtered_count + page_size - 1) // page_size)
     page_items = items if sql_page or db.info.get("export_all") else items[(page - 1) * page_size:page * page_size]
     model_names = sorted({item["forecast"]["model"] for item in page_items if item["forecast"]})
-    ready_for_review_count = len(ready_recommendations)
+    ready_for_review_count = len(ready_candidate_ids)
     slim_items = []
     for item in page_items:
         slim = {key: item[key] for key in ("id", "invoice_number", "client_id", "client_name", "due_date", "days_to_due", "outstanding", "currency", "status", "source", "disputed")}
@@ -1795,15 +1800,9 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
         query = query.where(Invoice.source == scope)
     rows = list(db.scalars(query).all())
     _prepare_portfolio_context(db, rows)
-    reviewed_today: set[str] = set()
-    for source in {row.source for row in rows}:
-        today = _today(db, source)
-        reviewed_today.update(db.scalars(select(Recommendation.invoice_id).join(Invoice).where(
-            Invoice.source == source, Recommendation.state.in_(["skipped", "sent", "applied"]),
-            Recommendation.policy_date == today,
-        )).all())
     forecast_cache: dict[str, dict] = {}
-    ranked = [invoice_id for invoice_id in _rank_policy_candidates(db, scope, forecast_cache) if invoice_id not in reviewed_today]
+    sources = sorted({row.source for row in rows})
+    ranked = _pending_policy_candidate_ids(db, _rank_policy_candidates(db, scope, forecast_cache), sources)
     ranked = ranked[:DAILY_SUGGESTION_CAP]
     candidate_ids = set(ranked)
     items = []

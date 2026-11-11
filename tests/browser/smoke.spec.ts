@@ -100,6 +100,28 @@ test("cash-week cards open probability contributors with individual expected amo
   await expect(firstRow.locator("td").nth(4)).toContainText(`${first.currency} ${amount}`);
 });
 
+test("portfolio action count matches the queue before opening the queue", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/");
+  const summary = page.locator(".decision-hero-action strong");
+  await expect(summary).toBeVisible({ timeout: 60_000 });
+  const shownCount = Number((await summary.innerText()).match(/\d+/)?.[0]);
+  const queue = await page.evaluate(async () => {
+    const response = await fetch("/api/action-queue", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Queue returned HTTP ${response.status}`);
+    return response.json() as Promise<{ pending_count: number }>;
+  });
+  expect(shownCount).toBe(queue.pending_count);
+});
+
+test("empty search labels filtered summaries and leaves client signals portfolio-wide", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/?q=no-such-demo-invoice-987654");
+  await expect(page.getByText(/No matching invoices\./).first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/Filtered open balance by forecast horizon/)).toBeVisible();
+  await expect(page.getByText("Portfolio-wide client payment timing", { exact: true })).toBeVisible();
+});
+
 test("queue explains an empty successful response", async ({ page }) => {
   await page.goto("/actions");
   await page.route("**/api/action-queue", route => route.fulfill({
