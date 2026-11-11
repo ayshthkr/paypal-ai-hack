@@ -26,9 +26,9 @@ def test_release_facts_and_walkthrough_follow_the_deployed_artifacts():
     assert sum(bucket["count"] for bucket in fallback["aging_buckets"].values()) == fallback["open_count"]
 
     walkthrough = (ROOT / "walkthrough.md").read_text()
-    assert "generated artifacts" in walkthrough
-    assert "synthetic metrics are pipeline evidence" in walkthrough.lower()
-    assert "five-stop" in walkthrough
+    assert "release artifact" in walkthrough.lower()
+    assert "synthetic results are pipeline evidence" in walkthrough.lower()
+    assert "five-stop" in walkthrough.lower()
 
     assert evaluation["model_card"]["training_window"] == metadata["training_date_range"]
     assert calibration["model"] == metadata["active_model"]

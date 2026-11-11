@@ -271,29 +271,36 @@ def test_monthly_coverage_uses_only_invoices_with_complete_interval_bounds():
     }]
 
 
-def test_current_seed_invalidates_stale_forecasts_without_startup_rescoring(api, monkeypatch):
+def test_daily_startup_advances_clock_and_invalidates_stale_caches_without_reseeding(api, monkeypatch):
     from app.models import ReadModel
-    from app.services.forecast import FORECAST_REVISION
+    from app.services.forecast_revision import FORECAST_REVISION
     from scripts import seed_demo, seed_demo_if_empty
 
     _, Session = api
     today = date.today()
+    previous_day = today - timedelta(days=1)
     monkeypatch.setattr(seed_demo, "SessionLocal", Session)
-    seed_demo.seed(today)
+    seed_demo.seed(previous_day)
     with Session() as db:
-        db.add(ReadModel(key="forecast_summary:stale", as_of=today, version="1", payload={"inference_revision": "old"}))
-        db.add(ReadModel(key="forecast_summary:current", as_of=today, version="1", payload={"inference_revision": FORECAST_REVISION}))
+        db.add(ReadModel(key="forecast_summary:stale", as_of=previous_day, version="1", payload={"inference_revision": "old"}))
+        db.add(ReadModel(key="forecast_summary:current", as_of=previous_day, version="1", payload={"inference_revision": FORECAST_REVISION}))
         db.commit()
 
     monkeypatch.setattr(seed_demo_if_empty, "SessionLocal", Session)
     monkeypatch.setattr(seed_demo_if_empty, "resolve_as_of", lambda: today)
+    monkeypatch.setattr(seed_demo_if_empty, "seed", lambda: pytest.fail("a daily clock advance must not reseed 2,000 invoices"))
     result = seed_demo_if_empty.seed_if_empty()
 
     assert result["seeded"] is False
+    assert result["as_of"] == today.isoformat()
+    assert "advances without regenerating history" in result["reason"]
     assert result["invalidated_forecast_projections"] == 1
     with Session() as db:
-        assert db.get(ReadModel, ("forecast_summary:stale", today)) is None
-        assert db.get(ReadModel, ("forecast_summary:current", today)) is not None
+        assert db.get(DemoState, "demo").as_of_date == today
+        assert db.get(ReadModel, ("demo:snapshot", today)) is not None
+        assert db.get(ReadModel, ("demo:snapshot", previous_day)) is None
+        assert db.get(ReadModel, ("forecast_summary:stale", previous_day)) is None
+        assert db.get(ReadModel, ("forecast_summary:current", previous_day)) is not None
 
 
 def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():

@@ -2,31 +2,26 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 from app.db import SessionLocal
 from app.models import Client, DemoState, Invoice, ReadModel
 from ml.synthetic import resolve_as_of
 from app.services.demo_snapshot import SNAPSHOT_VERSION
-from app.services.forecast import FORECAST_REVISION
+from app.services.forecast_revision import FORECAST_REVISION
 from scripts.seed_demo import seed
 
 
 def _invalidate_stale_forecast_projections(db) -> int:
-    stale = []
-    query = select(ReadModel).where(or_(
-        ReadModel.key.like("forecast:%"),
-        ReadModel.key.like("forecast_summary:%"),
+    inference_revision = ReadModel.payload["inference_revision"].as_string()
+    stale_revision = or_(inference_revision.is_(None), inference_revision != FORECAST_REVISION)
+    result = db.execute(delete(ReadModel).where(
+        (ReadModel.key.like("forecast:%") | ReadModel.key.like("forecast_summary:%")) & stale_revision
     ))
-    for projection in db.scalars(query):
-        payload = projection.payload
-        if not isinstance(payload, dict) or payload.get("inference_revision") != FORECAST_REVISION:
-            stale.append(projection)
-    for projection in stale:
-        db.delete(projection)
-    if stale:
+    invalidated = result.rowcount or 0
+    if invalidated:
         db.commit()
-    return len(stale)
+    return invalidated
 
 
 def seed_if_empty() -> dict[str, object]:
@@ -35,28 +30,53 @@ def seed_if_empty() -> dict[str, object]:
         invoice_count = db.scalar(select(func.count(Invoice.id)).where(Invoice.source == "demo")) or 0
         client_count = db.scalar(select(func.count(Client.id)).where(Client.source == "demo")) or 0
         state = db.get(DemoState, "demo")
-        as_of = state.as_of_date if state else None
-        snapshot = db.get(ReadModel, ("demo:snapshot", as_of)) if as_of else None
-        current = bool(snapshot and snapshot.version == SNAPSHOT_VERSION and as_of == resolve_as_of())
+        seeded_as_of = state.as_of_date if state else None
+        snapshot = db.get(ReadModel, ("demo:snapshot", seeded_as_of)) if seeded_as_of else None
+        today = resolve_as_of()
+        current = bool(
+            invoice_count >= 1500
+            and client_count >= 40
+            and snapshot
+            and snapshot.version == SNAPSHOT_VERSION
+        )
         invalidated = _invalidate_stale_forecast_projections(db)
+
+        if current and state and seeded_as_of and seeded_as_of < today:
+            newer_snapshot = db.get(ReadModel, ("demo:snapshot", today))
+            if newer_snapshot is None:
+                snapshot.as_of = today
+                state.as_of_date = today
+                db.commit()
+            elif newer_snapshot.version == SNAPSHOT_VERSION:
+                db.delete(snapshot)
+                state.as_of_date = today
+                db.commit()
+            else:
+                current = False
     finally:
         db.close()
 
-    if invoice_count >= 1500 and client_count >= 40 and current:
+    if current:
         return {
             "seeded": False,
-            "reason": "synthetic demo data is current; forecast caches refresh lazily by inference revision",
+            "reason": "synthetic demo data is current; the demo clock advances without regenerating history",
             "clients": client_count,
             "invoices": invoice_count,
-            "as_of": as_of.isoformat() if as_of else None,
+            "as_of": today.isoformat(),
             "invalidated_forecast_projections": invalidated,
         }
 
     seeded = seed()
-    return {"seeded": True, "previous_clients": client_count, "previous_invoices": invoice_count,
-            "seed": seeded, "invalidated_forecast_projections": invalidated,
-            "projections": "forecast and drift read models are computed on demand"}
+    return {
+        "seeded": True,
+        "previous_clients": client_count,
+        "previous_invoices": invoice_count,
+        "seed": seeded,
+        "projections": "forecast and drift read models are computed on demand",
+        "invalidated_forecast_projections": invalidated,
+    }
 
 
 if __name__ == "__main__":
-    print(seed_if_empty())
+    print("Checking demo snapshot and forecast cache revisions.", flush=True)
+    print(seed_if_empty(), flush=True)

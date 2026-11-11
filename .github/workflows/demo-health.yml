@@ -2,8 +2,8 @@ name: Demo health wake-up
 on:
   workflow_dispatch:
   schedule:
-    # Stay ahead of Render's idle shutdown window throughout the judging day.
-    - cron: '*/10 * * * *'
+    # Render's free services can spin down after 15 minutes without a request.
+    - cron: '*/5 * * * *'
 permissions: {}
 concurrency:
   group: demo-health
@@ -11,12 +11,16 @@ concurrency:
 jobs:
   wake:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - name: Wake services and warm demo reads
+      - name: Keep the API and web services warm
         run: |
-          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/health
-          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-web.onrender.com/api/health
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/healthz
+          curl --fail --silent --show-error --max-time 30 --retry 2 --retry-delay 5 https://latepayer-web.onrender.com/ -o /dev/null
+
+      - name: Verify deployed read paths on manual run
+        if: github.event_name == 'workflow_dispatch'
+        run: |
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 'https://latepayer-api.onrender.com/portfolio?view=open&page=1&page_size=1' -o /tmp/portfolio.json
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/action-queue -o /tmp/action-queue.json
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/facts/morning-brief -o /tmp/morning-brief.json

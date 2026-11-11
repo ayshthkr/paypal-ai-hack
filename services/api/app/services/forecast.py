@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.services.dates import business_date, event_date
+from app.services.forecast_revision import FORECAST_REVISION
 from app.telemetry import timed
 from app.config import get_settings
 from app.models import Invoice, Payment, Prediction, ReadModel
@@ -31,7 +32,6 @@ from ml.survival_metrics import predict_cox_survival
 
 HORIZON = 180
 DISPLAY_CURVE_POINTS = 60
-FORECAST_REVISION = "curve-quantiles-v9-weekly-cash"
 
 
 def _display_curve(curve: list[float]) -> list[float]:
