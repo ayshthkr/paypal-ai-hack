@@ -5,6 +5,7 @@ export class RequestError extends Error {
 }
 const reads = new Map<string, { expires: number; promise: Promise<unknown> }>();
 let demoSessionReady: Promise<void> | null = null;
+export const API_REQUEST_TIMEOUT_MS = 30_000;
 export function ensureDemoSession(): Promise<void> {
   if (typeof document === "undefined" || document.cookie.split(";").some(value => value.trim().startsWith("latepayer_demo_session="))) {
     return Promise.resolve();
@@ -23,7 +24,7 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
   const cached = reads.get(url);
   if (reading && cached && cached.expires > Date.now()) return cached.promise as Promise<T>;
   const promise = (async () => {
-    const response = await fetch(url, { ...init, signal: init?.signal || AbortSignal.timeout(10_000), cache: "no-store", credentials: "same-origin", headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers } });
+    const response = await fetch(url, { ...init, signal: init?.signal || AbortSignal.timeout(API_REQUEST_TIMEOUT_MS), cache: "no-store", credentials: "same-origin", headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers } });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (!reading && response.status === 409) clearReads();

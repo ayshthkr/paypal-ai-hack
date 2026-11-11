@@ -207,7 +207,7 @@ export default function PortfolioClient() {
     const existing = refreshInFlight.current.get(url);
     if (existing) return existing;
     const controller = new AbortController();
-    const requestInit = { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) };
+    const requestInit = { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) };
     const pending = Promise.all([
       getJson<InvoiceResult>(url, requestInit),
     ]).then(async ([invoices]) => {

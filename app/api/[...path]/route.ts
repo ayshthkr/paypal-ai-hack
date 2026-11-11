@@ -29,6 +29,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     headers.set("x-demo-session", demoSession);
   }
   const init: RequestInit = { method: request.method, headers, cache: "no-store", redirect: "manual" };
+  if (["GET", "HEAD"].includes(request.method)) init.signal = request.signal;
   if (!(["GET", "HEAD"].includes(request.method))) init.body = await request.arrayBuffer();
   try {
     const upstream = await fetch(target, init);

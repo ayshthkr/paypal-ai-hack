@@ -77,7 +77,7 @@ export default function TourClient() {
       let last: unknown = null;
       for (let attempt = 0; attempt < 6; attempt += 1) {
         try {
-          const result = await requestJson<{ items: DemoStory[] }>("/api/demo-stories", { signal: AbortSignal.timeout(10_000) });
+          const result = await requestJson<{ items: DemoStory[] }>("/api/demo-stories", { signal: AbortSignal.timeout(30_000) });
           if (active) setStories(result.items);
           return;
         } catch (cause) {
