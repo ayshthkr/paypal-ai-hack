@@ -6,7 +6,7 @@ import { decisionLabel } from "../lib/labels";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type QueueItem = {
-  id: string; invoice_number: string; client_name: string; client_id: string; source: string; currency: string; outstanding: string;
+  id: string; invoice_number: string; client_name: string; client_id: string; client_email?: string | null; source: string; currency: string; outstanding: string;
   due_date: string; days_late?: number; decision: { action: string; reason: string; expected_cash_gain: number };
   why?: string;
   reminder_outcomes?: { sent_at: string; tone: string; status: "paid" | "partial" | "silent" | "checking"; amount_paid: string; currency: string; window_ends: string }[];
@@ -97,8 +97,19 @@ export default function ActionQueue({ initialData }: { initialData: QueueResult 
   };
 
   const approveFriendly = async () => {
-    const items = data?.items.filter(item => item.recommendation?.action === "friendly") || [];
-    if (!items.length || !window.confirm(`Approve all ${items.length} friendly reminders? Synthetic reminders are simulated; PayPal Sandbox reminders send test notifications.`)) return;
+    const cap = Math.min(5, data?.daily_cap ?? 5);
+    const items = (data?.items.filter(item => item.recommendation?.action === "friendly") || []).slice(0, cap);
+    if (!items.length) return;
+    const itemList = items.map(item => {
+      const recipient = item.source === "paypal"
+        ? item.client_email || "recipient email unavailable"
+        : "synthetic demo; no email sent";
+      return `Invoice: ${item.invoice_number} · Recipient: ${item.client_name} (${recipient})`;
+    }).join("\n");
+    const deliveryNote = items.some(item => item.source === "paypal")
+      ? "PayPal Sandbox reminders send test notifications; synthetic reminders are simulated."
+      : "Synthetic reminders are simulated; no PayPal email is sent.";
+    if (!window.confirm(`Review each item before approval. Batch capped at ${cap}.\n\n${itemList}\n\n${deliveryNote}\n\nApprove these ${items.length} friendly reminders?`)) return;
     setBulkBusy(true);
     try { for (const item of items) { if (!await act(item, "approve", true)) break; } }
     finally { setBulkBusy(false); }

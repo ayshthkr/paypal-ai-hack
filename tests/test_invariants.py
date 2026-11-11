@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ import httpx
 import pytest
 
 from app import main
+from app import security
 from app.config import Settings
 from app.models import Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session, session_claims
@@ -188,6 +190,9 @@ def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():
     assert decide(invoice, 0, today=today, probability_14d=0.2)["action"] == "friendly"
     invoice.reminder_step = 1
     assert decide(invoice, 0, today=today, probability_14d=0.2)["action"] == "firm"
+    unresolved = decide(invoice, 0, unresolved=True, today=today, probability_14d=0.2)
+    assert unresolved["action"] == "wait"
+    assert "unresolved" in unresolved["reason"]
     invoice.status = "PAID"
     assert decide(invoice, 0.0, today=today)["action"] == "wait"
 
@@ -238,6 +243,20 @@ def test_signed_operator_session_rejects_tampering(api):
     assert client.get("/auth/me").json()["authenticated"] is False
 
 
+def test_operator_session_expires_at_configured_age(api, monkeypatch):
+    client, Session = api
+    settings = Settings(
+        _env_file=None, app_env="production", session_secret="e" * 48,
+        operator_username="operator-test", operator_password="password-for-test-only",
+        session_max_age_seconds=120,
+    )
+    monkeypatch.setattr(main, "settings", settings)
+    monkeypatch.setattr(security, "get_settings", lambda: settings)
+    expired_at = int(datetime.now(timezone.utc).timestamp()) - settings.session_max_age_seconds - 1
+    _set_operator_cookie(client, Session, settings, now=expired_at)
+    assert client.get("/auth/me").json()["authenticated"] is False
+
+
 def test_logout_revokes_operator_session_server_side(api):
     client, Session = api
     token = _set_operator_cookie(client, Session)
@@ -260,6 +279,20 @@ def test_login_limits_failed_attempts_per_ip(api, monkeypatch):
     assert limited.headers["retry-after"] == "60"
 
 
+def test_login_failure_message_is_neutral_for_unknown_user_and_wrong_password(api, monkeypatch):
+    client, _ = api
+    with main._AUTH_LOCK:
+        main._AUTH_FAILURES.clear()
+    monkeypatch.setattr(
+        main, "_verify_login",
+        lambda username, password: username == "operator-test" and password == "correct-password",
+    )
+    unknown_user = client.post("/auth/login", json={"username": "unknown-user", "password": "anything"})
+    wrong_password = client.post("/auth/login", json={"username": "operator-test", "password": "wrong"})
+    assert unknown_user.status_code == wrong_password.status_code == 401
+    assert unknown_user.json()["detail"] == wrong_password.json()["detail"] == "Username or password is incorrect."
+
+
 def test_production_refuses_default_operator_credentials(api, monkeypatch):
     client, _ = api
     insecure = Settings(_env_file=None, app_env="production")
@@ -278,6 +311,67 @@ def test_operator_paypal_and_sync_routes_require_a_valid_session(api):
     assert client.post("/paypal/invoices", json=body).status_code == 401
     assert client.post("/recommendations/missing/send", json={"text": "review"}).status_code == 401
     assert client.post("/recommendations/missing/approve-partial-payment").status_code == 401
+
+
+def test_operator_cannot_create_invoice_for_recipient_outside_allowlist(api, monkeypatch):
+    client, Session = api
+    settings = Settings(
+        _env_file=None, app_env="production", session_secret="s" * 48,
+        operator_username="operator-test", operator_password="password-for-test-only",
+        paypal_mode="sandbox", paypal_allowed_recipient_emails="allowed@example.test",
+    )
+    monkeypatch.setattr(main, "settings", settings)
+    monkeypatch.setattr(security, "get_settings", lambda: settings)
+    _set_operator_cookie(client, Session, settings)
+    with Session() as db:
+        owner = Client(
+            id="not-allowlisted-owner", provider_customer_id="outside@example.test",
+            display_name="Outside Buyer", email="outside@example.test", source="paypal", drift={},
+        )
+        db.add(owner)
+        db.commit()
+    response = client.post(
+        "/paypal/invoices",
+        json={"client_id": "not-allowlisted-owner", "amount": "1.00", "payment_term_type": "NET_15"},
+        headers={"Idempotency-Key": "outside-allowlist-key-000000000000"},
+    )
+    assert response.status_code == 403
+    assert "PAYPAL_ALLOWED_RECIPIENT_EMAILS" in response.json()["detail"]
+
+
+def test_webhook_verification_calls_paypal_signature_api_with_exact_event_body():
+    settings = Settings(
+        _env_file=None, paypal_mode="sandbox", paypal_client_id="test-client",
+        paypal_client_secret="test-secret", paypal_webhook_id="test-webhook",
+    )
+    event = {"id": "evt-verified", "event_type": "INVOICING.INVOICE.PAID", "resource": {"status": "PAID"}}
+    expected_verification = {
+        "transmission_id": "transmission-1", "transmission_time": "2026-11-11T00:00:00Z",
+        "cert_url": "https://api.paypal.com/cert", "auth_algo": "SHA256withRSA",
+        "transmission_sig": "signature", "webhook_id": "test-webhook", "webhook_event": event,
+    }
+    verification_requests = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 300})
+        assert request.url.path == "/v1/notifications/verify-webhook-signature"
+        verification_requests.append(request)
+        body = json.loads(request.content)
+        assert {**body, "webhook_event": event} == expected_verification
+        status = "SUCCESS" if body["webhook_event"] == event else "FAILURE"
+        return httpx.Response(200, json={"verification_status": status})
+
+    headers = {
+        "PayPal-Transmission-Id": "transmission-1", "PayPal-Transmission-Time": "2026-11-11T00:00:00Z",
+        "PayPal-Cert-Url": "https://api.paypal.com/cert", "PayPal-Auth-Algo": "SHA256withRSA",
+        "PayPal-Transmission-Sig": "signature",
+    }
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        adapter = PayPalAdapter(settings, client=client)
+        assert adapter.verify_webhook(headers, event) is True
+        assert adapter.verify_webhook(headers, {**event, "resource": {"status": "ALTERED"}}) is False
+    assert len(verification_requests) == 2
 
 
 def test_public_routes_only_expose_demo_and_demo_payment_partial_then_full(api):
@@ -465,11 +559,46 @@ def test_action_queue_generates_five_or_fewer_reviewable_recommendations(api, mo
     payload = response.json()
     assert payload["count"] == 1
     assert payload["items"][0]["recommendation"]["state"] == "proposed"
+    assert payload["items"][0]["client_email"] is None
     assert payload["items"][0]["decision"]["expected_cash_gain"] > 0
     portfolio = client.get("/invoices?view=all").json()
     assert portfolio["ready_for_review_count"] == payload["pending_count"] == 1
     assert sum(bucket["count"] for bucket in portfolio["aging_buckets"].values()) == portfolio["view_counts"]["open"]
     assert sum(portfolio["drifting_signal_counts"].values()) == portfolio["drifting_client_count"]
+
+
+def test_action_queue_exposes_paypal_recipient_only_to_operator(api, monkeypatch):
+    client, Session = api
+    settings = Settings(
+        app_env="production", session_secret="x" * 48,
+        operator_username="operator-test", operator_password="password-for-test-only",
+    )
+    monkeypatch.setattr(main, "settings", settings)
+    monkeypatch.setattr(security, "get_settings", lambda: settings)
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1}, "quantiles": {"p50": None},
+        "reasons": ["test"], "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    allowed_email = "buyer@example.test"
+    with Session() as db:
+        owner = Client(
+            id="operator-queue-owner", display_name="Sandbox Buyer", email=allowed_email,
+            source="paypal", drift={},
+        )
+        db.add(owner)
+        db.add(_invoice("operator-queue-invoice", owner.id, source="paypal", due=date.today() - timedelta(days=15)))
+        db.commit()
+
+    public = client.get("/action-queue")
+    assert public.status_code == 200
+    assert public.json()["items"] == []
+    _set_operator_cookie(client, Session, settings)
+    assert client.get("/auth/me").json()["authenticated"] is True
+    operator = client.get("/action-queue")
+    assert operator.status_code == 200, operator.text
+    assert operator.json()["items"][0]["invoice_number"] == "LP-operator-queue-invoice"
+    assert operator.json()["items"][0]["client_email"] == allowed_email
 
 
 def test_currency_lane_order_and_ninety_day_collections_lane(api, monkeypatch):
@@ -951,18 +1080,113 @@ def test_verified_nested_paypal_invoice_event_refreshes_invoice(api, monkeypatch
 
     monkeypatch.setattr(main, "PayPalAdapter", ValidWebhookAdapter)
     monkeypatch.setattr(main, "refresh_paypal_invoice", refresh_invoice)
-    response = client.post("/webhooks/paypal", json={
+    payload = {
         "id": "evt-nested-invoice",
         "event_type": "INVOICING.INVOICE.PAID",
         "resource": {"invoice": {"id": "nested-webhook-invoice", "status": "MARKED_AS_PAID"}},
-    })
+    }
+    response = client.post("/webhooks/paypal", json=payload)
     assert response.status_code == 200
+    assert refreshed_ids == ["nested-webhook-invoice"]
+    duplicate = client.post("/webhooks/paypal", json=payload)
+    assert duplicate.status_code == 200
+    assert duplicate.json() == {"received": True, "duplicate": True, "processed": True}
     assert refreshed_ids == ["nested-webhook-invoice"]
     with Session() as db:
         invoice = db.get(Invoice, "nested-webhook-invoice")
         event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-nested-invoice").one()
         assert invoice.status == "PAID" and invoice.outstanding == Decimal("0.00")
         assert event.verified is True and event.processing_status == "processed"
+        assert event.raw_payload == payload
+
+
+def test_processed_webhook_rejects_altered_replay_without_mutating_invoice(api, monkeypatch):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="altered-webhook-owner", display_name="Sandbox", source="paypal", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("altered-webhook-invoice", owner.id, source="paypal"))
+        db.commit()
+
+    class ValidPaidWebhookAdapter:
+        def verify_webhook(self, headers, payload):
+            return payload.get("resource", {}).get("invoice", {}).get("status") == "MARKED_AS_PAID"
+
+    refresh_count = 0
+
+    def refresh_invoice(db, adapter, paypal_id):
+        nonlocal refresh_count
+        refresh_count += 1
+        invoice = db.get(Invoice, "altered-webhook-invoice")
+        invoice.status = "PAID"
+        invoice.paid = invoice.total
+        invoice.outstanding = Decimal("0.00")
+        db.commit()
+        return invoice
+
+    monkeypatch.setattr(main, "PayPalAdapter", ValidPaidWebhookAdapter)
+    monkeypatch.setattr(main, "refresh_paypal_invoice", refresh_invoice)
+    original = {
+        "id": "evt-altered-replay",
+        "event_type": "INVOICING.INVOICE.PAID",
+        "resource": {"invoice": {"id": "altered-webhook-invoice", "status": "MARKED_AS_PAID"}},
+    }
+    assert client.post("/webhooks/paypal", json=original).status_code == 200
+    altered = {
+        **original,
+        "resource": {"invoice": {"id": "altered-webhook-invoice", "status": "CANCELLED"}},
+    }
+    rejected = client.post("/webhooks/paypal", json=altered)
+    assert rejected.status_code == 401
+    assert refresh_count == 1
+    with Session() as db:
+        invoice = db.get(Invoice, "altered-webhook-invoice")
+        event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-altered-replay").one()
+        assert invoice.status == "PAID" and invoice.outstanding == Decimal("0.00")
+        assert event.verified is True and event.processing_status == "processed"
+        assert event.raw_payload == original
+
+
+def test_processed_webhook_rejects_differently_signed_body_for_same_event_id(api, monkeypatch):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="signed-altered-owner", display_name="Sandbox", source="paypal", drift={})
+        db.add(owner)
+        db.flush()
+        db.add(_invoice("signed-altered-invoice", owner.id, source="paypal"))
+        db.commit()
+
+    class ValidWebhookAdapter:
+        def verify_webhook(self, headers, payload):
+            return True
+
+    refresh_count = 0
+
+    def refresh_invoice(db, adapter, paypal_id):
+        nonlocal refresh_count
+        refresh_count += 1
+        invoice = db.get(Invoice, "signed-altered-invoice")
+        invoice.status = "PAID"
+        invoice.paid = invoice.total
+        invoice.outstanding = Decimal("0.00")
+        db.commit()
+        return invoice
+
+    monkeypatch.setattr(main, "PayPalAdapter", ValidWebhookAdapter)
+    monkeypatch.setattr(main, "refresh_paypal_invoice", refresh_invoice)
+    original = {"id": "evt-signed-altered", "event_type": "INVOICING.INVOICE.PAID", "resource": {"id": "signed-altered-invoice"}}
+    assert client.post("/webhooks/paypal", json=original).status_code == 200
+    altered = {**original, "extra": "different but independently signed body"}
+    rejected = client.post("/webhooks/paypal", json=altered)
+    assert rejected.status_code == 409
+    assert refresh_count == 1
+    with Session() as db:
+        invoice = db.get(Invoice, "signed-altered-invoice")
+        event = db.query(InvoiceEvent).filter_by(provider_event_id="evt-signed-altered").one()
+        assert invoice.status == "PAID" and invoice.outstanding == Decimal("0.00")
+        assert event.verified is True and event.processing_status == "processed"
+        assert event.raw_payload == original
 
 
 def test_sync_retry_refreshes_nested_paypal_invoice_event(api, monkeypatch):

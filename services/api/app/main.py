@@ -1520,7 +1520,8 @@ def invoice_detail(invoice_id: str, request: Request, db: Session = Depends(get_
 
 @app.get("/action-queue")
 def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
-    scope = None if session_user(request, db=db) else "demo"
+    user = session_user(request, db=db)
+    scope = None if user else "demo"
     query = select(Invoice).options(joinedload(Invoice.client)).where(Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0)
     if scope:
         query = query.where(Invoice.source == scope)
@@ -1547,10 +1548,12 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
                              forecast_cache=forecast_cache)
         if item.get("recommendation") and item["recommendation"].get("state") == "proposed":
             _record_policy_decision(db, invoice, item)
-            items.append({key: item[key] for key in (
+            queue_item = {key: item[key] for key in (
                 "id", "invoice_number", "client_name", "client_id", "source", "currency",
                 "outstanding", "due_date", "decision", "recommendation", "why", "reminder_outcomes",
-            )})
+            )}
+            queue_item["client_email"] = item.get("client_email") if user and invoice.source == "paypal" else None
+            items.append(queue_item)
     collections_review = []
     for invoice in rows:
         days_late = (_today(db, invoice.source) - invoice.due_date).days
@@ -2177,8 +2180,6 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     except (ValueError, TypeError):
         occurred = None
     event = db.scalar(select(InvoiceEvent).where(InvoiceEvent.provider_event_id == event_id))
-    if event and event.verified and event.processing_status == "processed":
-        return {"received": True, "duplicate": True, "processed": True}
     if event is None:
         event = InvoiceEvent(provider_event_id=event_id, event_type=str(payload.get("event_type") or "unknown"),
                              occurred_at=occurred, raw_payload=payload, verified=False, processing_status="received")
@@ -2188,19 +2189,29 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         except IntegrityError:
             db.rollback()
             event = db.scalar(select(InvoiceEvent).where(InvoiceEvent.provider_event_id == event_id))
+    already_processed = bool(event and event.verified and event.processing_status == "processed")
     try:
         verified = PayPalAdapter().verify_webhook(dict(request.headers), payload)
     except PayPalError as exc:
+        if already_processed:
+            raise HTTPException(status_code=503, detail="Webhook verification is temporarily unavailable.") from exc
         event.processing_status = "verification_retry"
         event.failure_reason = str(exc)[:1000]
         db.commit()
         raise HTTPException(status_code=503, detail="Webhook verification is temporarily unavailable.") from exc
-    event.verified = verified
     if not verified:
+        if already_processed:
+            raise HTTPException(status_code=401, detail="PayPal webhook signature is invalid.")
+        event.verified = False
         event.processing_status = "rejected"
         event.failure_reason = "PayPal signature verification did not succeed."
         db.commit()
         raise HTTPException(status_code=401, detail="PayPal webhook signature is invalid.")
+    if already_processed:
+        if event.raw_payload != payload:
+            raise HTTPException(status_code=409, detail="PayPal webhook event ID was already used with a different body.")
+        return {"received": True, "duplicate": True, "processed": True}
+    event.verified = True
     event.raw_payload = payload
     provider_invoice = webhook_invoice_id(payload)
     if provider_invoice:
