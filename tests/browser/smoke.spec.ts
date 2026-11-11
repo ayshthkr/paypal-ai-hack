@@ -150,6 +150,23 @@ test("queue reports the waking state and stops retrying after a 30-second API ou
   await expect(page.getByRole("button", { name: "Refresh queue" })).toBeEnabled();
 });
 
+test("queue recovers from a controlled cold-start read failure", async ({ page }) => {
+  test.setTimeout(90_000);
+  let attempts = 0;
+  await page.route("**/api/action-queue", async route => {
+    attempts += 1;
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Controlled cold-start response." }) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/actions");
+  await expect(page.locator("#action-approval .queue-card").first()).toBeVisible({ timeout: 60_000 });
+  expect(attempts).toBeGreaterThanOrEqual(2);
+  await expect(page.getByRole("button", { name: "Refresh queue" })).toBeEnabled();
+});
+
 test("guided tour exposes five stops and sends a failed live story to the packaged fallback", async ({ page }) => {
   await page.route("**/api/demo/session", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/demo-stories", route => route.fulfill({

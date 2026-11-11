@@ -4,6 +4,7 @@ import path from "node:path";
 
 const baseUrl = (process.env.SCREENSHOT_BASE_URL || "https://latepayer-web.onrender.com").replace(/\/$/, "");
 const outputRoot = path.resolve(process.env.SCREENSHOT_DIR || "artifacts/screenshots/review-2026-11-12");
+const deployedRevision = process.env.DEPLOYED_APP_REVISION || "not supplied";
 const launchOptions = process.env.CHROME_BIN
   ? { headless: true, executablePath: process.env.CHROME_BIN }
   : { headless: true, channel: process.env.SCREENSHOT_BROWSER_CHANNEL || "chrome" };
@@ -28,8 +29,10 @@ async function navigate(route) {
 async function save(name, { fullPage = false, selector } = {}) {
   const destination = path.join(outputRoot, name);
   await mkdir(path.dirname(destination), { recursive: true });
-  if (selector) await page.locator(selector).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: destination, type: "jpeg", quality: 91, fullPage });
+  const target = selector ? page.locator(selector) : null;
+  if (target) await target.scrollIntoViewIfNeeded();
+  if (target) await target.screenshot({ path: destination, type: "jpeg", quality: 91 });
+  else await page.screenshot({ path: destination, type: "jpeg", quality: 91, fullPage });
   completed.push(name);
   console.log(`saved ${name}`);
 }
@@ -71,17 +74,17 @@ try {
   await optional("empty-search-and-global-scope", async () => {
     await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded", timeout: 90_000 });
     await page.getByRole("textbox", { name: "Search invoices" }).fill("no-such-demo-invoice-987654");
-    await page.getByText("No matching invoices", { exact: true }).waitFor({ state: "visible", timeout: 90_000 });
+    await page.getByText(/No matching invoices\./).first().waitFor({ state: "visible", timeout: 90_000 });
     await save("01-dashboard/05-empty-search-global-cards.jpg");
   });
 
   await navigate("/actions");
-  await page.locator(".action-approval").first().waitFor({ state: "visible", timeout: 120_000 });
-  const detailHref = await page.locator(".action-approval a[href^='/invoices/']").first().getAttribute("href");
+  await page.locator("#action-approval .queue-card").first().waitFor({ state: "visible", timeout: 120_000 });
+  const detailHref = await page.locator("#action-approval a[href^='/invoices/']").first().getAttribute("href");
   await save("02-actions/01-ranked-action-queue.jpg");
 
   await optional("policy-explanation", async () => {
-    await page.getByRole("button", { name: /Policy fact.*threshold.*action/ }).click();
+    await page.locator("details.policy-thresholds summary").click();
     await save("02-actions/02-policy-fact-threshold-action.jpg");
   });
 
@@ -114,15 +117,18 @@ try {
     await page.locator(".curve-wrap").scrollIntoViewIfNeeded();
     await save("03-invoices/03-survival-curve-and-partial-settlement-explanation.jpg");
     await optional("survival-probability-table", async () => {
-      await page.getByText("Inspect dated probabilities", { exact: true }).click();
-      await save("03-invoices/04-dated-survival-probability-table.jpg");
+      const values = page.locator(".curve-values");
+      await values.evaluate(details => { details.open = true; });
+      await values.locator("table").waitFor({ state: "visible" });
+      await values.scrollIntoViewIfNeeded();
+      await save("03-invoices/04-dated-survival-probability-table.jpg", { selector: ".curve-values" });
     });
     await optional("reply-classification-preview", async () => {
       const reply = page.getByRole("textbox", { name: "Paste client reply" });
       if (await reply.count()) {
         await reply.fill("We will pay Friday.");
         await page.getByRole("button", { name: "Classify reply" }).click();
-        await page.getByText(/Original client reply|Extracted intent|Classification preview/i).first().waitFor({ state: "visible", timeout: 45_000 });
+        await page.locator(".reply-review").waitFor({ state: "visible", timeout: 45_000 });
         await save("03-invoices/05-reply-classification-review.jpg");
       }
     });
@@ -135,8 +141,10 @@ try {
     await navigate(verdantHref);
     await save("05-clients/01-client-timing-and-exposure.jpg");
     await optional("client-terms-scenario", async () => {
-      const terms = page.getByText(/Terms comparison/i).first();
+      const terms = page.getByText("What if the next invoice had different terms?", { exact: true });
       await terms.scrollIntoViewIfNeeded();
+      await page.getByRole("button", { name: "Compare scenarios" }).click();
+      await page.locator(".what-if-grid").waitFor({ state: "visible", timeout: 45_000 });
       await save("05-clients/02-terms-scenario-horizons.jpg");
     });
   });
@@ -173,11 +181,11 @@ try {
     await navigate("/offline-demo");
     await save("08-fallback/01-versioned-read-only-fallback.jpg");
     await optional("fallback-invoice-evidence", async () => {
-      const expander = page.getByRole("button", { name: /invoice evidence|show invoice/i }).first();
-      if (await expander.count()) {
-        await expander.click();
-        await save("08-fallback/02-expanded-invoice-evidence.jpg");
-      }
+      await navigate("/offline-demo?stop=5");
+      await save("08-fallback/02-reply-triage-example.jpg");
+      await page.locator(".fallback-invoice-detail summary").click();
+      await page.locator(".fallback-invoice-detail .fallback-evidence-grid").waitFor({ state: "visible" });
+      await save("08-fallback/03-expanded-invoice-evidence.jpg");
     });
   });
 
@@ -197,7 +205,7 @@ try {
   const manifest = [
     "# Deployed demo screenshots",
     "",
-    `Captured from ${baseUrl} on 2026-11-12 after publishing commit 0319108. Public pages use synthetic demo data; no PayPal transaction or reminder was sent. The guided tour and collection update checks also passed against this deployment.`,
+    `Captured from ${baseUrl} on 2026-11-12 after publishing app commit ${deployedRevision}. Public pages use synthetic demo data; no PayPal transaction or reminder was sent.`,
     "",
     "Screenshots are numbered by workflow and then by page order. Images are viewport captures at a 1680 × 1050 CSS viewport and 1.5× device scale, except the narrow portfolio capture (390 × 844 CSS pixels).",
     "",
