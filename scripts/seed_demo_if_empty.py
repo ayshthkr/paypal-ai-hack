@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 
 from app.db import SessionLocal
 from app.models import Client, DemoState, Invoice, ReadModel
@@ -31,24 +31,31 @@ def seed_if_empty() -> dict[str, object]:
         client_count = db.scalar(select(func.count(Client.id)).where(Client.source == "demo")) or 0
         state = db.get(DemoState, "demo")
         seeded_as_of = state.as_of_date if state else None
-        snapshot = db.get(ReadModel, ("demo:snapshot", seeded_as_of)) if seeded_as_of else None
+        snapshot_version = db.scalar(select(ReadModel.version).where(
+            ReadModel.key == "demo:snapshot", ReadModel.as_of == seeded_as_of,
+        )) if seeded_as_of else None
         today = resolve_as_of()
         current = bool(
             invoice_count >= 1500
             and client_count >= 40
-            and snapshot
-            and snapshot.version == SNAPSHOT_VERSION
+            and snapshot_version == SNAPSHOT_VERSION
         )
         invalidated = _invalidate_stale_forecast_projections(db)
 
         if current and state and seeded_as_of and seeded_as_of < today:
-            newer_snapshot = db.get(ReadModel, ("demo:snapshot", today))
-            if newer_snapshot is None:
-                snapshot.as_of = today
+            newer_snapshot_version = db.scalar(select(ReadModel.version).where(
+                ReadModel.key == "demo:snapshot", ReadModel.as_of == today,
+            ))
+            if newer_snapshot_version is None:
+                db.execute(update(ReadModel).where(
+                    ReadModel.key == "demo:snapshot", ReadModel.as_of == seeded_as_of,
+                ).values(as_of=today))
                 state.as_of_date = today
                 db.commit()
-            elif newer_snapshot.version == SNAPSHOT_VERSION:
-                db.delete(snapshot)
+            elif newer_snapshot_version == SNAPSHOT_VERSION:
+                db.execute(delete(ReadModel).where(
+                    ReadModel.key == "demo:snapshot", ReadModel.as_of == seeded_as_of,
+                ))
                 state.as_of_date = today
                 db.commit()
             else:
