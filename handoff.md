@@ -12,10 +12,11 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
-### Active application release — commit `3aa93cb`, 2026-11-11
+### Active application release — commit `09e7195`, 2026-11-12
 
-- Render API and web are live with application code from `3aa93cb`. The API now skips full portfolio rescoring during startup, invalidates stale forecast projections, and rebuilds them lazily. The successful API deployment invalidated 1,532 old forecast projections, reached Uvicorn, and passed Render's `/health` check. The `/ready` path is not implemented; use `/health`.
-- The current hosted-read health workflow run `43076467172` passed on `3aa93cb` in 23 seconds, including API and web health, portfolio, invoice detail, action queue, morning brief, demo stories, evaluation, and AI status.
+- Render API and web are live with application code from `09e7195`. On Nov 11 the API repeatedly exceeded Render Free's 512 MB memory limit and stopped. The database remained available. Startup logs showed the demo seeder rebuilding the synthetic dataset when the merchant date advanced, loading a large cached snapshot and stale forecast rows into Python, and `uv run --frozen` syncing development tools at runtime. The replacement boot path advances the demo clock without rebuilding invoices, reads only the snapshot version, invalidates stale forecast rows with set-based SQL, and uses `uv run --no-sync`. The `/health` deployment probe and `/healthz` liveness route now return 200; `/ready` is not implemented.
+- Browser verification after `09e7195`: the portfolio rendered, `/actions` displayed the simulated queue, Ask answered “Which overdue invoice has the largest open balance?” with a grounded response, and `/performance` rendered its held-out synthetic report. The action queue API returned 200 in about 4.5 seconds. A cold portfolio read took about 11.3 seconds; the next warm read took about 5.4 seconds. Direct `/healthz` returned 200 in about 1 second. The deployment logs show no recurrence of the 512 MB startup failure.
+- `.github/workflows/demo-health.yml` now pings API `/healthz` and web `/` every five minutes, with retries, to reduce free-instance sleep. The workflow is active on this repository's default branch. Manual runs verify the full read path. This reduces the known startup risk but cannot promise uninterrupted availability: Render Free can still sleep, and GitHub scheduled jobs are best-effort.
 - Local verification passes: Ruff, 91 Python tests, ESLint, TypeScript, and the Next.js production build. A browser-to-PayPal Sandbox invoice creation test also passed with the controlled recipient allowlist and verified invoice reconciliation.
 - Invoice creation now forwards the browser idempotency key through the web proxy. Forecast summaries retain weekly settlement probabilities and old summaries are invalidated. Evaluation now replays the deployed scoring path, includes known positive outcomes before each horizon in IPCW Brier scoring, and reports interval eligibility and exclusions consistently.
 - Approval recovery reconciles server state after a failed or timed-out response. Synthetic queue actions say they are simulated; the terms simulator describes associations and uncertainty; the offline snapshot includes illustrative workflow examples; the tour retains navigation controls across destination screens.
@@ -25,7 +26,7 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - Reply triage has a persisted preview/correct/approve/dismiss flow and dispute resolution. Collections review stores owner, notes, follow-up date, and resolution. PayPal reminder screens disclose that the provider sends its native email; edits remain internal notes.
 - Alerts exclude habitual lateness and require stronger recent-worsening/outlier evidence. The generated synthetic backtest has 9 flags and 5 generator-defined positives; it does not establish real-world precision.
 - `/ai/status` reports Google Gemini `gemini-3.5-flash-lite`, `configured: true`. A live isolated synthetic run returned a Gemini draft grounded in invoice LP-48-021 (GBP 6,967.00, due 2026-10-31), persisted the exact model provenance, and returned a Gemini-classified promise-to-pay reply preview dated 2026-11-20 in pending state. The hosted invoice UI shows the provider, model, and grounding label. No reminder was sent and no PayPal record was changed.
-- The scheduled `.github/workflows/demo-health.yml` checks core web/API reads every 10 minutes, including AI configuration. Manual run `43076467172` succeeded on `3aa93cb` in 23 seconds. Free Render instances may still sleep between runs, so the schedule reduces cold starts without promising uninterrupted warm capacity.
+- The scheduled `.github/workflows/demo-health.yml` checks core web/API liveness every five minutes. Manual full-read checks include portfolio, invoice detail, action queue, morning brief, demo stories, evaluation, and AI status. Free Render instances may still sleep between scheduled runs, so the schedule reduces cold starts without promising uninterrupted warm capacity.
 
 ### Earlier deployed state and evidence
 
@@ -36,11 +37,11 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-Application release `3aa93cb` (`fix: avoid full portfolio rescore during startup`) is pushed to `origin/codex/late-payer-v1`; both Render services are deployed and healthy. Preserve the user's modified `AGENTS.md`.
+Application release `09e7195` (`fix: keep demo snapshot checks lightweight`) is pushed to `origin/codex/late-payer-v1`; both Render services are deployed. Preserve the user's modified `AGENTS.md` and `walkthrough.md`.
 
 ## Next checks
 
-1. The latest `demo-health.yml` run succeeded on `3aa93cb`; the API and web deployments are live and healthy.
+1. After a deployment, run `gh workflow run demo-health.yml` and confirm the manual read-path workflow succeeds. The scheduled liveness pings are best-effort on GitHub and Render Free.
 2. Keep PayPal in Sandbox mode and preserve the recipient allowlist for any future provider walkthrough.
 3. Preserve `AGENTS.md` changes when making later edits.
 
