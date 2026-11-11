@@ -73,6 +73,33 @@ test("an editable synthetic invoice draft survives a reload", async ({ page }) =
   }
 });
 
+test("cash-week cards open probability contributors with individual expected amounts", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/");
+  const weekCard = page.locator("#cash-forecast button.cash-week").first();
+  await expect(weekCard).toBeVisible({ timeout: 90_000 });
+  const filteredResponse = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/portfolio" && url.searchParams.has("predicted_week");
+  });
+  await weekCard.click();
+  const response = await filteredResponse;
+  expect(response.ok()).toBeTruthy();
+  const result = await response.json();
+  expect(result.items.length).toBeGreaterThan(0);
+  const first = result.items[0];
+  expect(first.cash_week_contribution).toBeTruthy();
+
+  const contributorPanel = page.locator("#cash-contributors");
+  await expect(contributorPanel).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole("button", { name: /Settlement week:/ })).toBeVisible();
+  const firstRow = contributorPanel.locator("tbody tr").first();
+  await expect(firstRow).toBeVisible();
+  await expect(firstRow.locator("td").nth(0).getByRole("link")).toHaveText(first.invoice_number);
+  const amount = Number(first.cash_week_contribution.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await expect(firstRow.locator("td").nth(4)).toContainText(`${first.currency} ${amount}`);
+});
+
 test("queue explains an empty successful response", async ({ page }) => {
   await page.goto("/actions");
   await page.route("**/api/action-queue", route => route.fulfill({

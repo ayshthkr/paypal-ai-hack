@@ -276,6 +276,9 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
 .active-filter-chips { padding: 0 12px; }
 .filter-chip { border: 1px solid #b8cdec; border-radius: 99px; padding: 6px 10px; color: #194e9b; background: #f3f7ff; font-size: 11px; }
 .filter-refresh-status { margin: 0 12px 10px; padding: 9px 11px; border: 1px solid #c4d8f6; border-radius: 8px; background: #f5f8ff; }
+.cash-contributor-panel { margin: 12px 0 16px; }
+.cash-contributor-table td:nth-child(3), .cash-contributor-table td:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cash-contributor-table td:last-child strong { color: #174ea6; }
 .grid-wrap.is-stale { opacity: .48; pointer-events: none; }
 .decision-hero {
   display: grid;

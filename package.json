@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "capture:screenshots": "bun scripts/capture-review-screenshots.mjs"
   },
   "dependencies": {
     "ag-grid-community": "36.2.0",
