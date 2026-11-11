@@ -2,6 +2,8 @@
 
 Receivables dashboard with a conditional time-to-payment forecast, client delay signals, and human-approved PayPal invoice reminders. The local experience uses a reproducible synthetic dataset. PayPal calls are restricted to Sandbox and controlled recipient emails.
 
+For the guided screen-by-screen tour, see [walkthrough.md](walkthrough.md).
+
 ## Requirements
 
 - Bun 1.3.6
@@ -18,7 +20,7 @@ make setup
 make dev
 ```
 
-Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for the API, and `http://localhost:8000/ready` for readiness. The dashboard remains usable in public synthetic demo mode without PayPal credentials. `make setup` starts Postgres, migrates the database, seeds 25 deterministic synthetic clients and 400 invoices, and trains the forecast.
+Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for the API, and `http://localhost:8000/healthz` for the minimal liveness check. `/ready` is not public; Render uses `/healthz`, which returns only `{"ok": true}`. The dashboard remains usable in public synthetic demo mode without PayPal credentials. `make setup` starts Postgres, migrates the database, seeds 52 deterministic synthetic clients and 1,500–3,000 invoices (with exactly 50 intentionally open), and trains the forecast.
 
 ## Commands
 
@@ -49,10 +51,17 @@ The invoice dashboard uses **AG Grid Community**, the free MIT-licensed edition.
 
 ## Render
 
-`render.yaml` defines the web service, API service, and Postgres database. The API seeds the public synthetic demo on first boot only, preserving its records on later restarts. The web build runs Bun 1.3.6, matching the local lockfile. The private GitHub repository is connected to Render and deployed as a free Blueprint. The API is at `https://latepayer-api.onrender.com`; confirm current readiness at `/ready`. Operator and Sandbox secrets stay in Render, while the generated operator login is also saved in ignored local `.env.render` (mode `0600`). Keep `PAYPAL_MODE=sandbox`. The Sandbox webhook is registered, but PayPal's Sandbox OAuth token currently lacks the Invoicing scope, so invoice sync/creation returns `NOT_AUTHORIZED`; complete the API permission fix and hosted browser journey before treating the hosted acceptance as complete. The Blueprint uses free instance plans for the web/API and database; select a persistent database plan in Render if its current free-tier retention is insufficient for the data you intend to keep. Update `WEB_ORIGIN` if you use a custom web domain.
+`render.yaml` defines the web service, API service, and Postgres database. The API seeds the public synthetic demo on first boot only, preserving its records on later restarts. The web build runs Bun 1.3.6, matching the local lockfile. The private GitHub repository is connected to Render and deployed as a free Blueprint. The API is at `https://latepayer-api.onrender.com`; check its liveness at `/healthz`. Operator and Sandbox secrets stay in Render, while the generated operator login is also saved in ignored local `.env.render` (mode `0600`). The PayPal Sandbox Invoicing scope and invoice operations are verified; the controlled invoice, reminder, payment reconciliation, and webhook flow passed acceptance. Keep `PAYPAL_MODE=sandbox`. Free Render Postgres expires 30 days after creation and has a 14-day grace period before deletion; record the actual dashboard dates and follow [the Render runbook](docs/render-free-tier-runbook.md). Update `WEB_ORIGIN` if you use a custom web domain.
 
 Full external actions and account configuration are listed in [docs/external-setup.md](docs/external-setup.md). Execution evidence and remaining external blockers are in [docs/execution-status.md](docs/execution-status.md) and [docs/v1-acceptance.md](docs/v1-acceptance.md).
 
 ## Data and model limits
 
-The synthetic generator uses seed `20261110`, 25 clients, 400 invoices, five transparent payment-timing profiles, and a cutoff of 2026-10-31. Training uses invoice-day risk rows; only full settlement is an event, open invoices are right-censored, and cancelled invoices are excluded. The application produces a 180-day conditional survival curve and p10/p50/p90 date estimates. Metrics and calibration report are synthetic pipeline checks, not evidence of real-world forecast accuracy. Client drift is a descriptive heuristic, not a churn probability.
+The synthetic generator uses seed `20261110`, 52 clients, 1,500–3,000 invoices with exactly 50 intentionally open at reset, and five transparent payment-timing profiles. `AS_OF` sets the observation cutoff. Training uses invoice-day risk rows; only full settlement is an event, open invoices are right-censored, and cancelled invoices are excluded. The application produces a 180-day conditional survival curve and p10/p50/p90 date estimates. Metrics and calibration report are synthetic pipeline checks, not evidence of real-world forecast accuracy. Client drift is a descriptive heuristic, not a churn probability.
+
+- The reminder-uplift table is an assumed sensitivity analysis; synthetic outcomes do not estimate reminder causality.
+- The validation-calibrated coverage interval uses paid invoices; right-censoring and client dependence limit coverage guarantees.
+- Drift-backtest labels are defined by the synthetic generator and measure recovery of those rules, not real-world risk.
+- The separate public benchmark is a historical, non-commercial external pipeline check and does not establish production accuracy.
+
+The reproducible [public dataset evaluation report](docs/public-dataset-evaluation.md) includes its source, license, sample, and external results.
