@@ -878,6 +878,38 @@ def test_gemini_flash_lite_request_uses_supported_generation_config(monkeypatch)
     assert calls["json"]["generationConfig"]["responseMimeType"] == "application/json"
 
 
+@pytest.mark.parametrize("first_failure", ["service_unavailable", "timeout"])
+def test_gemini_request_retries_once_after_transient_failures(monkeypatch, first_failure):
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": '{"body":"Please review the invoice when convenient."}'}]}}]}
+
+    def post(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            if first_failure == "timeout":
+                raise httpx.TimeoutException("temporary timeout")
+            request = httpx.Request("POST", url)
+            raise httpx.HTTPStatusError(
+                "temporary service error", request=request, response=httpx.Response(503, request=request)
+            )
+        return Response()
+
+    monkeypatch.setattr(ai_service, "get_settings", lambda: SimpleNamespace(gemini_api_key="test-key"))
+    monkeypatch.setattr(ai_service.httpx, "post", post)
+    monkeypatch.setattr(ai_service.time, "sleep", lambda _: None)
+
+    assert ai_service._gemini_json_request("Use only the provided facts.") == {
+        "body": "Please review the invoice when convenient."
+    }
+    assert len(calls) == 2
+
+
 def test_reply_classifier_extracts_promise_dates_and_flags_disputes(monkeypatch):
     monkeypatch.setattr(ai_service, "_gemini_json", lambda _: None)
     today = date(2026, 11, 10)

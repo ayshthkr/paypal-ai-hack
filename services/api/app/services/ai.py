@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from threading import BoundedSemaphore
 from datetime import date, timedelta
@@ -20,6 +21,8 @@ _JSON_SCHEMA = {
     "properties": {"body": {"type": "STRING"}},
     "required": ["body"],
 }
+_GEMINI_MAX_ATTEMPTS = 2
+_GEMINI_RESPONSE_BUDGET_SECONDS = 35.0
 _NUMBER_WORDS = re.compile(
     r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
     r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|"
@@ -42,30 +45,41 @@ def _gemini_json_request(prompt: str) -> dict | None:
             "responseSchema": _JSON_SCHEMA,
         },
     }
-    try:
-        response = httpx.post(
-            GEMINI_URL,
-            headers={"x-goog-api-key": key},
-            json=request_body,
-            timeout=httpx.Timeout(15.0, connect=3.0),
-        )
-        response.raise_for_status()
-        parts = response.json()["candidates"][0]["content"]["parts"]
-        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
-        value = json.loads(text)
-        return value if isinstance(value, dict) else None
-    except httpx.HTTPStatusError as exc:
-        logger.warning("Gemini generation rejected the request (HTTP %s)", exc.response.status_code)
-        return None
-    except httpx.TimeoutException:
-        logger.warning("Gemini generation request timed out")
-        return None
-    except httpx.HTTPError:
-        logger.warning("Gemini generation request failed at the network layer")
-        return None
-    except (ValueError, KeyError, IndexError, TypeError):
-        logger.warning("Gemini response did not match the expected structured output")
-        return None
+    for attempt in range(_GEMINI_MAX_ATTEMPTS):
+        try:
+            response = httpx.post(
+                GEMINI_URL,
+                headers={"x-goog-api-key": key},
+                json=request_body,
+                timeout=httpx.Timeout(15.0, connect=3.0),
+            )
+            response.raise_for_status()
+            parts = response.json()["candidates"][0]["content"]["parts"]
+            text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+            value = json.loads(text)
+            return value if isinstance(value, dict) else None
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if attempt + 1 < _GEMINI_MAX_ATTEMPTS and status in {429, 500, 502, 503, 504}:
+                logger.warning("Gemini returned transient HTTP %s; retrying once", status)
+                time.sleep(0.25)
+                continue
+            logger.warning("Gemini generation rejected the request (HTTP %s)", status)
+            return None
+        except httpx.TimeoutException:
+            if attempt + 1 < _GEMINI_MAX_ATTEMPTS:
+                logger.warning("Gemini generation timed out; retrying once")
+                time.sleep(0.25)
+                continue
+            logger.warning("Gemini generation request timed out")
+            return None
+        except httpx.HTTPError:
+            logger.warning("Gemini generation request failed at the network layer")
+            return None
+        except (ValueError, KeyError, IndexError, TypeError):
+            logger.warning("Gemini response did not match the expected structured output")
+            return None
+    return None
 
 
 def generate_reminder_body(facts: dict) -> str | None:
@@ -205,7 +219,7 @@ def _gemini_json(prompt: str) -> dict | None:
             _AI_SLOTS.release()
     future = _AI_EXECUTOR.submit(run)
     try:
-        return future.result(timeout=15.0)
+        return future.result(timeout=_GEMINI_RESPONSE_BUDGET_SECONDS)
     except TimeoutError:
         logger.warning("Gemini generation exceeded the application response budget")
         return None
