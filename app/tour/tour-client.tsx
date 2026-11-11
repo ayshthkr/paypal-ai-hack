@@ -57,6 +57,8 @@ export default function TourClient() {
     next.set("stop", String(index + 1));
     const query = next.toString();
     sessionStorage.setItem("latepayer-tour-stop", String(index + 1));
+    sessionStorage.setItem("latepayer-tour-active", "1");
+    window.dispatchEvent(new Event("latepayer-tour-change"));
     router.replace(`/tour?${query}`, { scroll: false });
   }, [router, searchKey]);
 
@@ -95,6 +97,10 @@ export default function TourClient() {
   const story = step.story ? stories.find(item => item.key === step.story) : null;
   const href = story?.href || step.href || STORY_FALLBACK[step.story || ""] || "/offline-demo";
   const anchor = step.story === "dispute" ? "#reply-triage" : "";
+  const destination = new URL(href, "https://latepayer.invalid");
+  destination.searchParams.set("tour", "1");
+  destination.searchParams.set("tour_stop", String(activeIndex + 1));
+  const openHref = `${destination.pathname}${destination.search}${anchor}`;
   return <>
     <div className="heading-row"><div><div className="eyebrow">Three-minute route · five stops</div><h1>Guided demo tour</h1><p className="subheading">Use these five screens to explain the receivables workflow, its forecast limits, and the human review step.</p></div></div>
     {storyError && <div className="empty-inline" role="status">The API did not load the named story after retries. This stop still has a local fallback. <button className="btn" onClick={() => setRetry(value => value + 1)}>Retry stories</button></div>}
@@ -105,7 +111,7 @@ export default function TourClient() {
       <p><strong>Say:</strong> “{step.read}”</p>
       <p className="fine-print">{step.detail}</p>
       {step.story && !story && !storyError && <div className="fine-print" role="status">Retrying the named synthetic story…</div>}
-      <Link className="btn primary" href={`${href}${anchor}`}>Open {story?.title || step.title}</Link>
+      <Link className="btn primary" href={openHref}>Open {story?.title || step.title}</Link>
       <nav className="tour-navigation" aria-label="Guided tour navigation">
         <button className="btn" disabled={activeIndex === 0} onClick={() => setStop(activeIndex - 1)}>← Previous stop</button>
         <div className="tour-progress">{steps.map((item, index) => <button key={item.title} className={index === activeIndex ? "active" : ""} aria-label={`Go to stop ${index + 1}: ${item.title}`} aria-current={index === activeIndex ? "step" : undefined} onClick={() => setStop(index)}>{index + 1}</button>)}</div>

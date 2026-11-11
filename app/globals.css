@@ -18,6 +18,9 @@ button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 .app-shell { min-height: 100vh; }
 .topbar { height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 76px); border-bottom: 1px solid var(--line); background: #fff; }
+.tour-return-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px clamp(20px, 5vw, 76px); border-bottom: 1px solid #d8e4fb; background: #f3f7ff; color: #34506c; font-size: 12px; }
+.tour-return-bar nav { display: flex; align-items: center; gap: 7px; }
+.tour-return-bar .btn { padding: 7px 10px; font-size: 11px; }
 .brand { display: flex; align-items: center; gap: 12px; font-weight: 750; letter-spacing: -.035em; font-size: 19px; }
 .brand-mark { width: 31px; height: 31px; border-radius: 10px 10px 10px 3px; display: grid; place-items: center; color: #fff; background: #132d47; font-size: 17px; font-weight: 800; }
 .top-actions { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
@@ -211,6 +214,8 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
 }
 @media (max-width: 620px) {
   .topbar { height: 62px; padding: 0 17px; }
+  .tour-return-bar { align-items: flex-start; flex-direction: column; padding: 10px 17px; }
+  .tour-return-bar nav { width: 100%; flex-wrap: wrap; }
   .main-wrap { padding: 25px 14px 50px; }
   .heading-row { align-items: flex-start; flex-direction: column; }
   .stats-grid { gap: 8px; }
