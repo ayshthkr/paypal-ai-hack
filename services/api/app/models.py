@@ -139,6 +139,7 @@ class Recommendation(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
     draft_source: Mapped[str] = mapped_column(String(24), nullable=False, default="template")
+    draft_model: Mapped[str | None] = mapped_column(String(96))
     drafted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
     edited_text: Mapped[str] = mapped_column(Text, nullable=False)
     invoice_version: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app import main
 from app import security
 from app.config import Settings
-from app.models import Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
+from app.models import AIAudit, Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session, session_claims
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
@@ -1067,14 +1067,19 @@ def test_reminder_draft_endpoint_persists_model_and_fallback_audit(api, monkeypa
         db.commit()
     detail = client.get("/invoices/draft-invoice")
     assert detail.status_code == 200 and detail.json()["recommendation"]["draft_source"] == "template"
+    assert detail.json()["recommendation"]["draft_model"] is None
     generated = client.post("/invoices/draft-invoice/draft")
     assert generated.status_code == 200, generated.text
     assert generated.json()["recommendation"]["draft_text"] == "AI generated draft"
     assert generated.json()["recommendation"]["draft_source"] == "gemini"
+    assert generated.json()["recommendation"]["draft_model"] == "gemini-3.5-flash-lite"
     with Session() as db:
         recommendation = db.query(Recommendation).filter_by(invoice_id="draft-invoice").one()
         assert recommendation.draft_text == "AI generated draft"
+        assert recommendation.draft_model == "gemini-3.5-flash-lite"
         assert recommendation.approved_text is None
+        audit = db.query(AIAudit).filter_by(invoice_id="draft-invoice", kind="draft").one()
+        assert audit.output["model"] == "gemini-3.5-flash-lite"
 
 
 def test_paid_invoice_detail_shows_issue_forecast_actual_outcome_and_timeline(api, monkeypatch):

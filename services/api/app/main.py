@@ -1013,7 +1013,7 @@ def _recommendation_dict(recommendation: Recommendation | None) -> dict | None:
     return {
         "id": recommendation.id, "action": recommendation.action, "tone": recommendation.tone,
         "reason": recommendation.reason, "draft_text": recommendation.draft_text,
-        "draft_source": recommendation.draft_source,
+        "draft_source": recommendation.draft_source, "draft_model": recommendation.draft_model,
         "drafted_at": recommendation.drafted_at.isoformat() if recommendation.drafted_at else None,
         "edited_text": recommendation.edited_text, "invoice_version": recommendation.invoice_version,
         "state": recommendation.state, "approved_text": recommendation.approved_text,
@@ -1799,9 +1799,11 @@ def draft_invoice_reminder(invoice_id: str, request: Request, db: Session = Depe
     body, source = generate_reminder_draft(facts, fallback)
     recommendation.draft_text = body
     recommendation.draft_source = source
+    recommendation.draft_model = GEMINI_MODEL if source == "gemini" else None
     recommendation.drafted_at = datetime.now(timezone.utc)
     recommendation.edited_text = body
-    db.add(AIAudit(kind="draft", invoice_id=invoice.id, facts=facts, output={"text":body, "source":source}))
+    db.add(AIAudit(kind="draft", invoice_id=invoice.id, facts=facts,
+                   output={"text": body, "source": source, "model": recommendation.draft_model}))
     db.commit()
     return {
         "recommendation": _recommendation_dict(recommendation),
