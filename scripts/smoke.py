@@ -12,7 +12,7 @@ def smoke() -> list[dict]:
     client = httpx.Client(base_url=base, timeout=120) if base else TestClient(app)
     timings = []
     with client:
-        for path in ("/health", "/ready"):
+        for path in ("/health", "/healthz"):
             response = client.get(path)
             assert response.status_code == 200, (path, response.status_code)
         def read(path):
