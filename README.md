@@ -20,7 +20,7 @@ make setup
 make dev
 ```
 
-Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for the API, and `http://localhost:8000/healthz` for the minimal liveness check. `/ready` is not public; Render uses `/healthz`, which returns only `{"ok": true}`. The dashboard remains usable in public synthetic demo mode without PayPal credentials. `make setup` starts Postgres, migrates the database, seeds 52 deterministic synthetic clients and 1,500–3,000 invoices (with exactly 50 intentionally open), and trains the forecast.
+Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for the API, and `http://localhost:8000/healthz` for the minimal liveness check. `/ready` is not public. Render probes `/health` during deployment; `/healthz` is also available as a minimal liveness endpoint. The dashboard remains usable in public synthetic demo mode without PayPal credentials. `make setup` starts Postgres, migrates the database, seeds 52 deterministic synthetic clients and 1,500–3,000 invoices (with exactly 50 intentionally open), and trains the forecast.
 
 ## Commands
 
