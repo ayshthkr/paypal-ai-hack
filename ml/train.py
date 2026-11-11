@@ -710,7 +710,13 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             lo, med, hi = calibrated_band(
                 conditional, correction_for_currency(conformal, row["currency"]) + age_widening,
             )
-            age_errors.append({"age_bucket": label, "absolute_error_days": abs(age+med-duration) if med else None, "within_p10_p90": bool(lo and hi and lo <= duration-age <= hi)})
+            age_errors.append({
+                "age_bucket": label,
+                "absolute_error_days": abs(age+med-duration) if med else None,
+                "within_p10_p90": bool(lo is not None and hi is not None and lo <= duration-age <= hi),
+                "interval_lower_day": lo,
+                "interval_upper_day": hi,
+            })
     training_issue_dates = [row["issue_date"] for row, _, _ in train_subjects]
     schema = {
         "version": FEATURE_SCHEMA_VERSION, "features": FEATURES, "horizon_days": HORIZON, "seed": SEED,

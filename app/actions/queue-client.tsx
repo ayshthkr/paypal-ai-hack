@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { requestJson, clearReads, ensureDemoSession } from "../lib/api";
+import { requestJson, clearReads, ensureDemoSession, RequestError } from "../lib/api";
 import { decisionLabel } from "../lib/labels";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -35,7 +35,11 @@ export default function ActionQueue() {
   const [error, setError] = useState("");
   const [waking, setWaking] = useState(false);
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { owner: string; notes: string; follow_up_date: string; resolution_status: string }>>({});
-  const refresh = useCallback(async () => {
+  const [collectionStates, setCollectionStates] = useState<Record<string, "dirty" | "saving" | "saved" | "saved_refresh_failed" | "failed" | "uncertain">>({});
+  const [operationStates, setOperationStates] = useState<Record<string, "uncertain" | "saved_refresh_failed" | "confirmed">>({});
+  const collectionStatesRef = useRef(collectionStates);
+  collectionStatesRef.current = collectionStates;
+  const refresh = useCallback(async (): Promise<QueueResult | null> => {
     setLoading(true); setError(""); setWaking(false);
     const wakeMessage = window.setTimeout(() => setWaking(true), 900);
     try {
@@ -59,12 +63,16 @@ export default function ActionQueue() {
       if (!result) throw new Error(`The API did not wake within 30 seconds. ${lastError || "Refresh to try again."}`);
       setData(result);
       setDrafts(readDrafts(result.items));
-      setCollectionDrafts(Object.fromEntries((result.collections_review || []).map(item => [item.id, {
+      const serverDrafts = Object.fromEntries((result.collections_review || []).map(item => [item.id, {
         owner: item.collection_review?.owner || "", notes: item.collection_review?.notes || "",
         follow_up_date: item.collection_review?.follow_up_date || "",
         resolution_status: item.collection_review?.resolution_status || "open",
-      }])));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load today's action queue."); }
+      }]));
+      setCollectionDrafts(current => Object.fromEntries(Object.entries(serverDrafts).map(([id, value]) => [
+        id, ["dirty", "saving", "saved_refresh_failed", "failed", "uncertain"].includes(collectionStatesRef.current[id]) ? current[id] || value : value,
+      ])));
+      return result;
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load today's action queue."); return null; }
     finally { window.clearTimeout(wakeMessage); setWaking(false); setLoading(false); }
   }, []);
   useEffect(() => {
@@ -74,19 +82,78 @@ export default function ActionQueue() {
 
   const updateCollection = (id: string, key: "owner" | "notes" | "follow_up_date" | "resolution_status", value: string) => {
     setCollectionDrafts(current => ({ ...current, [id]: { ...{ owner: "", notes: "", follow_up_date: "", resolution_status: "open" }, ...current[id], [key]: value } }));
+    setCollectionStates(current => ({ ...current, [id]: "dirty" }));
+  };
+
+  const matchesCollectionDraft = (item: QueueItem | undefined, draft: { owner: string; notes: string; follow_up_date: string; resolution_status: string }) => Boolean(item?.collection_review
+    && item.collection_review.owner === draft.owner.trim()
+    && item.collection_review.notes === draft.notes.trim()
+    && (item.collection_review.follow_up_date || "") === draft.follow_up_date
+    && item.collection_review.resolution_status === draft.resolution_status);
+
+  const checkCollectionStatus = async (item: QueueItem) => {
+    const draft = collectionDrafts[item.id] || { owner: "", notes: "", follow_up_date: "", resolution_status: "open" };
+    clearReads();
+    const latest = await refresh();
+    if (!latest) { setCollectionStates(current => ({ ...current, [item.id]: "uncertain" })); return; }
+    const currentItem = latest.collections_review?.find(row => row.id === item.id);
+    if (matchesCollectionDraft(currentItem, draft)) setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
+    else setCollectionStates(current => ({ ...current, [item.id]: "failed" }));
   };
 
   const saveCollectionReview = async (item: QueueItem) => {
     const draft = collectionDrafts[item.id] || { owner: "", notes: "", follow_up_date: "", resolution_status: "open" };
+    setCollectionStates(current => ({ ...current, [item.id]: "saving" }));
     setBusyId(item.id); setError("");
     try {
       await requestJson(`/api/invoices/${encodeURIComponent(item.id)}/collection-review`, {
         method: "PATCH", body: JSON.stringify({ ...draft, follow_up_date: draft.follow_up_date || null }),
       });
+      setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
       clearReads();
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save collections review."); }
+      const latest = await refresh();
+      if (!latest) setCollectionStates(current => ({ ...current, [item.id]: "saved_refresh_failed" }));
+    } catch (cause) {
+      clearReads();
+      setCollectionStates(current => ({ ...current, [item.id]: "uncertain" }));
+      const latest = await refresh();
+      if (!latest) {
+        setError("Could not confirm the collections save. Your edits remain on this page. Check status before retrying.");
+      } else {
+        const currentItem = latest.collections_review?.find(row => row.id === item.id);
+        if (matchesCollectionDraft(currentItem, draft)) {
+          setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
+          setError("");
+        } else {
+          setCollectionStates(current => ({ ...current, [item.id]: "failed" }));
+          setError(`Collections save failed. Your edits remain on this page. ${cause instanceof Error ? cause.message : "Retry this record."}`);
+        }
+      }
+    }
     finally { setBusyId(""); }
+  };
+
+  const checkActionStatus = async (item: QueueItem) => {
+    const recommendation = item.recommendation;
+    if (!recommendation) return;
+    clearReads();
+    try {
+      const latest = await requestJson<{ recommendation: { state: string } | null; attempts?: { state: string }[] }>(
+        `/api/invoices/${encodeURIComponent(item.id)}`,
+      );
+      const state = latest.recommendation?.state || latest.attempts?.[0]?.state || "not available";
+      if (["proposed", "failed"].includes(state)) {
+        setOperationStates(current => { const next = { ...current }; delete next[recommendation.id]; return next; });
+        setError(`Status check confirms ${item.invoice_number} is still ${state}. You can review the details and retry the action.`);
+      } else {
+        setOperationStates(current => ({ ...current, [recommendation.id]: "confirmed" }));
+        setError(`Status check confirms ${item.invoice_number} is ${state}. The action controls are locked while the queue refreshes.`);
+      }
+      const refreshed = await refresh();
+      if (!refreshed) setOperationStates(current => ({ ...current, [recommendation.id]: "saved_refresh_failed" }));
+    } catch (cause) {
+      setError(`Could not confirm the status for ${item.invoice_number}. Retry Check status before submitting the action again. ${cause instanceof Error ? cause.message : ""}`);
+    }
   };
 
   const editDraft = (id: string, text: string) => {
@@ -97,7 +164,7 @@ export default function ActionQueue() {
   };
   const act = async (item: QueueItem, operation: "approve" | "skip", confirmed = false) => {
     const recommendation = item.recommendation;
-    if (!recommendation) return;
+    if (!recommendation || operationStates[recommendation.id]) return;
     const startedAt = reviewStartedAt.current.get(recommendation.id) ?? reviewClockNow();
     clearTimeout(saveTimers.current.get(recommendation.id));
     const isPartial = recommendation.action === "offer_partial_payment";
@@ -110,19 +177,32 @@ export default function ActionQueue() {
       else if (item.source.startsWith("demo")) { path = `/api/demo/recommendations/${recommendation.id}/send`; body = drafts[recommendation.id] || recommendation.edited_text; }
       else if (isPartial) path = `/api/recommendations/${recommendation.id}/approve-partial-payment`;
       else { path = `/api/recommendations/${recommendation.id}/send`; body = drafts[recommendation.id] || recommendation.edited_text; }
-      const response = await fetch(path, { method: "POST", cache: "no-store", credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify({ text: body }) : undefined });
-      const value = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
+      await requestJson<{ state?: string }>(path, {
+        method: "POST",
+        ...(body ? { body: JSON.stringify({ text: body }) } : {}),
+      });
       const reviewSeconds = reviewDurationSeconds(startedAt);
       reviewStartedAt.current.delete(recommendation.id);
       void requestJson(`/api/invoices/${encodeURIComponent(item.id)}/review-metric`, {
         method: "POST", body: JSON.stringify({ review_seconds: reviewSeconds, operation }),
       }).catch(() => undefined);
       clearReads();
-      await refresh();
+      const refreshed = await refresh();
+      if (!refreshed) {
+        setOperationStates(current => ({ ...current, [recommendation.id]: "saved_refresh_failed" }));
+        setError(`${item.invoice_number} action saved, but the queue refresh failed. Check invoice status before continuing.`);
+      }
       requestAnimationFrame(() => (document.querySelector(".queue-card button:not(:disabled), [data-queue-refresh]") as HTMLButtonElement | null)?.focus());
       return true;
-    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${operation} this suggestion.`); return false; }
+    } catch (cause) {
+      if (!(cause instanceof RequestError) || cause.status >= 500) {
+        setOperationStates(current => ({ ...current, [recommendation.id]: "uncertain" }));
+        setError(`${item.invoice_number} action did not return a confirmed result. Check its status before retrying.`);
+      } else {
+        setError(cause instanceof Error ? cause.message : `Could not ${operation} this suggestion.`);
+      }
+      return false;
+    }
     finally { setBusyId(""); }
   };
 
@@ -156,6 +236,7 @@ export default function ActionQueue() {
       const recommendation = item.recommendation;
       if (!recommendation) return null;
       const busy = busyId === recommendation.id;
+      const operationState = operationStates[recommendation.id];
       const partial = recommendation.action === "offer_partial_payment";
       const synthetic = item.source.startsWith("demo");
       return <article className="queue-card" key={recommendation.id}
@@ -166,7 +247,10 @@ export default function ActionQueue() {
         <p className="panel-subtitle">{item.why || item.decision.reason}</p>
         {item.reminder_outcomes?.length ? <div className="fine-print">Next-week outcome: {item.reminder_outcomes.map(outcome => `${outcome.tone} · ${outcome.status === "checking" ? `checking through ${outcome.window_ends}` : outcome.status}${outcome.amount_paid !== "0.00" ? ` (${money(outcome.currency, outcome.amount_paid)})` : ""}`).join(" · ")}</div> : null}
         {partial ? <div className="delivery-note">{synthetic ? "Approval simulates enabling partial payments in the synthetic demo; no PayPal change or email occurs." : "Approval enables partial payments on this PayPal Sandbox invoice; PayPal may notify the recipient."}</div> : <label className="field-label">{synthetic ? "Simulated reminder note · no email is sent" : "Internal reminder note · recipient receives PayPal&apos;s native message"}<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label>}
-        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Approve partial payments" : synthetic ? "Approve & simulate" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
+        {operationState === "uncertain" && <div className="delivery-note" role="status"><strong>Action status needs reconciliation.</strong><p>The saved server state is not confirmed. Check it before retrying.</p><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button></div>}
+        {operationState === "saved_refresh_failed" && <div className="delivery-note" role="status"><strong>Action saved; queue refresh failed.</strong><p>Check the invoice record or retry the queue refresh before continuing.</p><div className="action-buttons"><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button><button className="btn" disabled={loading} onClick={() => void refresh()}>Retry refresh</button></div></div>}
+        {operationState === "confirmed" && <div className="fine-print" role="status">Server status checked. Refresh the queue before taking another action.</div>}
+        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || Boolean(operationState) || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Approve partial payments" : synthetic ? "Approve & simulate" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy || Boolean(operationState)} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
       </article>;
     })}</div>}
     {data?.collections_review?.length ? <section className="collections-lane" aria-labelledby="collections-review-title">
@@ -183,7 +267,13 @@ export default function ActionQueue() {
             <label className="field-label">Follow-up date<input type="date" value={review.follow_up_date} onChange={event => updateCollection(item.id, "follow_up_date", event.target.value)}/></label>
             <label className="field-label">Resolution status<select className="select" value={review.resolution_status} onChange={event => updateCollection(item.id, "resolution_status", event.target.value)}><option value="open">Open</option><option value="in_progress">In progress</option><option value="awaiting_response">Awaiting response</option><option value="disputed">Disputed</option><option value="resolved">Resolved</option><option value="written_off">Written off</option></select></label>
             <label className="field-label">Review notes<textarea maxLength={4000} value={review.notes} placeholder="Call outcome, final notice, dispute details, or resolution" onChange={event => updateCollection(item.id, "notes", event.target.value)}/></label>
-            <div className="action-buttons"><button className="btn primary" disabled={busyId === item.id} onClick={() => void saveCollectionReview(item)}>{busyId === item.id ? "Saving…" : "Save collections review"}</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
+            {collectionStates[item.id] === "dirty" && <div className="fine-print" role="status">Unsaved changes · use Save collections review to persist this record.</div>}
+            {collectionStates[item.id] === "saving" && <div className="fine-print" role="status">Saving collections review…</div>}
+            {collectionStates[item.id] === "saved" && <div className="fine-print" role="status">Saved to the server.</div>}
+            {collectionStates[item.id] === "saved_refresh_failed" && <div className="delivery-note" role="status"><strong>Saved, but the queue refresh failed.</strong><p>Your changes are retained on this page. Check status to reconcile the record, or retry the refresh.</p><div className="action-buttons"><button className="btn" onClick={() => void checkCollectionStatus(item)}>Check status</button><button className="btn" onClick={() => void refresh()}>Retry refresh</button></div></div>}
+            {collectionStates[item.id] === "uncertain" && <div className="delivery-note" role="status"><strong>Save outcome not confirmed.</strong><p>Your changes are retained. Check the server before retrying.</p><button className="btn" onClick={() => void checkCollectionStatus(item)}>Check status</button></div>}
+            {collectionStates[item.id] === "failed" && <div className="delivery-note" role="alert"><strong>Save failed.</strong><p>Your changes are retained and can be saved again.</p></div>}
+            <div className="action-buttons"><button className="btn primary" disabled={busyId === item.id} onClick={() => void saveCollectionReview(item)}>{busyId === item.id ? "Saving…" : collectionStates[item.id] === "failed" ? "Retry save" : "Save collections review"}</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
           </div>;
         })()}
       </article>)}</div>

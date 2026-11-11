@@ -31,6 +31,7 @@ type InvoiceData = {
   outlier_hint?: string | null;
 };
 type ReplyTriage = { id: string; reply_text: string; classification: string; classifier: string; promised_payment_date: string | null; state: string; reminders_paused: boolean; note: string };
+type ReplyTriageStatus = { id: string; state: string; classification: string; promised_payment_date: string | null; disputed: boolean; invoice_promised_payment_date: string | null; reviewed_at: string | null };
 type InvoicePage = { items: { id: string; invoice_number: string }[]; page: number; page_count: number };
 
 
@@ -55,7 +56,8 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const [replyText, setReplyText] = useState("");
   const [replyTriage, setReplyTriage] = useState<ReplyTriage | null>(null);
   const pendingTriage = data?.reply_triages?.find(row => row.state === "pending");
-  const visibleReplyTriage = replyTriage || (pendingTriage && data ? {
+  const [replyReviewUnresolved, setReplyReviewUnresolved] = useState(false);
+  const visibleReplyTriage = (replyTriage?.state === "pending" ? replyTriage : null) || (pendingTriage && data ? {
     ...pendingTriage,
     reminders_paused: Boolean(data.disputed || data.promised_payment_date),
     note: "Preview only. Review or correct the extracted type and date, then approve it to update invoice state.",
@@ -207,8 +209,18 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const recordPayment = async (amount?: string) => {
     if (!data || data.simulation_disabled) return;
     setBusy(true); setError(""); setNotice("");
+    const paymentAmount = amount || Number(data.outstanding).toFixed(2);
+    const storageKey = `latepayer-demo-payment:${id}:${paymentAmount}`;
+    let idempotencyKey = sessionStorage.getItem(storageKey);
+    if (!idempotencyKey) {
+      idempotencyKey = crypto.randomUUID();
+      sessionStorage.setItem(storageKey, idempotencyKey);
+    }
     try {
-      const result = await requestJson<{ note: string; status: string }>(`/api/demo/invoices/${encodeURIComponent(id)}/payment`, { method: "POST", body: JSON.stringify(amount ? { amount } : {}) });
+      const result = await requestJson<{ note: string; status: string; replayed?: boolean }>(`/api/demo/invoices/${encodeURIComponent(id)}/payment`, {
+        method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ amount: paymentAmount }),
+      });
+      sessionStorage.removeItem(storageKey);
       setNotice(`${result.note} Invoice status is now ${result.status}.`);
       await refresh();
       if (!amount && result.status === "PAID") {
@@ -218,7 +230,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
         query.delete("age_bucket"); query.delete("action_only"); query.delete("drifting_only");
         router.push(`/?${query.toString()}`);
       }
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Payment simulation failed."); }
+    } catch (cause) { setError(`${cause instanceof Error ? cause.message : "Payment simulation failed."} The request identity is retained; retrying the same amount checks the existing result before recording another payment.`); }
     finally { setBusy(false); }
   };
 
@@ -254,10 +266,44 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
         method: "POST",
         ...(apply ? { body: JSON.stringify({ classification: visibleReplyTriage.classification, promised_payment_date: visibleReplyTriage.promised_payment_date }) } : {}),
       });
-      setNotice(result.note); setReplyTriage(null); setReplyText("");
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save the reply review."); }
+      setNotice(result.note); setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+      const latest = await refresh(true);
+      if (!latest) setError("Reply review saved, but the invoice refresh failed. The server accepted the review; retry the refresh when ready.");
+    } catch (cause) {
+      clearReads();
+      const authoritative = await requestJson<ReplyTriageStatus>(`/api/invoices/${encodeURIComponent(id)}/reply-triage/${encodeURIComponent(visibleReplyTriage.id)}`).catch(() => null);
+      if (authoritative?.state === "applied" || authoritative?.state === "dismissed") {
+        setData(current => current ? { ...current, disputed: authoritative.disputed, promised_payment_date: authoritative.invoice_promised_payment_date,
+          reply_triages: current.reply_triages?.map(row => row.id === authoritative.id ? { ...row, state: authoritative.state, classification: authoritative.classification, promised_payment_date: authoritative.promised_payment_date } : row) } : current);
+        setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+        setNotice(`Status check confirms this reply was ${authoritative.state === "applied" ? "approved" : "dismissed"}. The invoice now reflects the saved review.`);
+        setError("");
+      } else if (authoritative?.state === "pending") {
+        setReplyTriage({ ...visibleReplyTriage, state: "pending" }); setReplyReviewUnresolved(false);
+        setError(`Status check confirms the preview is still pending, so the review did not apply. You can correct it and retry. ${cause instanceof Error ? cause.message : ""}`);
+      } else {
+        setReplyReviewUnresolved(true);
+        setError(`Could not confirm the reply review outcome. Use Check status before approving again. ${cause instanceof Error ? cause.message : ""}`);
+      }
+    }
     finally { setBusy(false); }
+  };
+
+  const checkReplyReviewStatus = async () => {
+    clearReads();
+    const triageId = replyTriage?.id || pendingTriage?.id;
+    if (!triageId) { setReplyReviewUnresolved(true); setError("No reply preview is available to check."); return; }
+    const status = await requestJson<ReplyTriageStatus>(`/api/invoices/${encodeURIComponent(id)}/reply-triage/${encodeURIComponent(triageId)}`).catch(() => null);
+    if (!status) { setReplyReviewUnresolved(true); setError("The server status is still unavailable. Retry this check before approving again."); return; }
+    setData(current => current ? { ...current, disputed: status.disputed, promised_payment_date: status.invoice_promised_payment_date,
+      reply_triages: current.reply_triages?.map(row => row.id === status.id ? { ...row, state: status.state, classification: status.classification, promised_payment_date: status.promised_payment_date } : row) } : current);
+    if (status.state === "applied" || status.state === "dismissed") {
+      setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+      setNotice(`Status check confirms this reply was ${status.state === "applied" ? "approved" : "dismissed"}.`); setError("");
+    } else {
+      setReplyTriage({ ...(replyTriage || pendingTriage!), ...status, reminders_paused: Boolean(status.disputed || status.invoice_promised_payment_date), note: "Preview only. Review or correct the extracted type and date, then approve it to update invoice state." });
+      setReplyReviewUnresolved(false); setNotice("Status check confirms this preview is still pending. No invoice change was applied."); setError("");
+    }
   };
 
   const resolveDispute = async () => {
@@ -269,9 +315,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
     finally { setBusy(false); }
   };
 
-  if (loading && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="empty-box">Loading invoice…</div></main></div>;
-  if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="panel"><div className="eyebrow">Invoice detail</div><h1>Invoice not found</h1><p className="subheading">This invoice may have been removed or the link may be out of date.</p><div className="toolbar-tools"><Link className="btn" href="/">Back to portfolio</Link><form action="/" method="get" className="toolbar-tools"><input className="search" name="q" aria-label="Search invoices" placeholder="Search invoice or client" value={missingSearch} onChange={event => setMissingSearch(event.target.value)}/><button className="btn primary" disabled={!missingSearch.trim()}>Search</button></form></div></div></main></div>;
-  if (error && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load this invoice." : error} <button className="btn" onClick={() => void refresh()}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div></main></div>;
+  if (loading && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap"><div className="empty-box">Loading invoice…</div></main></div>;
+  if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap"><div className="panel"><div className="eyebrow">Invoice detail</div><h1>Invoice not found</h1><p className="subheading">This invoice may have been removed or the link may be out of date.</p><div className="toolbar-tools"><Link className="btn" href="/">Back to portfolio</Link><form action="/" method="get" className="toolbar-tools"><input className="search" name="q" aria-label="Search invoices" placeholder="Search invoice or client" value={missingSearch} onChange={event => setMissingSearch(event.target.value)}/><button className="btn primary" disabled={!missingSearch.trim()}>Search</button></form></div></div></main></div>;
+  if (error && !data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap"><div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load this invoice." : error} <button className="btn" onClick={() => void refresh()}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div></main></div>;
   if (!data) return null;
   const rec = data.recommendation;
   const isDemo = data.source.startsWith("demo");
@@ -282,7 +328,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const canApplyPartial = Boolean(!approvalOutcomeUnresolved && !clockDate && !data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
 
   return <div className="app-shell">
-    <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
+    <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
     <main className="main-wrap">
       {data.simulation_disabled && <div className="demo-banner" role="status">Viewing as of {clockDate} · return the clock to today to simulate actions.</div>}
       {isDemo && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Forecast and approval flow use generated records. Simulated actions do not contact PayPal.</span></div>}
@@ -365,6 +411,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
             {notice && <div className="action-message" role="status">{notice}</div>}
           </div>
           <div className="panel" id="reply-triage"><div className="panel-head"><div><div className="panel-title">Client reply triage</div><div className="panel-subtitle">Preview the extracted type and date, then approve or dismiss. Invoice state does not change until approval.</div></div></div>
+            {replyReviewUnresolved && <div className="demo-banner" role="status"><span>The last reply review timed out and its saved state could not be confirmed. Check status before approving again.</span><button className="btn" disabled={busy} onClick={() => void checkReplyReviewStatus()}>Check status</button></div>}
             <textarea aria-label="Paste client reply" placeholder="Example: We will pay Friday." value={replyText} onChange={event => setReplyText(event.target.value)} disabled={busy}/>
             <div className="action-buttons"><button className="btn" disabled={busy || !replyText.trim()} onClick={() => void triageReply()}>{busy ? "Checking…" : "Classify reply"}</button>
               {data.disputed && <span className="status-pill">Reminders paused · disputed</span>}
@@ -376,7 +423,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <blockquote>{visibleReplyTriage.reply_text}</blockquote>
               <label className="field-label">Classification<select className="select" value={visibleReplyTriage.classification} onChange={event => setReplyTriage(current => ({ ...(current || visibleReplyTriage), classification: event.target.value }))}><option value="promise_to_pay">Promise to pay</option><option value="dispute">Dispute</option><option value="question">Question</option><option value="other">Other</option></select></label>
               {visibleReplyTriage.classification === "promise_to_pay" && <label className="field-label">Promised payment date<input type="date" value={visibleReplyTriage.promised_payment_date || ""} onChange={event => setReplyTriage(current => ({ ...(current || visibleReplyTriage), promised_payment_date: event.target.value || null }))}/></label>}
-              <div className="action-buttons"><button className="btn primary" disabled={busy} onClick={() => void reviewTriage(true)}>Approve classification</button><button className="btn" disabled={busy} onClick={() => void reviewTriage(false)}>Dismiss</button></div>
+              <div className="action-buttons"><button className="btn primary" disabled={busy || replyReviewUnresolved} onClick={() => void reviewTriage(true)}>Approve classification</button><button className="btn" disabled={busy || replyReviewUnresolved} onClick={() => void reviewTriage(false)}>Dismiss</button></div>
             </div>}
           </div>
           {data.reminder_outcomes?.length ? <div className="panel"><div className="panel-title">Next-week reminder outcomes</div><p className="fine-print">Payments are checked for seven days after each recorded reminder. Partial payments are kept separate from full settlement.</p><div className="history-list">{data.reminder_outcomes.map((outcome, index) => <div className="history-row" key={`${outcome.sent_at}-${index}`}><span className="history-dot"/><div><div className="history-title">{outcome.tone} reminder · {outcome.status === "checking" ? "checking through " + shortDate(outcome.window_ends) : outcome.status}</div><div className="history-meta">Sent {shortDate(outcome.sent_at)} · {outcome.amount_paid !== "0.00" ? `${outcome.currency} ${outcome.amount_paid} received` : `Observed through ${shortDate(outcome.observed_through)}`}</div></div></div>)}</div></div> : null}

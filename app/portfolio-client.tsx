@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 
-import { requestJson as getJson, clearReads, ensureDemoSession, RequestError } from "./lib/api";
+import { requestJson as getJson, clearReads, ensureDemoSession, RequestError, API_REQUEST_TIMEOUT_MS } from "./lib/api";
 import { decisionLabel, signalLabel, statusLabel } from "./lib/labels";
 import { useAuth } from "./providers";
 
@@ -29,6 +29,7 @@ type InvoiceRow = {
   days_to_due: number; outstanding: string; currency: string; status: string; source: string;
   forecast: Forecast; drift: Drift;
   disputed?: boolean;
+  cash_week_contribution?: { amount: string; probability: string };
   decision: { action: string; tone: string; reason: string; expected_cash_gain: number; expected_cash_gain_currency: string | null; daily_rank?: number };
 };
 type AgingBucket = { count: number; amounts: Record<string, string> };
@@ -364,7 +365,7 @@ export default function PortfolioClient() {
     setAskLoading(true); setAskResult(null); setError("");
     try {
       await ensureDemoSession();
-      const response = await fetch("/api/ask", { method: "POST", cache: "no-store", credentials: "same-origin",
+      const response = await fetch("/api/ask", { method: "POST", cache: "no-store", credentials: "same-origin", signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: askQuestion }) });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
@@ -405,8 +406,11 @@ export default function PortfolioClient() {
     { colId: "expected_cash", headerName: "Assumed 14-day cash uplift", minWidth: 190,
       valueGetter: cell => cell.data?.decision.expected_cash_gain,
       valueFormatter: cell => cell.data?.decision.expected_cash_gain_currency ? money(cell.data.decision.expected_cash_gain_currency, cell.value || 0) : "—" },
+    { colId: "cash_contribution", headerName: "Expected contribution · selected week", minWidth: 225,
+      valueGetter: cell => cell.data?.cash_week_contribution?.amount,
+      valueFormatter: cell => cell.data && cell.value != null ? money(cell.data.currency, cell.value) : "—" },
   ], [detailHref, router]);
-  const columns = useMemo(() => baseColumns.map(column => ({ ...column, hide: !visibleColumns.includes(column.colId || column.field || "") })), [baseColumns, visibleColumns]);
+  const columns = useMemo(() => baseColumns.map(column => ({ ...column, hide: column.colId === "cash_contribution" ? !params.has("predicted_week") : !visibleColumns.includes(column.colId || column.field || "") })), [baseColumns, visibleColumns, params]);
   const rowData = useMemo(() => data?.items || [], [data]);
   const drifting = data?.client_signals || [];
   const driftCounts = {
@@ -452,7 +456,7 @@ export default function PortfolioClient() {
 
   return <AgGridProvider modules={modules}>
     <div className="app-shell">
-      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/tour">Guided tour</Link><DemoStoriesMenu/><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
+      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/tour">Guided tour</Link><DemoStoriesMenu/><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link><span>{authenticated ? "Operator session" : "Receivables workspace"}</span><Link className="btn" href={authenticated ? "/" : "/login"}>{authenticated ? "Operator" : "Operator login"}</Link></div></header>
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools"><button className="btn" onClick={() => setUsdMode(value => !value)}>{usdMode ? "Show source currencies" : "Show USD equivalent"}</button>{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
@@ -472,7 +476,7 @@ export default function PortfolioClient() {
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
           {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
             <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>Probability-weighted · {item.invoice_count} invoices contribute</small></div>) : <div className="empty-inline">No expected settlements this week.</div>}</div>
-            <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{decisionLabel(item.action)}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
+          <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{decisionLabel(item.action)}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Assumed 14-day uplift · 10% scenario, not measured incremental cash: {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
             <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${signalLabel(client.signal_type)})`).join(" · ") || "none"}</div>
           </> : null)}
         </section>
@@ -525,7 +529,7 @@ export default function PortfolioClient() {
           </section>
 
           <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Outstanding balances are allocated across calendar weeks using each forecast curve&apos;s settlement probability mass.</div></div></div>
-            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === week))}</strong></button>)}</div> : <div className="empty-inline">No forecast settlement probability mass falls inside the next eight weeks.</div>}
+            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ view: "open", predicted_week: week, age_bucket: null, action_only: null, drifting_only: null }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === week))}</strong><small>Probability-weighted · contributors may also appear in other weeks</small></button>)}</div> : <div className="empty-inline">No forecast settlement probability mass falls inside the next eight weeks.</div>}
           </section>
           <section className="panel"><div className="panel-title">Open balance by forecast horizon</div><div className="panel-subtitle">Gross principal is grouped by p50 settlement horizon for exposure review; disputed or unforecastable invoices remain visible. Reconciliation: {data.open_balance_reconciliation?.count ?? data.view_counts.open} invoices against the {data.view_counts.open}-invoice open book.</div><div className="aging-grid">{[["next_8_weeks", "Next 8 weeks"], ["after_8_weeks", "After 8 weeks · within 180 days"], ["beyond_180_days", "Beyond 180 days / no median"], ["disputed_unforecastable", "Disputed / unforecastable"]].map(([key, label]) => { const bucket = data.cash_horizon[key] || { count: 0, amounts: {} }; return <article className="aging-bucket" key={key}><span>{label}</span><strong>{bucket.count}</strong><small>{formatAmounts(bucket.amounts)}</small></article>; })}</div></section>
           <section className="panel"><div className="panel-head"><div><div className="panel-title">If the top five late clients pay within 14 days</div><div className="panel-subtitle">A hypothetical scenario; it is not the forecast.</div></div><button className="btn" onClick={() => setScenarioOpen(value => !value)}>{scenarioOpen ? "Hide scenario" : "Show week-by-week cash"}</button></div>{scenarioOpen && <><p className="fine-print">{data.top_late_scenario.assumption}</p><p>{data.top_late_scenario.clients.map(client => `${client.name} (${client.late_invoice_count} late)`).join(" · ") || "No currently late client is available."}</p><div className="cash-week-grid">{data.top_late_scenario.cash_by_week.map(entry => <article className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {entry.week_start}</span><strong>{formatCashEntries([entry])}</strong></article>)}</div>{!data.top_late_scenario.cash_by_week.length && <div className="empty-inline">No overdue balance is available for this scenario.</div>}</>}</section>

@@ -24,7 +24,7 @@ from app.services import ai as ai_service
 from ml.features import features
 from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
 from ml.activity import fit_bgnbd
-from ml.evaluation import coverage_by_issue_month
+from ml.evaluation import coverage_by_issue_month, grouped_errors
 from ml.train import _duration, _survival_from_hazards, km_hazards
 from scripts import seed_demo_if_empty
 
@@ -267,8 +267,24 @@ def test_monthly_coverage_uses_only_invoices_with_complete_interval_bounds():
     ])
     assert report == [{
         "month": "2026-08", "paid_invoice_count": 3, "eligible_interval_count": 2,
-        "excluded_count": 1, "coverage": 0.5,
+        "excluded_count": 1, "covered_count": 1, "coverage": 0.5,
     }]
+
+
+def test_grouped_coverage_reports_eligible_and_unbounded_denominators():
+    rows = [
+        {"currency": "EUR", "absolute_error_days": 4, "coverage_interval_lower_date": "2026-01-01", "coverage_interval_upper_date": "2026-01-11", "within_interval": True},
+        {"currency": "EUR", "absolute_error_days": 8, "coverage_interval_lower_date": "2026-01-02", "coverage_interval_upper_date": "2026-01-12", "within_interval": False},
+        {"currency": "EUR", "absolute_error_days": 2, "coverage_interval_lower_date": "2026-01-03", "coverage_interval_upper_date": None, "within_interval": False},
+    ]
+    report = grouped_errors(rows, "currency", "within_interval")[0]
+    assert report["count"] == 3
+    assert report["eligible_interval_count"] == 2
+    assert report["excluded_unbounded_count"] == 1
+    assert report["covered_count"] == 1
+    assert report["coverage"] == 0.5
+    assert report["median_interval_width_days"] == 10
+    assert report["coverage_definition"] == "validation-calibrated interval"
 
 
 def test_daily_startup_advances_clock_and_invalidates_stale_caches_without_reseeding(api, monkeypatch):
@@ -611,6 +627,119 @@ def test_invoice_grid_paginates_filters_aggregates_and_sorts_on_the_server(api):
     sorted_by_probability = client.get("/invoices?view=open&page_size=50&sort=p14&direction=desc").json()
     probabilities = [row["forecast"]["probabilities"]["14d"] for row in sorted_by_probability["items"]]
     assert probabilities == sorted(probabilities, reverse=True)
+
+
+def test_cash_week_drilldown_uses_probability_contributors_and_amounts(api, monkeypatch):
+    client, Session = api
+    as_of = date(2026, 11, 11)
+    forecasts = {
+        "cash-contributor": {
+            "quantiles": {"p10": None, "p50": {"days": 8, "date": "2026-11-18"}, "p90": None},
+            "probabilities": {"14d": 0.2}, "probability_by_due": 0.2,
+            "weekly_settlement_probabilities": [
+                {"week_start": "2026-11-09", "probability": 0.2},
+            ],
+        },
+        "cash-noncontributor": {
+            "quantiles": {"p10": None, "p50": {"days": 1, "date": "2026-11-12"}, "p90": None},
+            "probabilities": {"14d": 0.2}, "probability_by_due": 0.2,
+            "weekly_settlement_probabilities": [
+                {"week_start": "2026-11-09", "probability": 0.0},
+                {"week_start": "2026-11-16", "probability": 0.2},
+            ],
+        },
+    }
+    monkeypatch.setattr(main, "_prepare_portfolio_context", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_activity_for_source", lambda *args, **kwargs: {})
+    monkeypatch.setattr(main, "_drift_for", lambda *args, **kwargs: {"signal": "stable", "signal_type": "stable"})
+    monkeypatch.setattr(main, "_today", lambda *args, **kwargs: as_of)
+    monkeypatch.setattr(main, "_rank_policy_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(main, "forecast_invoice", lambda db, invoice, **kwargs: forecasts[invoice.id] | {
+        "model": "test", "model_version": "test-v1", "limited_history": True, "display_label": None,
+        "reasons": [], "history_count": 1, "scoring_date": as_of.isoformat(), "scored_at": as_of.isoformat(),
+    })
+    with Session() as db:
+        owner = Client(id="cash-owner", display_name="Cash Client", source="demo", drift={})
+        contributor = _invoice("cash-contributor", owner.id)
+        noncontributor = _invoice("cash-noncontributor", owner.id)
+        contributor.outstanding = Decimal("100.00")
+        noncontributor.outstanding = Decimal("200.00")
+        db.add_all([owner, contributor, noncontributor])
+        db.commit()
+
+    cards = client.get("/invoices?view=open&page_size=50").json()["expected_cash_by_week"]
+    nov9 = next(row for row in cards if row["week_start"] == "2026-11-09")
+    assert nov9["invoice_count"] == 1
+    assert Decimal(nov9["amount"]) == Decimal("20.0")
+    drilldown = client.get("/invoices?view=open&page_size=50&predicted_week=2026-11-09").json()
+    assert drilldown["count"] == 1
+    assert drilldown["items"][0]["id"] == "cash-contributor"
+    assert Decimal(drilldown["items"][0]["cash_week_contribution"]["amount"]) == Decimal("20.0")
+
+
+def test_demo_payment_reuses_idempotency_key_after_uncertain_response(api, monkeypatch):
+    client, Session = api
+    monkeypatch.setattr(main, "_public_demo_source", lambda: "demo")
+    monkeypatch.setattr(main, "_historical_demo", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "_drift_for", lambda *args, **kwargs: {})
+    with Session() as db:
+        owner = Client(id="payment-retry-owner", display_name="Payment Retry", source="demo", drift={})
+        invoice = _invoice("payment-retry-invoice", owner.id)
+        invoice.due_date = date.today() - timedelta(days=5)
+        db.add_all([owner, invoice])
+        db.commit()
+
+    headers = {"Idempotency-Key": "stable-request-key"}
+    first = client.post("/demo/invoices/payment-retry-invoice/payment", json={"amount": "25.00"}, headers=headers)
+    replay = client.post("/demo/invoices/payment-retry-invoice/payment", json={"amount": "25.00"}, headers=headers)
+    conflict = client.post("/demo/invoices/payment-retry-invoice/payment", json={"amount": "20.00"}, headers=headers)
+    assert first.status_code == 200
+    assert replay.status_code == 200 and replay.json()["replayed"] is True
+    assert replay.json()["outstanding"] == "75.00"
+    assert conflict.status_code == 409
+    with Session() as db:
+        assert db.query(Payment).filter(Payment.invoice_id == "payment-retry-invoice").count() == 1
+
+
+def test_opening_skipped_invoice_does_not_create_replacement_before_undo(api, monkeypatch):
+    client, Session = api
+    today = date.today()
+    monkeypatch.setattr(main, "_today", lambda *args, **kwargs: today)
+    monkeypatch.setattr(main, "_activity_for_source", lambda *args, **kwargs: {})
+    monkeypatch.setattr(main, "_top_policy_candidates", lambda *args, **kwargs: {"skip-open-invoice"})
+    monkeypatch.setattr(main, "_drift_for", lambda *args, **kwargs: {"signal": "stable", "signal_type": "stable"})
+    monkeypatch.setattr(main, "_client_has_partial_history", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "holdback_assignment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, "decide", lambda *args, **kwargs: {
+        "action": "friendly", "tone": "friendly", "reason": "Review this reminder.",
+        "expected_cash_gain": 10.0, "expected_cash_gain_currency": "USD", "policy_step": 1,
+    })
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.5, "probabilities": {"14d": 0.2}, "quantiles": {},
+        "weekly_settlement_probabilities": [], "model": "test", "model_version": "test-v1",
+        "limited_history": True, "display_label": None, "reasons": [], "history_count": 0,
+        "scoring_date": today.isoformat(), "scored_at": datetime.now(timezone.utc).isoformat(),
+    })
+    with Session() as db:
+        owner = Client(id="skip-open-owner", display_name="Skip Open", source="demo", drift={})
+        invoice = _invoice("skip-open-invoice", owner.id)
+        recommendation = Recommendation(
+            id="skip-open-recommendation", invoice_id=invoice.id, action="friendly", tone="friendly",
+            reason="Review this reminder.", draft_text="Reminder", edited_text="Reminder",
+            invoice_version=invoice.material_version, policy_date=today,
+        )
+        db.add_all([owner, invoice, recommendation])
+        db.commit()
+
+    skipped = client.post("/recommendations/skip-open-recommendation/skip")
+    detail = client.get("/invoices/skip-open-invoice")
+    undone = client.post("/recommendations/skip-open-recommendation/undo-skip")
+    assert skipped.status_code == 200
+    assert detail.status_code == 200
+    assert detail.json()["recommendation"]["id"] == "skip-open-recommendation"
+    assert detail.json()["recommendation"]["state"] == "skipped"
+    assert undone.status_code == 200
+    assert undone.json()["state"] == "proposed"
 
 
 def test_demo_time_travel_validates_sixty_day_window_and_updates_due_math(api):
@@ -1073,6 +1202,10 @@ def test_reply_triage_requires_approval_and_can_be_corrected(api, monkeypatch):
     })
     assert applied.status_code == 200, applied.text
     assert applied.json()["state"] == "applied"
+    status = client.get(f"/invoices/reply-invoice/reply-triage/{promised.json()['id']}")
+    assert status.status_code == 200
+    assert status.json()["state"] == "applied"
+    assert status.json()["invoice_promised_payment_date"] == "2026-11-13"
     detail = client.get("/invoices/reply-invoice").json()
     assert detail["decision"]["action"] == "wait"
     assert "promised payment" in detail["decision"]["reason"]

@@ -55,6 +55,8 @@ ACTIVITY_EXCLUDED_STATUSES = {"CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELET
 PORTFOLIO_CONTEXT_KEY = "latepayer_portfolio_context"
 _ACTIVITY_CACHE: dict[tuple, dict] = {}
 _ACTIVITY_CACHE_LOCK = Lock()
+_POLICY_CANDIDATE_CACHE: dict[tuple, frozenset[str]] = {}
+_POLICY_CANDIDATE_CACHE_LOCK = Lock()
 _AUTH_FAILURES: dict[str, deque[float]] = {}
 _AUTH_LOCK = Lock()
 _DEMO_SESSION_LOCK = Lock()
@@ -408,7 +410,7 @@ def _prepare_portfolio_context(
 
     scoring_dates = {_today(db, source) for source in {invoice.source for invoice in invoice_rows}}
     predictions_by_key = {}
-    if history_complete and include_predictions and invoice_ids and scoring_dates:
+    if include_predictions and invoice_ids and scoring_dates:
         predictions = db.scalars(
             select(Prediction).where(
                 Prediction.invoice_id.in_(invoice_ids),
@@ -907,6 +909,12 @@ def _invoice_dict(
         action["tone"] = "none"
         action["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
     recommendation = _latest_recommendation(db, invoice.id)
+    skipped_for_current_policy = bool(
+        recommendation
+        and recommendation.state == "skipped"
+        and recommendation.invoice_version == invoice.material_version
+        and recommendation.policy_date in {None, today}
+    )
     if recommendation and include_detail and create_recommendation and recommendation.policy_date is None:
         recommendation.policy_date = today
     if invoice.disputed or (invoice.promised_payment_date and today <= invoice.promised_payment_date):
@@ -918,7 +926,7 @@ def _invoice_dict(
         recommendation.state = "superseded"
         db.flush()
         recommendation = None
-    if include_detail and create_recommendation and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed", "applied", "superseded"}) and action["action"] in {"friendly", "firm", "offer_partial_payment"}:
+    if include_detail and create_recommendation and not skipped_for_current_policy and (not recommendation or recommendation.invoice_version != invoice.material_version or recommendation.state in {"skipped", "sent", "failed", "applied", "superseded"}) and action["action"] in {"friendly", "firm", "offer_partial_payment"}:
         provider_url = ((invoice.provider_payload.get("detail") or {}).get("metadata") or {}).get("recipient_view_url")
         if not isinstance(provider_url, str) or urlparse(provider_url).scheme != "https" or not urlparse(provider_url).hostname or not urlparse(provider_url).hostname.endswith("paypal.com"):
             provider_url = None
@@ -1094,7 +1102,30 @@ def _rank_policy_candidates(db: Session, source: str | None = None, forecast_cac
 
 
 def _top_policy_candidates(db: Session, source: str | None = None) -> set[str]:
-    return set(_rank_policy_candidates(db, source)[:DAILY_SUGGESTION_CAP])
+    query = select(Invoice).where(
+        Invoice.status.not_in(CLOSED_STATUSES), Invoice.outstanding > 0,
+    ).order_by(Invoice.id)
+    if source:
+        query = query.where(Invoice.source == source)
+    rows = list(db.scalars(query).all())
+    dates = tuple(sorted({(row.source, _today(db, row.source).isoformat()) for row in rows}))
+    facts = tuple((
+        row.id, row.material_version, row.status, str(row.outstanding), row.due_date.isoformat(),
+        row.reminder_step, row.disputed,
+        row.promised_payment_date.isoformat() if row.promised_payment_date else None,
+        row.partial_payment_allowed, row.payment_term_type,
+    ) for row in rows)
+    cache_key = (source, dates, facts)
+    with _POLICY_CANDIDATE_CACHE_LOCK:
+        cached = _POLICY_CANDIDATE_CACHE.get(cache_key)
+    if cached is not None:
+        return set(cached)
+    result = frozenset(_rank_policy_candidates(db, source)[:DAILY_SUGGESTION_CAP])
+    with _POLICY_CANDIDATE_CACHE_LOCK:
+        _POLICY_CANDIDATE_CACHE[cache_key] = result
+        if len(_POLICY_CANDIDATE_CACHE) > 128:
+            _POLICY_CANDIDATE_CACHE.pop(next(iter(_POLICY_CANDIDATE_CACHE)))
+    return set(result)
 
 
 def _record_policy_decision(db: Session, invoice: Invoice, summary: dict) -> None:
@@ -1513,8 +1544,23 @@ def invoices(
         if item["id"] in candidate_ranks:
             item["decision"]["daily_rank"] = candidate_ranks[item["id"]]
     if predicted_week:
-        week_end = predicted_week + timedelta(days=7)
-        items = [item for item in items if predicted_week.isoformat() <= ((item.get("forecast") or {}).get("quantiles", {}).get("p50") or {}).get("date", "") < week_end.isoformat()]
+        week_start = predicted_week.isoformat()
+        contributors = []
+        for item in items:
+            forecast = item.get("forecast") or {}
+            weekly_probability = next((
+                Decimal(str(point["probability"]))
+                for point in forecast.get("weekly_settlement_probabilities", [])
+                if point.get("week_start") == week_start
+            ), Decimal("0"))
+            contribution = Decimal(item["outstanding"]) * weekly_probability
+            if contribution <= 0:
+                continue
+            item["cash_week_contribution"] = {
+                "amount": str(contribution), "probability": str(weekly_probability),
+            }
+            contributors.append(item)
+        items = contributors
     if action_only:
         items = [item for item in items if item["id"] in ready_recommendations]
     _sort_invoice_items(items, sort, direction)
@@ -1629,6 +1675,8 @@ def invoices(
     slim_items = []
     for item in page_items:
         slim = {key: item[key] for key in ("id", "invoice_number", "client_id", "client_name", "due_date", "days_to_due", "outstanding", "currency", "status", "source", "disputed")}
+        if "cash_week_contribution" in item:
+            slim["cash_week_contribution"] = item["cash_week_contribution"]
         slim["drift"] = {"signal": item["drift"].get("signal"), "signal_type":item["drift"].get("signal_type")}
         slim["decision"] = {key: item["decision"].get(key) for key in ("action", "expected_cash_gain", "expected_cash_gain_currency", "daily_rank")}
         forecast = item["forecast"]
@@ -1876,6 +1924,22 @@ def apply_reply_triage(invoice_id: str, triage_id: str, payload: ReplyReviewInpu
             "promised_payment_date": triage.promised_payment_date.isoformat() if triage.promised_payment_date else None,
             "disputed": invoice.disputed,
             "note": "Reply review applied. The invoice and reminder policy now reflect the approved classification."}
+
+
+@app.get("/invoices/{invoice_id}/reply-triage/{triage_id}")
+def reply_triage_status(invoice_id: str, triage_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    invoice = _get_invoice_or_404(db, invoice_id)
+    _authorize_invoice(request, invoice, db)
+    triage = db.get(ReplyTriage, triage_id)
+    if not triage or triage.invoice_id != invoice.id:
+        raise HTTPException(status_code=404, detail="Reply preview not found.")
+    return {
+        "id": triage.id, "state": triage.state, "classification": triage.classification,
+        "promised_payment_date": triage.promised_payment_date.isoformat() if triage.promised_payment_date else None,
+        "reviewed_at": triage.reviewed_at.isoformat() if triage.reviewed_at else None,
+        "disputed": invoice.disputed,
+        "invoice_promised_payment_date": invoice.promised_payment_date.isoformat() if invoice.promised_payment_date else None,
+    }
 
 
 @app.post("/invoices/{invoice_id}/reply-triage/{triage_id}/dismiss")
@@ -2754,22 +2818,40 @@ def demo_send(recommendation_id: str, payload: SendInput, db: Session = Depends(
 
 
 @app.post("/demo/invoices/{invoice_id}/payment")
-def demo_payment(invoice_id: str, payload: PaymentInput, db: Session = Depends(get_db)) -> dict:
-    invoice = _get_invoice_or_404(db, invoice_id)
+def demo_payment(invoice_id: str, payload: PaymentInput, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), db: Session = Depends(get_db)) -> dict:
+    invoice = db.scalar(select(Invoice).options(joinedload(Invoice.client)).where(
+        Invoice.id == invoice_id,
+    ).with_for_update())
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
     if not _is_demo_source(invoice.source) or invoice.source != _public_demo_source():
         raise HTTPException(status_code=403, detail="Payment simulation is restricted to synthetic invoices.")
-    if not _payable(invoice):
-        raise HTTPException(status_code=409, detail="Invoice cannot accept another payment.")
-    if _historical_demo(db, invoice.source):
-        raise HTTPException(409, "Return the demo clock to today before simulating payment.")
     amount = payload.amount if payload.amount is not None else invoice.outstanding
     try:
         amount = Decimal(amount).quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError):
         raise HTTPException(status_code=422, detail="Payment amount must be a valid decimal.")
+    if idempotency_key is not None:
+        idempotency_key = idempotency_key.strip()
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1–128 characters.")
+        payment_key = f"demo-payment-{idempotency_key}"
+        prior = db.scalar(select(Payment).where(Payment.provider_payment_id == payment_key))
+        if prior:
+            if prior.invoice_id != invoice.id or prior.amount != amount or prior.currency != invoice.currency:
+                raise HTTPException(status_code=409, detail="This payment request key was already used for a different payment.")
+            return {"invoice_id": invoice.id, "status": invoice.status, "paid": str(invoice.paid),
+                    "outstanding": str(invoice.outstanding), "currency": invoice.currency,
+                    "simulated": True, "replayed": True,
+                    "note": "This payment request was already recorded; the existing result is shown."}
+    else:
+        payment_key = f"demo-payment-{invoice.id}-{uuid4().hex}"
+    if not _payable(invoice):
+        raise HTTPException(status_code=409, detail="Invoice cannot accept another payment.")
+    if _historical_demo(db, invoice.source):
+        raise HTTPException(409, "Return the demo clock to today before simulating payment.")
     if amount <= 0 or amount > invoice.outstanding:
         raise HTTPException(status_code=422, detail="Payment amount must be greater than zero and no more than the balance.")
-    payment_key = f"demo-payment-{invoice.id}-{uuid4().hex}"
     invoice.paid += amount
     invoice.outstanding -= amount
     invoice.status = "PAID" if invoice.outstanding == 0 else "PARTIALLY_PAID"

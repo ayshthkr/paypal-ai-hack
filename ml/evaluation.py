@@ -61,9 +61,41 @@ def grouped_errors(rows, key, coverage_key="within_p10_p90"):
     groups = defaultdict(list)
     for row in rows:
         groups[row[key]].append(row)
-    return [{"group": group, "count":len(values),
-             "median_absolute_error_days": float(np.median([r["absolute_error_days"] for r in values if r["absolute_error_days"] is not None])) if any(r["absolute_error_days"] is not None for r in values) else None,
-             "coverage": sum(bool(r.get(coverage_key)) for r in values)/len(values)} for group, values in sorted(groups.items())]
+    result = []
+    for group, values in sorted(groups.items()):
+        calibrated = coverage_key == "within_interval" or any(
+            "interval_lower_day" in row or "coverage_interval_lower_date" in row for row in values
+        )
+        date_bounds = ("coverage_interval_lower_date", "coverage_interval_upper_date") if calibrated else ("p10_date", "p90_date")
+        def interval_bounds(row):
+            if row.get("interval_lower_day") is not None and row.get("interval_upper_day") is not None:
+                return float(row["interval_lower_day"]), float(row["interval_upper_day"])
+            lower, upper = (row.get(date_bounds[0]), row.get(date_bounds[1]))
+            if lower and upper:
+                return float((np.datetime64(upper) - np.datetime64(lower)) / np.timedelta64(1, "D")), 0.0
+            return None
+        eligible = [row for row in values if interval_bounds(row) is not None]
+        widths = []
+        for row in eligible:
+            if row.get("interval_lower_day") is not None:
+                widths.append(float(row["interval_upper_day"] - row["interval_lower_day"]))
+            else:
+                lower, upper = (row[date_bounds[0]], row[date_bounds[1]])
+                widths.append(float((np.datetime64(upper) - np.datetime64(lower)) / np.timedelta64(1, "D")))
+        errors = [row["absolute_error_days"] for row in values if row["absolute_error_days"] is not None]
+        covered = sum(bool(row.get(coverage_key)) for row in eligible)
+        result.append({
+            "group": group,
+            "count": len(values),
+            "eligible_interval_count": len(eligible),
+            "excluded_unbounded_count": len(values) - len(eligible),
+            "covered_count": covered,
+            "median_absolute_error_days": float(np.median(errors)) if errors else None,
+            "coverage": covered / len(eligible) if eligible else None,
+            "median_interval_width_days": float(np.median(widths)) if widths else None,
+            "coverage_definition": "validation-calibrated interval" if calibrated else "raw model P10–P90 interval",
+        })
+    return result
 
 
 def client_bootstrap(subjects, curves_by_model, censor_g, seed=20261110, repeats=100):
@@ -182,6 +214,7 @@ def coverage_by_issue_month(rows) -> list[dict]:
             "paid_invoice_count": len(values),
             "eligible_interval_count": len(eligible),
             "excluded_count": len(values) - len(eligible),
+            "covered_count": sum(bool(row.get("within_interval")) for row in eligible),
             "coverage": (
                 sum(bool(row.get("within_interval")) for row in eligible) / len(eligible)
                 if eligible else None

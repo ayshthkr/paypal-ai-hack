@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { requestJson, RequestError, clearReads, ensureDemoSession } from "../../lib/api";
+import { requestJson, RequestError, clearReads, ensureDemoSession, API_REQUEST_TIMEOUT_MS } from "../../lib/api";
 import { decisionLabel, signalLabel, statusLabel, termLabel } from "../../lib/labels";
 import { useEffect, useState } from "react";
 
@@ -67,8 +67,8 @@ export default function ClientDetail({ id }: { id: string }) {
     return () => { cancelled = true; };
   }, [id, reload]);
 
-  if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
-  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => { clearReads(); setReload(value => value + 1); }}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
+  if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
+  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => { clearReads(); setReload(value => value + 1); }}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
 
   const balances = data.invoices.reduce<Record<string, number>>((totals, invoice) => {
     if (!new Set(["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"]).has(invoice.status) && Number(invoice.outstanding) > 0) {
@@ -87,7 +87,7 @@ export default function ClientDetail({ id }: { id: string }) {
     setWhatIfLoading(true); setWhatIfError("");
     try {
       await ensureDemoSession();
-      const response = await fetch(`/api/clients/${encodeURIComponent(id)}/what-if`, { method: "POST", cache: "no-store", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_term_type: whatIfTerm }) });
+      const response = await fetch(`/api/clients/${encodeURIComponent(id)}/what-if`, { method: "POST", cache: "no-store", credentials: "same-origin", signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_term_type: whatIfTerm }) });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
       setWhatIf(value as WhatIf);
@@ -101,7 +101,7 @@ export default function ClientDetail({ id }: { id: string }) {
   const forecastDate = (value: WhatIf["baseline"]["p50"]) => value ? formatDate(value.date) : "Beyond 180 days";
 
   return <div className="app-shell">
-    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href={`/?client_id=${encodeURIComponent(id)}&view=all`}>← Client portfolio</Link></div></header>
+    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href={`/?client_id=${encodeURIComponent(id)}&view=all`}>← Client portfolio</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></div></header>
     <main className="main-wrap">
       {isSynthetic && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Invoice and payment history is generated for this isolated browser session.</span></div>}
       <div className="heading-row"><div><div className="eyebrow">Client detail · {isSynthetic ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.client.name}</h1><p className="subheading">{data.history.invoice_count} invoices · {data.history.settled_invoice_count} fully settled · as of {formatDate(data.as_of)}</p></div><span className="status-pill">{signalLabel(data.drift.signal_type)}</span></div>

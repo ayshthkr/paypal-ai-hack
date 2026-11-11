@@ -29,8 +29,10 @@ async function proxy(request: NextRequest, context: RouteContext) {
     headers.set("x-demo-session", demoSession);
   }
   const init: RequestInit = { method: request.method, headers, cache: "no-store", redirect: "manual" };
-  if (["GET", "HEAD"].includes(request.method)) init.signal = request.signal;
-  if (!(["GET", "HEAD"].includes(request.method))) init.body = await request.arrayBuffer();
+  const readOnly = ["GET", "HEAD"].includes(request.method);
+  const deadlineMs = pathKey.endsWith("/draft") ? 45_000 : 30_000;
+  init.signal = readOnly ? AbortSignal.any([request.signal, AbortSignal.timeout(deadlineMs)]) : AbortSignal.timeout(deadlineMs);
+  if (!readOnly) init.body = await request.arrayBuffer();
   try {
     const upstream = await fetch(target, init);
     const responseHeaders = new Headers();
@@ -46,8 +48,14 @@ async function proxy(request: NextRequest, context: RouteContext) {
       });
     }
     return response;
-  } catch {
-    return NextResponse.json({ detail: "API service is unavailable. Start it with `make api`." }, { status: 502 });
+  } catch (cause) {
+    const timedOut = cause instanceof Error && cause.name === "TimeoutError";
+    const detail = timedOut
+      ? readOnly
+        ? "The API read timed out. Retry it or continue in the packaged read-only fallback."
+        : "The operation did not return before its deadline. Check the record status before retrying."
+      : "The API service is unavailable. Retry the read or continue in the packaged read-only fallback.";
+    return NextResponse.json({ detail }, { status: timedOut ? 504 : 502 });
   }
 }
 
