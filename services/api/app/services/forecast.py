@@ -18,10 +18,11 @@ from app.config import get_settings
 from app.models import Invoice, Payment, Prediction, ReadModel
 from ml.evaluation import calibrated_band
 from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
+from ml.survival_metrics import predict_cox_survival
 
 HORIZON = 180
 DISPLAY_CURVE_POINTS = 60
-FORECAST_REVISION = "curve-quantiles-v7"
+FORECAST_REVISION = "curve-quantiles-v8"
 
 
 def _display_curve(curve: list[float]) -> list[float]:
@@ -125,6 +126,7 @@ def _artifact_revision() -> str:
     paths = (
         model_path, model_path.with_name("model_metadata.json"),
         model_path.with_name("kaplan_meier.json"), model_path.with_name("calibration.json"),
+        model_path.with_name("cox_model.json"),
         schema_path,
     )
     signatures = [(str(path), _file_revision(path)) for path in paths]
@@ -132,19 +134,21 @@ def _artifact_revision() -> str:
 
 
 @timed("model_load")
-def _load_artifacts() -> tuple[Booster | None, list[float], str, str, dict, dict]:
+def _load_artifacts() -> tuple[Booster | dict | None, list[float], str, str, dict, dict]:
     settings = get_settings()
     path = Path(settings.model_path)
     schema_path = Path(settings.feature_schema_path)
     metadata_path = path.with_name("model_metadata.json")
     baseline_path = path.with_name("kaplan_meier.json")
     calibration_path = path.with_name("calibration.json")
-    revision = tuple(_file_revision(item) for item in (path, metadata_path, baseline_path, calibration_path, schema_path))
+    revision = tuple(_file_revision(item) for item in (
+        path, metadata_path, baseline_path, calibration_path, path.with_name("cox_model.json"), schema_path,
+    ))
     return _load_artifacts_cached(str(path), str(schema_path), revision)
 
 
 @lru_cache(maxsize=4)
-def _load_artifacts_cached(model_path: str, schema_file: str, revision: tuple) -> tuple[Booster | None, list[float], str, str, dict, dict]:
+def _load_artifacts_cached(model_path: str, schema_file: str, revision: tuple) -> tuple[Booster | dict | None, list[float], str, str, dict, dict]:
     path = Path(model_path)
     schema_path = Path(schema_file)
     metadata_path = path.with_name("model_metadata.json")
@@ -172,10 +176,24 @@ def _load_artifacts_cached(model_path: str, schema_file: str, revision: tuple) -
         if active == "lightgbm" and path.exists() and schema_compatible:
             model = Booster(model_file=str(path))
             version = f"{version}-{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}"
+        elif active == "cox" and path.with_name("cox_model.json").exists() and schema_compatible:
+            cox_path = path.with_name("cox_model.json")
+            cox_payload = json.loads(cox_path.read_text())
+            model = {
+                **cox_payload,
+                "mean": np.asarray(cox_payload["mean"], dtype=float),
+                "scale": np.asarray(cox_payload["scale"], dtype=float),
+                "beta": np.asarray(cox_payload["beta"], dtype=float),
+                "baseline_cumulative_hazard": np.asarray(cox_payload["baseline_cumulative_hazard"], dtype=float),
+            }
+            version = f"{version}-{hashlib.sha256(cox_path.read_bytes()).hexdigest()[:12]}"
         elif active == "lightgbm":
             active = "kaplan_meier"
             version = "pooled-km-incompatible-artifact-v1"
-    except (OSError, ValueError, TypeError):
+        elif active == "cox":
+            active = "kaplan_meier"
+            version = "pooled-km-incompatible-artifact-v1"
+    except (OSError, ValueError, TypeError, KeyError):
         model = None
         active = "kaplan_meier"
         version = "pooled-km-fallback-v1"
@@ -200,6 +218,22 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
     previous, current = curve[day - 1], curve[day]
     crossing = day - 1 + (previous - threshold) / max(1e-12, previous - current)
     return {"days": round(crossing, 2), "date": (today + timedelta(days=math.ceil(crossing))).isoformat()}
+
+
+def _weekly_settlement_probabilities(curve: list[float], today: date) -> list[dict]:
+    """Aggregate daily settlement mass into calendar weeks without assigning principal to p50."""
+    weekly: dict[date, float] = {}
+    for day in range(1, min(HORIZON, len(curve) - 1) + 1):
+        probability = max(0.0, float(curve[day - 1]) - float(curve[day]))
+        if probability <= 0:
+            continue
+        settlement_date = today + timedelta(days=day)
+        week_start = settlement_date - timedelta(days=settlement_date.weekday())
+        weekly[week_start] = weekly.get(week_start, 0.0) + probability
+    return [
+        {"week_start": week_start.isoformat(), "probability": round(probability, 10)}
+        for week_start, probability in sorted(weekly.items())
+    ]
 
 
 def _apply_promise_scenario(curve: list[float], promised_date, today: date,
@@ -271,7 +305,15 @@ def forecast_invoice(
     history = [row for row in records if row["settled_at"] and row["settled_at"] <= today]
     base_features = features(target, today, history, records)
     model, baseline, active_model, model_version, metadata, calibration = _load_artifacts()
-    use_model = model is not None and base_features["history_count"] >= 3
+    use_model = model is not None and (active_model == "cox" or base_features["history_count"] >= 3)
+    if not use_model:
+        baseline_version = metadata.get("kaplan_meier_model_version", "pooled-km-default-v1")
+        baseline_path = Path(get_settings().model_path).with_name("kaplan_meier.json")
+        try:
+            baseline_version = f"{baseline_version}-{hashlib.sha256(baseline_path.read_bytes()).hexdigest()[:12]}"
+        except OSError:
+            pass
+        model_version = baseline_version
 
     fingerprint_raw = json.dumps({
         "invoice_version": invoice.material_version,
@@ -318,22 +360,36 @@ def forecast_invoice(
         curve = None
     hazards: list[float] = []
     if not existing and use_model:
-        matrix = []
-        for offset in range(HORIZON):
-            row = features(target, today + timedelta(days=offset), history, records)
-            matrix.append([row[name] for name in FEATURES])
         try:
-            hazards = np.asarray(model.predict(np.asarray(matrix, dtype=np.float32), num_threads=1), dtype=float).tolist()
+            if active_model == "cox":
+                row = [base_features[name] for name in FEATURES]
+                absolute_survival = predict_cox_survival(np.asarray([row], dtype=np.float32), model)[0]
+                age = max(0, (today - target["issue_date"]).days)
+                denominator = max(1e-12, absolute_survival[min(age, len(absolute_survival) - 1)])
+                conditional = [
+                    min(1.0, max(0.0, absolute_survival[min(age + offset, len(absolute_survival) - 1)] / denominator))
+                    for offset in range(HORIZON + 1)
+                ]
+                hazards = [
+                    1.0 - conditional[offset + 1] / max(1e-12, conditional[offset])
+                    for offset in range(HORIZON)
+                ]
+            else:
+                matrix = []
+                for offset in range(HORIZON):
+                    row = features(target, today + timedelta(days=offset), history, records)
+                    matrix.append([row[name] for name in FEATURES])
+                hazards = np.asarray(model.predict(np.asarray(matrix, dtype=np.float32), num_threads=1), dtype=float).tolist()
         except (ValueError, RuntimeError):
             use_model = False
     if not existing and not use_model:
-        age = max(0, (today - invoice.issue_date).days)
+        age = max(0, (today - target["issue_date"]).days)
         # Never repeat the final KM hazard: its risk set is exhausted.
         hazards = [baseline[age + offset] if age + offset < len(baseline) else 0.0 for offset in range(HORIZON)]
     if not existing:
         hazards = [min(1.0, max(0.0, float(hazard))) for hazard in hazards]
         curve = _survival(hazards)
-        overdue = max(0, (today - invoice.due_date).days)
+        overdue = max(0, (today - target["due_date"]).days)
         if overdue > 0:
             tail = conditional_tail(target, history, today)
             # Beyond 30 days late, sparse daily hazard extrapolation is unstable.
@@ -355,13 +411,13 @@ def forecast_invoice(
         reasons = [
             f"{history_count} prior fully settled invoices were known at scoring time.",
             f"Prior late-payment share: {late_rate:.0%} of prior settled invoices." if history_count else "No prior settled-payment history; using pooled Kaplan–Meier baseline.",
-            f"Current open balance: {invoice.currency} {invoice.outstanding:,.2f}.",
+            f"Current open balance: {invoice.currency} {target['outstanding']:,.2f}.",
         ]
-        if invoice.payment_term_type == "DUE_ON_RECEIPT" or invoice.due_date == invoice.issue_date:
+        if target["payment_term_type"] == "DUE_ON_RECEIPT" or target["due_date"] == target["issue_date"]:
             reasons.append("Due on receipt means there is no contractual days-to-pay estimate; this forecast estimates settlement timing from observed history and invoice facts.")
         if history_count >= 3 and base_features["recent_delay_days"] > 0:
             reasons.append(f"Recent settled invoices had a median delay of {base_features['recent_delay_days']:.0f} days.")
-        overdue_days_for_reason = max(0, (today - invoice.due_date).days)
+        overdue_days_for_reason = max(0, (today - target["due_date"]).days)
         if overdue_days_for_reason:
             reasons.append(f"Invoice is already {overdue_days_for_reason} days overdue.")
         if promise_adjustment.get("applied"):
@@ -390,7 +446,7 @@ def forecast_invoice(
     currency_correction = interval.get("currency_corrections", {}).get(invoice.currency, {}).get(
         "correction_days", interval.get("correction_days", 0),
     )
-    age_widening = math.ceil(max(0, max(0, (today - invoice.due_date).days) - 60) / 6)
+    age_widening = math.ceil(max(0, max(0, (today - target["due_date"]).days) - 60) / 6)
     lower_day, median_day, upper_day = calibrated_band(curve, int(currency_correction) + age_widening)
     coverage_interval = {
         "lower_date": (today + timedelta(days=lower_day)).isoformat() if lower_day else None,
@@ -400,14 +456,16 @@ def forecast_invoice(
         "method": interval.get("method", "Uncalibrated survival interval"),
         "caveat": "Coverage calibration is paid-only; promise adherence and promise-adjusted coverage are not estimated from training data.",
     }
-    overdue_days = max(0, (today - invoice.due_date).days)
+    overdue_days = max(0, (today - target["due_date"]).days)
     return {
         "curve": _display_curve(curve),
+        "weekly_settlement_probabilities": _weekly_settlement_probabilities(curve, today),
+        "unforecasted_probability": round(max(0.0, float(curve[-1])), 8),
         "quantiles": quantiles,
         "coverage_interval": coverage_interval,
         "promise_adjustment": promise_adjustment,
         "probabilities": probabilities,
-        "probability_by_due": round(1.0 - curve[min(HORIZON, max(0, (invoice.due_date - today).days))], 6) if invoice.due_date >= today else 0.0,
+        "probability_by_due": round(1.0 - curve[min(HORIZON, max(0, (target["due_date"] - today).days))], 6) if target["due_date"] >= today else 0.0,
         "reasons": reasons,
         "model": model_label,
         "model_version": model_version,
@@ -437,8 +495,10 @@ def forecast_invoice(
 
 def warm_model() -> None:
     model, *_ = _load_artifacts()
-    if model is not None:
+    if isinstance(model, Booster):
         model.predict(np.zeros((1, len(FEATURES)), dtype=np.float32), num_threads=1)
+    elif isinstance(model, dict):
+        predict_cox_survival(np.zeros((1, len(FEATURES)), dtype=np.float32), model)
 
 
 def conditional_tail(target: dict, history: list[dict], today: date) -> list[float]:

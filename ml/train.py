@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -331,7 +332,16 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     val_horizons = [h for h in (7, 14, 30, 60, 90, 120, 180) if h <= max((d for _, d, _ in val_subjects), default=0)]
     val_ibs, _ = _integrated_brier(val_subjects, val_predictions, censor_g_val, list(range(1, HORIZON + 1)))
     val_km_ibs, _ = _integrated_brier(val_subjects, km_val_predictions, censor_g_val, list(range(1, HORIZON + 1)))
-    active_model = "lightgbm" if val_ibs is not None and (val_km_ibs is None or val_ibs <= val_km_ibs) else "kaplan_meier"
+    train_invoice_X = _invoice_feature_matrix(records, train_subjects)
+    cox_model = fit_cox(train_invoice_X, np.asarray([duration for _, duration, _ in train_subjects]),
+                        np.asarray([event for _, _, event in train_subjects]), HORIZON)
+    cox_val_X = _invoice_feature_matrix(records, val_subjects)
+    cox_val_curves = predict_cox_survival(cox_val_X, cox_model)
+    cox_val_predictions = {row[0]["id"]: curve for row, curve in zip(val_subjects, cox_val_curves, strict=True)}
+    val_cox_ibs, _ = _integrated_brier(val_subjects, cox_val_predictions, censor_g_val, list(range(1, HORIZON + 1)))
+    validation_integrated_brier = {"lightgbm": val_ibs, "kaplan_meier": val_km_ibs, "cox": val_cox_ibs}
+    eligible_models = [(score, name) for name, score in validation_integrated_brier.items() if score is not None]
+    active_model = min(eligible_models)[1] if eligible_models else "kaplan_meier"
 
     test_predictions: dict[str, list[float]] = {}
     for row, _, _ in test_subjects:
@@ -341,10 +351,6 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     km_test_predictions = {row["id"]: km_survival for row, _, _ in test_subjects}
     test_censor_g = _censor_survival([s for s in train_subjects + val_subjects])
     test_horizons = [h for h in (7, 14, 30, 60, 90, 120, 180) if h <= max((d for _, d, _ in test_subjects), default=0)]
-    # A Cox PH comparator is fitted only on the training invoice cohort.
-    train_invoice_X = _invoice_feature_matrix(records, train_subjects)
-    cox_model = fit_cox(train_invoice_X, np.asarray([duration for _, duration, _ in train_subjects]),
-                        np.asarray([event for _, _, event in train_subjects]), HORIZON)
     cox_test_X = _invoice_feature_matrix(records, test_subjects)
     cox_curves = predict_cox_survival(cox_test_X, cox_model)
     cox_test_predictions = {row[0]["id"]: curve for row, curve in zip(test_subjects, cox_curves, strict=True)}
@@ -353,8 +359,14 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "kaplan_meier": _model_metrics(test_subjects, km_test_predictions, test_censor_g, test_horizons),
         "cox": _model_metrics(test_subjects, cox_test_predictions, test_censor_g, test_horizons),
     }
-    active_val_predictions = val_predictions if active_model == "lightgbm" else km_val_predictions
-    active_test_predictions = test_predictions if active_model == "lightgbm" else km_test_predictions
+    validation_predictions_by_model = {
+        "lightgbm": val_predictions, "kaplan_meier": km_val_predictions, "cox": cox_val_predictions,
+    }
+    active_val_predictions = validation_predictions_by_model[active_model]
+    active_test_predictions = {
+        "lightgbm": test_predictions, "kaplan_meier": km_test_predictions,
+        "cox": cox_test_predictions,
+    }[active_model]
     ablation_metrics = _ablation_metrics(
         records, X_train, y_train, train_subjects, test_subjects,
         test_censor_g, test_horizons, test_predictions,
@@ -467,6 +479,109 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     coverage = covered / eligible_for_coverage if eligible_for_coverage else None
     monthly_coverage = coverage_by_issue_month(backtest_rows)
 
+    # Replay the conditional production path at overdue checkpoints. This
+    # includes the client-history tail blend, 14-day calibration, and the
+    # mature-invoice recovery ceiling used by the online scorer.
+    records_by_client: dict[str, list[dict]] = {}
+    for record in records:
+        records_by_client.setdefault(record["client_id"], []).append(record)
+    deployed_p50_errors: list[float] = []
+    deployed_brier_terms: dict[int, list[float]] = {14: [], 30: [], 60: []}
+    deployed_observation_count = 0
+    for invoice, duration, event in test_subjects:
+        terms = max(0, (invoice["due_date"] - invoice["issue_date"]).days)
+        for overdue_checkpoint in (1, 30, 90):
+            age = terms + overdue_checkpoint
+            if age >= duration or age >= HORIZON:
+                continue
+            score_date = invoice["issue_date"] + timedelta(days=age)
+            history = [
+                row for row in records_by_client.get(invoice["client_id"], [])
+                if row.get("settled_at") and row["settled_at"] <= score_date
+            ]
+            prior_durations = [
+                max(1, (row["settled_at"] - row["issue_date"]).days)
+                for row in history
+                if row["id"] != invoice["id"] and row["issue_date"] < invoice["issue_date"]
+            ]
+            prior = max(7, terms + 14)
+            kernel_values = prior_durations + [prior] * max(0, 5 - len(prior_durations))
+
+            def kernel_survival(day: int) -> float:
+                sigma = 0.5
+                return sum(
+                    0.5 * math.erfc((math.log(max(0.01, day)) - math.log(value)) / (sigma * math.sqrt(2)))
+                    for value in kernel_values
+                ) / len(kernel_values)
+
+            kernel_denominator = max(1e-12, kernel_survival(age))
+            tail_curve = [
+                min(1.0, max(0.0, kernel_survival(age + offset) / kernel_denominator))
+                for offset in range(HORIZON + 1)
+            ]
+            source_curve = active_test_predictions[invoice["id"]]
+            source_denominator = max(1e-12, source_curve[age])
+            curve = [
+                min(1.0, max(0.0, source_curve[min(age + offset, HORIZON)] / source_denominator))
+                for offset in range(HORIZON + 1)
+            ]
+            overdue_weight = min(1.0, overdue_checkpoint / 30.0)
+            curve = [
+                (1 - overdue_weight) * modeled + overdue_weight * empirical
+                for modeled, empirical in zip(curve, tail_curve, strict=True)
+            ]
+            if len(curve) > 14 and calibration_artifact.get("applied"):
+                raw_p14 = min(1.0, max(0.0, 1.0 - curve[14]))
+                target_p14 = min(1.0, max(0.0, float(np.interp(
+                    raw_p14, calibration_artifact.get("thresholds_x", [0.0, 1.0]), calibration_artifact.get("thresholds_y", [0.0, 1.0]),
+                ))))
+                calibrated_curve = []
+                for day, survival in enumerate(curve):
+                    raw_probability = 1.0 - survival
+                    if day <= 14:
+                        probability = raw_probability * target_p14 / raw_p14 if raw_p14 > 1e-12 else target_p14 * day / 14
+                    elif raw_p14 < 1.0 - 1e-12:
+                        probability = target_p14 + (raw_probability - raw_p14) * (1.0 - target_p14) / (1.0 - raw_p14)
+                    else:
+                        probability = target_p14
+                    calibrated_curve.append(1.0 - min(1.0, max(0.0, probability)))
+                curve = calibrated_curve
+            if overdue_checkpoint >= 90:
+                mature = [row for row in records_by_client.get(invoice["client_id"], [])
+                          if (score_date - row["due_date"]).days >= 180]
+                late_risk = [row for row in mature if not row.get("settled_at")
+                             or (row["settled_at"] - row["due_date"]).days >= 90]
+                recovered = sum(bool(row.get("settled_at") and row["settled_at"] <= score_date) for row in late_risk)
+                recovery = (recovered + 3.5) / (len(late_risk) + 10)
+                curve = [max(1.0 - recovery, survival) for survival in curve]
+
+            deployed_observation_count += 1
+            remaining = duration - age
+            p50_day = next((day for day, survival in enumerate(curve) if day > 0 and survival <= 0.5), None)
+            if event and p50_day is not None:
+                deployed_p50_errors.append(abs(p50_day - remaining))
+            observable = min(HORIZON, duration - age)
+            for horizon, terms_at_horizon in deployed_brier_terms.items():
+                if horizon > observable:
+                    continue
+                label = int(bool(event and remaining <= horizon))
+                deployed_probability = 1.0 - curve[horizon]
+                terms_at_horizon.append((deployed_probability - label) ** 2)
+    deployed_forecast_evaluation = {
+        "model": active_model,
+        "scoring_path": "conditional survival, client-history lognormal tail blend, validation-fitted 14-day calibration, and mature overdue recovery ceiling",
+        "overdue_checkpoints_days": [1, 30, 90],
+        "observation_count": deployed_observation_count,
+        "paid_only_p50_median_absolute_error_days": float(np.median(deployed_p50_errors)) if deployed_p50_errors else None,
+        "paid_only_p50_count": len(deployed_p50_errors),
+        "brier_by_horizon": {
+            f"{horizon}d": float(np.mean(values)) if values else None
+            for horizon, values in deployed_brier_terms.items()
+        },
+        "brier_observation_counts": {f"{horizon}d": len(values) for horizon, values in deployed_brier_terms.items()},
+        "limitations": "Synthetic held-out replay at due-date +1/+30/+90 days; horizons beyond the original 180-day observation window are censored. The synthetic cohort has no observed promise-adherence outcomes, so the illustrative promise overlay is not scored.",
+    }
+
     # Decile plot uses held-out 14-day probabilities and the validation-trained mapping.
     fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=150)
     if test_calibration_metrics["deciles"]:
@@ -481,7 +596,11 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
-    model_version = f"lgbm-hazard-v6-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    model_name = {"lightgbm": "lgbm-hazard", "kaplan_meier": "kaplan-meier", "cox": "cox-ph"}[active_model]
+    model_version = f"{model_name}-v7-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    baseline_model_version = f"kaplan-meier-v7-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    for row in backtest_rows:
+        row["model_version"] = model_version
     if len(X_validation) and len(y_validation):
         permutation = permutation_importance(
             model, X_validation, y_validation, scoring="neg_log_loss", n_repeats=3,
@@ -564,8 +683,8 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             (wins if active_due_auc > comparator_auc else losses).append(f"due-date AUC vs {comparator_name}")
     model_card = {
         "deployed_model": active_model,
-        "selection_rule": "Lowest inverse-probability-of-censoring-weighted integrated Brier score on the time-separated validation cohort.",
-        "validation_integrated_brier": {"lightgbm": val_ibs, "kaplan_meier": val_km_ibs},
+        "selection_rule": "Lowest inverse-probability-of-censoring-weighted integrated Brier score on the time-separated validation cohort; candidates are LightGBM, pooled Kaplan–Meier, and Cox PH.",
+        "validation_integrated_brier": validation_integrated_brier,
         "held_out_metrics_won": wins,
         "held_out_metrics_lost": losses,
         "training_window": [min(deployment_issue_dates).isoformat(), max(deployment_issue_dates).isoformat()],
@@ -577,7 +696,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         ],
     }
     evaluation = {
-        "as_of_date": history_cutoff.isoformat(), "seed": SEED,
+        "as_of_date": history_cutoff.isoformat(), "seed": SEED, "model_version": model_version,
         "split": {
             "train_cutoff": train_cutoff.isoformat(), "training_date_range": schema["training_date_range"],
             "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
@@ -589,11 +708,12 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "survival_metrics": test_metrics,
         "concordance_confidence_intervals": confidence_intervals,
         "model_comparison_note": (
-            f"Release model selected: {active_model}. Selection uses the preselected validation integrated Brier criterion (LightGBM {val_ibs:.3f} vs pooled Kaplan–Meier {val_km_ibs:.3f}); the held-out table includes Cox as a comparator and does not establish broad superiority because client-bootstrap intervals overlap. Issue weekday features are absent from the v6 schema."
-            if val_ibs is not None and val_km_ibs is not None else
+            f"Release model selected: {active_model}. Selection uses validation integrated Brier across LightGBM ({val_ibs:.3f}), pooled Kaplan–Meier ({val_km_ibs:.3f}), and Cox PH ({val_cox_ibs:.3f}); the held-out cohort is not used for model selection."
+            if all(value is not None for value in (val_ibs, val_km_ibs, val_cox_ibs)) else
             f"Release model selected: {active_model}. Validation integrated Brier estimates were unavailable, so no measured superiority claim is supported. Issue weekday features are absent from the v6 schema."
         ),
         "model_card": model_card,
+        "deployed_forecast_evaluation": deployed_forecast_evaluation,
         "ablation_metrics": ablation_metrics,
         "shap_summary": shap_summary,
         "interval_calibration": conformal,
@@ -622,7 +742,8 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     }
     (output_dir / "eval.json").write_text(json.dumps(evaluation, indent=2))
     report = {
-        "model_version": model_version, "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "model_version": model_version, "baseline_model_version": baseline_model_version,
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "seed": SEED, "training_seed": SEED, "feature_list": FEATURES,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "as_of_date": history_cutoff.isoformat(), "history_cutoff": history_cutoff.isoformat(),
@@ -630,8 +751,11 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "training_cutoff": train_cutoff.isoformat(),
         "train_rows": int(len(X_train)), "train_event_rows": int(y_train.sum()), "train_invoices": len(train_subjects),
         "validation_invoices": len(val_subjects), "validation_event_count": int(sum(event for _, _, event in val_subjects)),
-        "validation_horizons": val_horizons, "validation_ibs_lightgbm": val_ibs, "validation_ibs_km": val_km_ibs,
+        "validation_horizons": val_horizons, "validation_ibs_lightgbm": val_ibs,
+        "validation_ibs_km": val_km_ibs, "validation_ibs_cox": val_cox_ibs,
         "active_model": active_model,
+        "kaplan_meier_model_version": baseline_model_version,
+        "cox_model_version": f"cox-ph-v7-seed-{SEED}-asof-{history_cutoff.isoformat()}",
         "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
         "validation_observation_cutoff": validation_cutoff.isoformat(),
         "test_cohort": [test_lo.isoformat(), test_hi.isoformat()], "test_observation_cutoff": history_cutoff.isoformat(),
@@ -651,12 +775,27 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     X_full, y_full, full_subjects = make_risk_rows(records, history_cutoff, lambda row: row["issue_date"] <= history_cutoff)
     model.fit(X_full, y_full, feature_name=FEATURES, callbacks=[])
     model.booster_.save_model(str(output_dir / "payment_hazard.txt"))
+    full_invoice_X = _invoice_feature_matrix(records, full_subjects)
+    full_cox_model = fit_cox(
+        full_invoice_X,
+        np.asarray([duration for _, duration, _ in full_subjects]),
+        np.asarray([event for _, _, event in full_subjects]),
+        HORIZON,
+    )
+    (output_dir / "cox_model.json").write_text(json.dumps({
+        "mean": np.asarray(full_cox_model["mean"]).tolist(),
+        "scale": np.asarray(full_cox_model["scale"]).tolist(),
+        "beta": np.asarray(full_cox_model["beta"]).tolist(),
+        "baseline_cumulative_hazard": np.asarray(full_cox_model["baseline_cumulative_hazard"]).tolist(),
+        "converged": full_cox_model["converged"], "iterations": full_cox_model["iterations"],
+        "horizon_days": HORIZON, "method": "Cox proportional hazards with Breslow baseline",
+    }, indent=2))
     full_baseline = km_hazards(full_subjects)
     (output_dir / "kaplan_meier.json").write_text(json.dumps({"hazards": full_baseline, "horizon_days":HORIZON, "method":"pooled Kaplan–Meier, full window"}, indent=2))
     report["evaluation_training_cutoff"] = report["training_cutoff"]
     report["training_cutoff"] = history_cutoff.isoformat()
     report["training_date_range"] = [min(row["issue_date"] for row, _, _ in full_subjects).isoformat(), history_cutoff.isoformat()]
-    report["deployment_refit"] = "Expanding window through as-of; held-out metrics use the earlier frozen model. Calibration is transferred from the frozen validation model and requires monitoring after refit."
+    report["deployment_refit"] = "LightGBM, Cox PH, and Kaplan–Meier artifacts are refit through as-of; held-out metrics use frozen time-separated fits. The selected artifact is named in active_model and model_version. Validation calibration is transferred and requires monitoring after refit."
     schema["training_cutoff"] = history_cutoff.isoformat()
     schema["training_date_range"] = report["training_date_range"]
     (output_dir / "feature_schema.json").write_text(json.dumps(schema, indent=2))

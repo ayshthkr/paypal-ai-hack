@@ -1,18 +1,74 @@
 {
-  "applied": false,
-  "model": "kaplan_meier",
+  "applied": true,
+  "model": "cox",
   "target": "P(full settlement within 14 days)",
-  "method": "identity",
+  "method": "isotonic regression on validation invoices",
   "thresholds_x": [
-    0.0,
-    1.0
+    0.02148172048589747,
+    0.14642963193680503,
+    0.14936126106391667,
+    0.1663358609332477,
+    0.167112671802212,
+    0.23466794347774733,
+    0.23484695863039928,
+    0.27960727081943926,
+    0.2803109404338221,
+    0.3504290211305222,
+    0.3510213089771219,
+    0.3959263836275232,
+    0.39860523655658675,
+    0.40946478049044865,
+    0.41072737376642143,
+    0.46335469553598474,
+    0.46359230262547657,
+    0.47597457335795645,
+    0.4771972261261197,
+    0.5583255139384188,
+    0.5601591823704787,
+    0.5743832694528208,
+    0.5747589958470858,
+    0.6073081194820426,
+    0.6074756856517162,
+    0.6706211110712382,
+    0.6743605773553061,
+    0.788877778357246,
+    0.796771161550439,
+    0.8952886592708869
   ],
   "thresholds_y": [
     0.0,
+    0.0,
+    0.045454545454545456,
+    0.045454545454545456,
+    0.0625,
+    0.0625,
+    0.06382978723404255,
+    0.06382978723404255,
+    0.13953488372093023,
+    0.13953488372093023,
+    0.2692307692307692,
+    0.2692307692307692,
+    0.2857142857142857,
+    0.2857142857142857,
+    0.29411764705882354,
+    0.29411764705882354,
+    0.375,
+    0.375,
+    0.5263157894736842,
+    0.5263157894736842,
+    0.6666666666666666,
+    0.6666666666666666,
+    0.8,
+    0.8,
+    0.8571428571428571,
+    0.8571428571428571,
+    0.9375,
+    0.9375,
+    1.0,
     1.0
   ],
-  "validation_brier_raw": null,
-  "validation_brier_calibrated": null,
+  "validation_brier_raw": 0.09828614530318122,
+  "validation_brier_calibrated": 0.07725379129425765,
   "validation_cohort": [
     "2025-11-17",
     "2026-05-14"
@@ -20,7 +76,7 @@
   "interval_calibration": {
     "method": "split conformal interval correction fitted on validation paid invoices, with per-currency calibration when n \u2265 20",
     "correction_days": 0,
-    "count": 442,
+    "count": 434,
     "target": 0.8,
     "currency_corrections": {
       "EUR": {
@@ -28,12 +84,12 @@
         "count": 129
       },
       "GBP": {
-        "correction_days": 3,
-        "count": 133
+        "correction_days": 0,
+        "count": 127
       },
       "USD": {
         "correction_days": 0,
-        "count": 180
+        "count": 178
       }
     },
     "caveat": "Paid-only calibration; censoring, small currency slices, and client dependence limit marginal coverage guarantees.",
@@ -49,10 +105,10 @@
         "method": "two-sample Kolmogorov\u2013Smirnov test on signed paid-invoice P50 residuals",
         "calibration_count": 257,
         "test_count": 185,
-        "calibration_median_residual_days": 1.0,
-        "test_median_residual_days": 6.0,
-        "statistic": 0.11122094857503412,
-        "p_value": 0.1270817432126065,
+        "calibration_median_residual_days": 4.0,
+        "test_median_residual_days": 1.0,
+        "statistic": 0.1151119991586918,
+        "p_value": 0.10477887225956949,
         "drift_detected_at_0_05": false,
         "caveat": "Paid-only residual diagnostic; it is a drift check, not a censoring-adjusted calibration guarantee."
       },

@@ -1,5 +1,5 @@
 {
-  "model_version": "lgbm-hazard-v6-seed-20261110-asof-2026-11-11",
+  "model_version": "cox-ph-v7-seed-20261110-asof-2026-11-11",
   "method": "permutation importance on validation risk rows (negative log loss)",
   "features": [
     {

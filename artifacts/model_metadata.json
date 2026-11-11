@@ -1,5 +1,6 @@
 {
-  "model_version": "lgbm-hazard-v6-seed-20261110-asof-2026-11-11",
+  "model_version": "cox-ph-v7-seed-20261110-asof-2026-11-11",
+  "baseline_model_version": "kaplan-meier-v7-seed-20261110-asof-2026-11-11",
   "feature_schema_version": "latepayer-features-v6",
   "seed": 20261110,
   "training_seed": 20261110,
@@ -40,7 +41,7 @@
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-11T05:51:42.997236+00:00",
+  "trained_at": "2026-11-11T14:54:46.399998+00:00",
   "as_of_date": "2026-11-11",
   "history_cutoff": "2026-11-11",
   "training_date_range": [
@@ -63,7 +64,10 @@
   ],
   "validation_ibs_lightgbm": 0.08400257584840135,
   "validation_ibs_km": 0.0756696845755906,
-  "active_model": "kaplan_meier",
+  "validation_ibs_cox": 0.05079608796473484,
+  "active_model": "cox",
+  "kaplan_meier_model_version": "kaplan-meier-v7-seed-20261110-asof-2026-11-11",
+  "cox_model_version": "cox-ph-v7-seed-20261110-asof-2026-11-11",
   "validation_cohort": [
     "2025-11-17",
     "2026-05-14"
@@ -89,11 +93,11 @@
   "test_uno_concordance_lightgbm": 0.7563004141627692,
   "test_uno_concordance_km": 0.5,
   "test_uno_concordance_cox": 0.7874802127194457,
-  "test_paid_only_date_mae_days": 19.607843137254903,
+  "test_paid_only_date_mae_days": 11.895424836601308,
   "test_paid_only_invoice_count": 306,
-  "test_p10_p90_coverage": 0.8104575163398693,
-  "test_calibrated_interval_coverage": 0.8104575163398693,
+  "test_p10_p90_coverage": 0.9047619047619048,
+  "test_calibrated_interval_coverage": 0.9047619047619048,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
   "evaluation_training_cutoff": "2025-11-16",
-  "deployment_refit": "Expanding window through as-of; held-out metrics use the earlier frozen model. Calibration is transferred from the frozen validation model and requires monitoring after refit."
+  "deployment_refit": "LightGBM, Cox PH, and Kaplan\u2013Meier artifacts are refit through as-of; held-out metrics use frozen time-separated fits. The selected artifact is named in active_model and model_version. Validation calibration is transferred and requires monitoring after refit."
 }
