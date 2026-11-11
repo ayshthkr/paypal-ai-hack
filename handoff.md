@@ -1,6 +1,6 @@
 # Late Payer — repo handoff
 
-Read this first when continuing work in another chat. Then check `git status` before editing; the current working tree has intentional uncommitted documentation/config changes.
+Read this first when continuing work in another chat. Check `git status` before editing and preserve the user's uncommitted `AGENTS.md` changes.
 
 ## What this repo is
 
@@ -12,38 +12,34 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
-### Active release — commit `4d1a543`, 2026-11-11
+### Active release — commit `8bf6675`, 2026-11-11
 
-- Render reports API and web deployed at `4d1a543`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
-- Local verification passes: Ruff, 83 Python tests, ESLint, TypeScript, and the Next.js production build.
+- Render reports API and web deployed at `8bf6675`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
+- Local verification passes: Ruff, 86 Python tests, ESLint, TypeScript, and the Next.js production build.
 - Runtime model selection now compares LightGBM, Kaplan–Meier, and Cox PH on validation IPCW integrated Brier; the checked-in release artifact selects Cox PH (`cox-ph-v7-seed-20261110-asof-2026-11-11`). `artifacts/eval.json` separately reports the complete deployed scoring-path replay and synthetic-data limitations.
 - Cash summaries use probability-weighted settlement mass consistently, and disputed/unforecastable open balances reconcile into a separate gross exposure bucket. Hypothetical terms scoring now uses new issue/due dates.
 - Public synthetic mutations are isolated per browser session, and `/offline-demo` serves a generated, read-only snapshot. Dashboard clock changes are committed with their data; action and cash exposure are above the fold.
 - Reply triage has a persisted preview/correct/approve/dismiss flow and dispute resolution. Collections review stores owner, notes, follow-up date, and resolution. PayPal reminder screens disclose that the provider sends its native email; edits remain internal notes.
 - Alerts exclude habitual lateness and require stronger recent-worsening/outlier evidence. The generated synthetic backtest has 9 flags and 5 generator-defined positives; it does not establish real-world precision.
-- `/ai/status` reports safe provider/model/configured metadata, while draft responses identify source and grounding facts. After deployment, record the live status and a successful grounded draft without exposing the key. Render's `GEMINI_API_KEY` is dashboard-managed; never copy it into source or logs.
-- The scheduled `.github/workflows/demo-health.yml` workflow runs every 10 minutes from the default branch. Live core routes pass; the latest manual run failed only at the AI configuration assertion because `/ai/status` reports `configured: false`.
-- The user authorized configuring the local Gemini key in Render, but browser security blocked access to local `.env` and forbids bypassing that block. Ask the user to set `GEMINI_API_KEY` directly in Render service `latepayer-api` → **Environment**, save/rebuild/deploy, then rerun the health workflow and generate a grounded invoice draft. Do not send the key through chat.
+- `/ai/status` reports Google Gemini `gemini-3.5-flash-lite`, `configured: true`. A live isolated synthetic run returned a Gemini draft grounded in invoice LP-48-021 (GBP 6,967.00, due 2026-10-31), persisted the exact model provenance, and returned a Gemini-classified promise-to-pay reply preview dated 2026-11-20 in pending state. The hosted invoice UI shows the provider, model, and grounding label. No reminder was sent and no PayPal record was changed.
+- The scheduled `.github/workflows/demo-health.yml` checks core web/API reads every 10 minutes, including AI configuration. Manual run `43056612066` succeeded on `8bf6675` in 8 seconds. Free Render instances may still sleep between runs, so the schedule reduces cold starts without promising uninterrupted warm capacity.
 
 ### Earlier deployed state and evidence
 
 - Original V1 acceptance covered a 25-client / 400-invoice fixture and a LightGBM survival forecast. Those model metrics and historical test counts are superseded by the active release-candidate facts in `docs/v1-acceptance.md`.
 - PayPal Sandbox OAuth/Invoicing access works. Controlled invoice, reminder, payment reconciliation, and webhook delivery were verified. The webhook invoice ID is nested at `resource.invoice.id`; the adapter handles this. Other recent fixes reconcile create responses without IDs and normalize `MARKED_AS_PAID` to `PAID`.
-- Latest operational issue: the free Render API's cold start outlasted the UI's former five retries. The dashboard now retries up to 30 times at 2.5-second intervals and aborts sibling reads when a request fails. Portfolio invoice/client reads now share batched request context; the client activity fit is reused across concurrent dashboard calls.
-- Latest commits, pushed to `origin/codex/late-payer-v1`: `9e1359d` (portfolio reads), `11989f0` (reuse activity fit), `a7af8e7` (abort sibling requests). Ruff, ESLint, and TypeScript checks passed for this fix; the full test suite was not rerun.
-- Live follow-up: hosted bundle contains the retry/cancellation changes; `/ready` returned HTTP 200. Concurrent web proxy reads for invoices and clients both returned HTTP 200 in about 13 and 12 seconds. This is improved and working after wake-up, but portfolio reads remain slow on the free service. The latest GitHub status was `pending` with no reported checks.
+- Hosting behavior: free Render instances can sleep when idle. The dashboard retries up to 30 times at 2.5-second intervals and aborts sibling reads on failure; portfolio invoice/client reads share batched request context and reuse the client activity fit. The scheduled health workflow runs every 10 minutes to reduce cold starts.
 - Current hosted data is larger than the original acceptance fixture (2,147 invoices / 52 clients observed); the original 400-invoice synthetic acceptance remains the V1 baseline.
-- Last full `make check` passed 16 tests plus lint, typecheck, and production build; `make smoke` passed. Those full checks predate the latest performance fix. The Gemini settings loader was checked separately.
-- `GEMINI_API_KEY` is present in local ignored `.env` (mode `0600`) and is represented by an empty placeholder in `.env.example`. `Settings` exposes it, but no current feature calls Gemini. It is not configured in Render. Never print or commit the key.
+- The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-At handoff, branch `codex/late-payer-v1` is at `a7af8e7` (`fix: cancel sibling dashboard requests on failure`), pushed to `origin`. Deployment is observed through the updated hosted bundle and successful live API reads; check Render/GitHub status before claiming a completed deployment. Preserve existing working-tree changes: modified `AGENTS.md`, `README.md`, and `docs/v1-acceptance.md`, plus untracked `handoff.md` and `walkthrough.md`. These handoff edits are uncommitted too.
+At handoff, branch `codex/late-payer-v1` is at `8bf6675` (`fix: retry transient Gemini generation failures`), pushed to `origin`, with both Render services reporting that commit as deployed. Preserve the user's modified `AGENTS.md`; release documentation changes are being committed separately.
 
 ## Next checks
 
-1. Check Render's latest deploy/build result and GitHub status for `a7af8e7`.
-2. Confirm a cold-start dashboard load now recovers within the retry window; current concurrent invoice/client reads still take 12–13 seconds.
-3. Run the full verification suite after the performance commits if continuing code changes; the last full check predates them.
+1. Confirm the latest `demo-health.yml` run succeeded; Render deployments and live Gemini draft/reply checks for `8bf6675` have succeeded.
+2. Keep PayPal in Sandbox mode and preserve the recipient allowlist for any future provider walkthrough.
+3. Preserve `AGENTS.md` changes when making later edits.
 
 ## Run it
 
