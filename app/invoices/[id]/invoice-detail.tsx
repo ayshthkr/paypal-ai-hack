@@ -1,5 +1,5 @@
 "use client";
-import { requestJson, RequestError } from "../../lib/api";
+import { clearReads, requestJson, RequestError } from "../../lib/api";
 import { decisionLabel, signalLabel, statusLabel, termLabel } from "../../lib/labels";
 import { useAuth } from "../../providers";
 
@@ -65,28 +65,34 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const [neighbors, setNeighbors] = useState<{ previous: Neighbor | null; next: Neighbor | null }>({ previous: null, next: null });
   const [neighborsLoading, setNeighborsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const refreshInFlight = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const refreshInFlight = useRef<{ key: string; promise: Promise<InvoiceData | null> } | null>(null);
+  const refreshVersion = useRef(0);
   const draftRecommendation = useRef<string | null>(null);
+  const [approvalOutcomeUnresolved, setApprovalOutcomeUnresolved] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false): Promise<InvoiceData | null> => {
     const requestKey = `${id}${clockQuery}`;
-    if (refreshInFlight.current?.key === requestKey) return refreshInFlight.current.promise;
+    if (!force && refreshInFlight.current?.key === requestKey) return refreshInFlight.current.promise;
+    const requestVersion = ++refreshVersion.current;
     const pending = Promise.all([
       requestJson<InvoiceData>(`/api/invoices/${encodeURIComponent(id)}${clockQuery}`),
 
     ]).then(([invoice]) => {
-      if (refreshInFlight.current?.key !== requestKey) return;
+      if (refreshVersion.current !== requestVersion) return null;
       setData(invoice); setError(""); setNotFound(false);
+      setApprovalOutcomeUnresolved(false);
       const nextId = invoice.recommendation?.id || null;
       const sameDraft = draftRecommendation.current === nextId;
       setDraft(previous => sameDraft && ["proposed", "failed"].includes(invoice.recommendation?.state || "") ? previous : sessionStorage.getItem(`latepayer-draft:${nextId}`) ?? invoice.recommendation?.edited_text ?? "");
       draftRecommendation.current = nextId;
+      return invoice;
     }).catch(cause => {
-      if (refreshInFlight.current?.key !== requestKey) return;
+      if (refreshVersion.current !== requestVersion) return null;
       setError(cause instanceof Error ? cause.message : "Could not load invoice.");
       setNotFound(cause instanceof RequestError && cause.status === 404);
+      return null;
     }).finally(() => {
-      if (refreshInFlight.current?.key === requestKey) {
+      if (refreshInFlight.current?.promise === pending) {
         setLoading(false);
         refreshInFlight.current = null;
       }
@@ -146,12 +152,55 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
 
   const action = async (url: string, method = "POST", body?: object) => {
     if (!data?.recommendation) return;
+    const providerApproval = !data.source.startsWith("demo")
+      && /^\/api\/recommendations\/[^/]+\/(send|approve-partial-payment)$/.test(url);
     setBusy(true); setError(""); setNotice("");
+    if (providerApproval) setApprovalOutcomeUnresolved(true);
     try {
       const result = await requestJson<{ state?: string; simulated?: boolean; note?: string }>(url, { method, body: body ? JSON.stringify(body) : undefined });
+      if (providerApproval && result.state) {
+        setData(current => current?.recommendation
+          ? { ...current, recommendation: { ...current.recommendation, state: result.state! } }
+          : current);
+        setApprovalOutcomeUnresolved(false);
+      }
       setNotice(result.note || (result.simulated ? "Demo action simulated; nothing was sent through PayPal." : `Action ${result.state || "completed"}.`));
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Action failed."); await refresh(); }
+      await refresh(providerApproval);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Action failed.";
+      if (!providerApproval) {
+        setError(message);
+        clearReads();
+        await refresh(true);
+      } else {
+        clearReads();
+        const current = await refresh(true);
+        if (!current) {
+          setApprovalOutcomeUnresolved(true);
+          setError("Could not confirm the PayPal approval outcome. This action stays disabled until the latest server state can be loaded. Retry the status check before continuing.");
+        } else {
+          const state = current.recommendation?.state || "unavailable";
+          const lastAttempt = current.attempts?.[0];
+          if (state === "sent") {
+            setNotice("Approval outcome reconciled: the latest invoice record confirms PayPal accepted the reminder.");
+            setError("");
+          } else if (state === "applied") {
+            setNotice("Approval outcome reconciled: the latest invoice record confirms partial payments are enabled.");
+            setError("");
+          } else if (state === "sending" || lastAttempt?.state === "sending") {
+            setNotice("The approval is still processing. The server records an active provider attempt; leave this page open and do not submit again.");
+            setError("");
+          } else if (state === "unknown") {
+            setNotice("The provider outcome remains uncertain. Sync PayPal and reconcile the invoice before retrying.");
+            setError("");
+          } else if (state === "failed") {
+            setError(`The latest server record confirms the provider rejected the approval. Review the recorded attempt before retrying. ${message}`);
+          } else {
+            setError(`The latest server record shows ${state}; review the refreshed invoice and attempt history before continuing. ${message}`);
+          }
+        }
+      }
+    }
     finally { setBusy(false); }
   };
 
@@ -228,9 +277,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const isDemo = data.source.startsWith("demo");
   const p50 = data.forecast?.quantiles.p50;
   const actionUrl = isDemo ? `/api/demo/recommendations/${rec?.id}/send` : `/api/recommendations/${rec?.id}/send`;
-  const canSend = Boolean(!clockDate && !data.simulation_disabled && rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
+  const canSend = Boolean(!approvalOutcomeUnresolved && !clockDate && !data.simulation_disabled && rec && ["proposed", "failed"].includes(rec.state) && ["friendly", "firm"].includes(data.decision.action) && rec.action === data.decision.action && (isDemo || authenticated));
   const isPartialAction = Boolean(rec && rec.action === "offer_partial_payment");
-  const canApplyPartial = Boolean(!clockDate && !data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
+  const canApplyPartial = Boolean(!approvalOutcomeUnresolved && !clockDate && !data.simulation_disabled && isPartialAction && rec && rec.action === data.decision.action && ["proposed", "failed"].includes(rec.state) && (isDemo || authenticated));
 
   return <div className="app-shell">
     <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">← All invoices</Link>{authenticated ? <span>Operator session</span> : <Link className="btn" href="/login">Operator login</Link>}</div></header>
@@ -286,6 +335,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
           </div>
           <div className="panel">
             <div className="panel-head"><div><div className="panel-title">{isPartialAction ? "Partial-payment review" : "Reminder review"}</div><div className="panel-subtitle">{rec ? rec.reason : data.decision.reason}</div></div>{rec && <span className="recommendation-tag">{rec.state}</span>}</div>
+            {approvalOutcomeUnresolved && <div className="demo-banner" role="status"><span>The last approval timed out and its provider outcome could not be confirmed. Approval controls stay locked until the latest invoice and attempt state loads.</span><button className="btn" disabled={busy} onClick={() => { clearReads(); void refresh(true); }}>Check latest status</button></div>}
             {rec && isPartialAction ? <>
               <div className="drift-card"><strong>PayPal payment setting</strong><p>{rec.edited_text}</p><div className="fine-print">Approval enables partial payments on the existing invoice. The provider update may notify the recipient.</div></div>
               <div className="action-buttons">
@@ -293,7 +343,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
                   const url = isDemo ? `/api/demo/recommendations/${rec.id}/send` : `/api/recommendations/${rec.id}/approve-partial-payment`;
                   if (isDemo || window.confirm("Enable partial payments on this PayPal Sandbox invoice? PayPal may notify the recipient of the invoice update.")) void action(url, "POST", { text: rec.edited_text });
                 }}>{busy ? "Applying…" : isDemo ? "Approve & simulate" : "Approve & enable partial payment"}</button>}
-                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "applied" && <span className="fine-print">Partial-payment settings are enabled{isDemo ? " in the synthetic demo" : " in PayPal Sandbox"}.</span>}
                 {rec.state === "unknown" && <span className="fine-print">Provider update status is uncertain. Sync PayPal before retrying.</span>}
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the update. Review and retry is available.</span>}
@@ -302,11 +352,11 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="fine-print">Grounded in: {data.invoice_number}, {data.currency} {Number(data.outstanding).toLocaleString("en-US")}, due {shortDate(data.due_date)}, recorded reminder and settlement history.</div><div className="fine-print" style={{ marginBottom: 8 }}>Draft source: {rec.draft_source === "gemini" ? `Google Gemini${rec.draft_model ? ` · ${rec.draft_model}` : " · model not recorded"} · grounded in invoice facts` : "grounded template"}{rec.drafted_at ? ` · ${formatIST(rec.drafted_at)}` : ""}</div>
               {!isDemo && <div className="delivery-note"><strong>What the recipient receives</strong><p>{data.client_email ? `To: ${data.client_email}. ` : "To the recipient saved on this PayPal invoice. "}PayPal sends its own system reminder for {data.invoice_number}, including the hosted invoice and payment details. PayPal controls the subject and body; the editable text below is an internal collection note and is not sent.</p></div>}
               {isDemo && <div className="delivery-note"><strong>Demo preview</strong><p>This edited copy is retained as the simulated approval note. The synthetic demo sends no email.</p></div>}
-              <label className="field-label">{isDemo ? "Editable simulated reminder note" : "Internal collection note · not emailed"}<textarea aria-label="Editable reminder preview" value={draft} onChange={event => { setDraft(event.target.value); sessionStorage.setItem(`latepayer-draft:${rec.id}`, event.target.value); }} onBlur={() => { if (!clockDate && !data.simulation_disabled && draft.trim() && ["proposed", "failed"].includes(rec.state)) void requestJson(`/api/recommendations/${rec.id}/draft`, { method: "POST", body: JSON.stringify({ text: draft }) }).catch(cause => setError(cause.message)); }} disabled={Boolean(clockDate) || data.simulation_disabled || rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/></label>
+              <label className="field-label">{isDemo ? "Editable simulated reminder note" : "Internal collection note · not emailed"}<textarea aria-label="Editable reminder preview" value={draft} onChange={event => { setDraft(event.target.value); sessionStorage.setItem(`latepayer-draft:${rec.id}`, event.target.value); }} onBlur={() => { if (!clockDate && !data.simulation_disabled && draft.trim() && ["proposed", "failed"].includes(rec.state)) void requestJson(`/api/recommendations/${rec.id}/draft`, { method: "POST", body: JSON.stringify({ text: draft }) }).catch(cause => setError(cause.message)); }} disabled={approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled || rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/></label>
               <div className="action-buttons">
-                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void generateDraft()}>{busy ? "Drafting…" : "Generate AI draft"}</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void generateDraft()}>{busy ? "Drafting…" : "Generate AI draft"}</button>}
                 {canSend && <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => { if (isDemo || window.confirm("Approve this PayPal Sandbox reminder? PayPal sends its system-generated email; this internal note is saved for review and is not emailed.")) void action(actionUrl, "POST", { text: draft }); }}>{busy ? "Processing…" : isDemo ? "Approve & simulate" : "Approve PayPal reminder"}</button>}
-                {rec.state === "proposed" && <button className="btn" disabled={busy || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
+                {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "sent" && <span className="fine-print">{isDemo ? "Recorded as a simulated demo action." : "PayPal accepted the reminder request."}</span>}
                 {rec.state === "unknown" && <span className="fine-print">Delivery is uncertain. Sync PayPal and reconcile before trying again.</span>}
                 {rec.state === "failed" && <span className="fine-print">The provider rejected the request. Review and retry is available.</span>}
