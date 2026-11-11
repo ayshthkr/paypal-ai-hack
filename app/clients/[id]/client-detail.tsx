@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { requestJson, RequestError, clearReads } from "../../lib/api";
+import { requestJson, RequestError, clearReads, ensureDemoSession } from "../../lib/api";
 import { decisionLabel, signalLabel, statusLabel, termLabel } from "../../lib/labels";
 import { useEffect, useState } from "react";
 
@@ -81,10 +81,12 @@ export default function ClientDetail({ id }: { id: string }) {
   const balanceHeadline = balanceAmounts.length === 1 ? balanceAmounts[0] : balanceAmounts.length ? `${balanceAmounts.length} currencies` : "None";
   const delays = data.invoices.filter(invoice => invoice.days_late != null).sort((a, b) => (a.settled_at || "").localeCompare(b.settled_at || "")).slice(-24);
   const maxDelay = Math.max(1, ...delays.map(invoice => Math.abs(invoice.days_late || 0)));
+  const isSynthetic = data.client.source.startsWith("demo");
 
   const runWhatIf = async () => {
     setWhatIfLoading(true); setWhatIfError("");
     try {
+      await ensureDemoSession();
       const response = await fetch(`/api/clients/${encodeURIComponent(id)}/what-if`, { method: "POST", cache: "no-store", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_term_type: whatIfTerm }) });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
@@ -101,8 +103,8 @@ export default function ClientDetail({ id }: { id: string }) {
   return <div className="app-shell">
     <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href={`/?client_id=${encodeURIComponent(id)}&view=all`}>← Client portfolio</Link></div></header>
     <main className="main-wrap">
-      {data.client.source === "demo" && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Invoice and payment history is generated for the receivables demo.</span></div>}
-      <div className="heading-row"><div><div className="eyebrow">Client detail · {data.client.source === "demo" ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.client.name}</h1><p className="subheading">{data.history.invoice_count} invoices · {data.history.settled_invoice_count} fully settled · as of {formatDate(data.as_of)}</p></div><span className="status-pill">{signalLabel(data.drift.signal_type)}</span></div>
+      {isSynthetic && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Invoice and payment history is generated for this isolated browser session.</span></div>}
+      <div className="heading-row"><div><div className="eyebrow">Client detail · {isSynthetic ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.client.name}</h1><p className="subheading">{data.history.invoice_count} invoices · {data.history.settled_invoice_count} fully settled · as of {formatDate(data.as_of)}</p></div><span className="status-pill">{signalLabel(data.drift.signal_type)}</span></div>
       {data.history.settled_invoice_count < 5 && <div className="delivery-note">Limited history · fewer than 5 settlements; forecasts use pooled priors.</div>}
       <section className="stats-grid">
         <div className="stat-card"><div className="stat-label">Settled invoices</div><div className="stat-value">{data.history.settled_invoice_count}</div><div className="stat-note">{data.history.median_days_late == null ? "No settled delay history yet" : `Median ${data.history.median_days_late} days vs due date`}</div></div>

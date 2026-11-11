@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 
-import { requestJson as getJson, clearReads } from "./lib/api";
+import { requestJson as getJson, clearReads, ensureDemoSession, RequestError } from "./lib/api";
 import { decisionLabel, signalLabel, statusLabel } from "./lib/labels";
 import { useAuth } from "./providers";
 
@@ -38,8 +38,10 @@ type InvoiceResult = {
   aging_buckets: Record<string, AgingBucket>;
   expected_cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[];
   cash_horizon: Record<string, AgingBucket>;
+  open_balance_reconciliation?: { count: number; amounts: Record<string, string> };
   top_late_scenario: { assumption: string; client_count: number; clients: { id: string; name: string; late_invoice_count: number }[]; invoice_count: number; cash_by_week: { week_start: string; currency: string; amount: string; invoice_count: number }[] };
   synthetic_demo: boolean; models: string[]; ready_for_review_count: number; daily_suggestion_cap: number; drifting_client_count: number;
+  habitually_late_client_count?: number;
   drifting_signal_counts?: Record<string, number>;
   as_of: string; as_of_max: string; client_signals?: ClientRow[];
 };
@@ -84,15 +86,22 @@ function SearchInput({ query, onDebouncedQuery }: { query: string; onDebouncedQu
   return <input className="search" aria-label="Search invoices" placeholder="Search client, invoice, status" value={draft} onChange={event => setDraft(event.target.value)} />;
 }
 
-function TimeTravelControl({ currentAsOf, maxAsOf, resetBusy, onCommit, onReset }: { currentAsOf: string; maxAsOf: string; resetBusy: boolean; onCommit: (value: string) => void; onReset: () => void }) {
+function TimeTravelControl({ currentAsOf, maxAsOf, resetBusy, onCommit, onReset }: { currentAsOf: string; maxAsOf: string; resetBusy: boolean; onCommit: (value: string) => Promise<boolean>; onReset: () => void }) {
   const [selectedDate, setSelectedDate] = useState(currentAsOf || maxAsOf);
+  const [loadingDate, setLoadingDate] = useState(false);
   const currentOffset = Math.round((new Date(`${selectedDate}T00:00:00Z`).getTime() - new Date(`${maxAsOf}T00:00:00Z`).getTime()) / 86_400_000);
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     const date = new Date(`${maxAsOf}T00:00:00Z`);
     date.setUTCDate(date.getUTCDate() + Number(event.target.value));
     setSelectedDate(date.toISOString().slice(0, 10));
   };
-  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>Move today back up to 60 days to inspect the portfolio at that point in time.</span></div><label><span>{new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => onCommit(selectedDate)} onKeyUp={() => onCommit(selectedDate)} /><button className="btn" disabled={resetBusy} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
+  const commit = async () => {
+    setLoadingDate(true);
+    const succeeded = await onCommit(selectedDate);
+    if (!succeeded) setSelectedDate(currentAsOf || maxAsOf);
+    setLoadingDate(false);
+  };
+  return <section className="time-travel-panel"><div><strong>Demo clock</strong><span>{loadingDate ? "Loading the selected portfolio snapshot…" : "Move today back up to 60 days to inspect the portfolio at that point in time."}</span></div><label><span>{new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><input aria-label="Demo time travel, days before current date" type="range" min={-60} max={0} value={Math.max(-60, Math.min(0, currentOffset))} onChange={onChange} onPointerUp={() => void commit()} onKeyUp={() => void commit()} disabled={loadingDate} /><button className="btn" disabled={resetBusy || loadingDate} onClick={onReset}>{resetBusy ? "Resetting…" : "Reset demo"}</button></label></section>;
 }
 
 function money(currency: string, value: number | string) {
@@ -149,6 +158,7 @@ export default function PortfolioClient() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [fallbackVisible, setFallbackVisible] = useState(false);
   const [wakeRetryNonce, setWakeRetryNonce] = useState(0);
   const { authenticated } = useAuth();
   const [lastSync, setLastSync] = useState<string | null>(null);
@@ -214,17 +224,20 @@ export default function PortfolioClient() {
       }
       if (latestQuery.current !== searchKey) return;
       setData(invoices);
-      setSyncStatus(operatorSync); setPaypalRecipients(recipients); setError(""); wakeRetries.current.delete(searchKey);
+      setSyncStatus(operatorSync); setPaypalRecipients(recipients); setError(""); setFallbackVisible(false); wakeRetries.current.delete(searchKey);
     }).catch(cause => {
       controller.abort();
       if (latestQuery.current !== searchKey) return;
       const message = cause instanceof Error ? cause.message : "Could not load invoices.";
       const retries = wakeRetries.current.get(searchKey) || 0;
-      if ((message.includes("unavailable") || message.includes("502")) && retries < MAX_API_WAKE_RETRIES) {
+      const transientApiFailure = (cause instanceof RequestError && cause.status >= 500)
+        || /unavailable|502|timeout|timed out|aborted/i.test(message);
+      if (transientApiFailure && retries < MAX_API_WAKE_RETRIES) {
         wakeRetries.current.set(searchKey, retries + 1);
         setError(`The API is waking up. Retrying (${retries + 1}/${MAX_API_WAKE_RETRIES})…`);
-      } else if (message.includes("unavailable") || message.includes("502")) {
+      } else if (transientApiFailure) {
         setError(`The API is still unavailable after ${MAX_API_WAKE_RETRIES} retries. Select Retry to try again.`);
+        setFallbackVisible(true);
       } else setError(message);
     }).finally(() => {
       refreshInFlight.current.delete(url);
@@ -267,11 +280,12 @@ export default function PortfolioClient() {
   };
 
   const resetDemo = async () => {
-    if (!window.confirm("Reset all synthetic demo payments, reminders, and replies to the starting state? PayPal Sandbox records are not changed.")) return;
+    if (!window.confirm("Reset this browser's isolated synthetic demo session to its starting state? Other reviewers and PayPal Sandbox records are not changed.")) return;
     setResetBusy(true); setError("");
     try {
       clearReads();
-      await getJson("/api/demo/reset", { method: "POST" });
+      const reset = await fetch("/api/demo/session/reset", { method: "POST", cache: "no-store", credentials: "same-origin" });
+      if (!reset.ok) throw new Error("Could not reset this browser's synthetic demo session.");
       const next = new URLSearchParams(searchKey);
       next.delete("as_of"); next.delete("action_only"); next.delete("drifting_only"); next.delete("age_bucket");
       next.set("view", "open"); next.set("page", "1");
@@ -325,11 +339,31 @@ export default function PortfolioClient() {
     finally { setBriefLoading(false); }
   };
 
+  const commitDemoClock = async (value: string): Promise<boolean> => {
+    if (!data) return false;
+    const targetParams = new URLSearchParams(searchKey);
+    if (value === data.as_of_max) targetParams.delete("as_of");
+    else targetParams.set("as_of", value);
+    const query = targetParams.toString();
+    try {
+      const snapshot = await getJson<InvoiceResult>(`/api/portfolio?${query || "view=open&page=1&page_size=25"}`,
+        { signal: AbortSignal.timeout(30_000) });
+      setData(snapshot);
+      setError("");
+      router.replace(query ? `/?${query}` : "/", { scroll: false });
+      return true;
+    } catch (cause) {
+      setError(`Could not load the ${value} portfolio snapshot. Showing the last successful date, ${data.as_of}. ${cause instanceof Error ? cause.message : "Retry to try again."}`);
+      return false;
+    }
+  };
+
   const ask = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!askQuestion.trim()) return;
     setAskLoading(true); setAskResult(null); setError("");
     try {
+      await ensureDemoSession();
       const response = await fetch("/api/ask", { method: "POST", cache: "no-store", credentials: "same-origin",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: askQuestion }) });
       const value = await response.json().catch(() => ({}));
@@ -379,7 +413,7 @@ export default function PortfolioClient() {
     payingLater: data?.drifting_signal_counts?.paying_later ?? drifting.filter(client => client.drift.signal_type === "paying_later").length,
     laterThanUsual: data?.drifting_signal_counts?.later_than_usual ?? drifting.filter(client => client.drift.signal_type === "later_than_usual").length,
     goneQuiet: data?.drifting_signal_counts?.gone_quiet ?? drifting.filter(client => client.drift.signal_type === "gone_quiet").length,
-    habituallyLate: data?.drifting_signal_counts?.habitually_late ?? drifting.filter(client => client.drift.signal_type === "habitually_late").length,
+    habituallyLate: data?.habitually_late_client_count ?? 0,
   };
   const pageCount = data?.page_count || 1;
   const formatAmounts = (amounts: Record<string, string | number>) => {
@@ -422,20 +456,28 @@ export default function PortfolioClient() {
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools"><button className="btn" onClick={() => setUsdMode(value => !value)}>{usdMode ? "Show source currencies" : "Show USD equivalent"}</button>{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
-        {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={params.get("as_of") || data.as_of_max} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={value => { void getJson(`/api/demo/clock?as_of=${value}`, { method: "POST" }).then(() => updateUrl({ as_of: value === data.as_of_max ? null : value }, "replace")).catch(cause => setError(cause.message)); }} onReset={() => void resetDemo()} />}
-        {error && <div className="error-box" role="alert">{error}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
+        {!authenticated && data && <TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={data.as_of} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={commitDemoClock} onReset={() => void resetDemo()} />}
+        {error && <div className="error-box" role="alert">{error}{data && <span className="fine-print"> Showing the last successful portfolio snapshot from {data.as_of}.</span>}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setFallbackVisible(false); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
+        {fallbackVisible && <section className="panel fallback-callout"><div><div className="panel-title">Continue with the read-only fallback demo</div><div className="panel-subtitle">A synthetic portfolio snapshot and five repeatable stops are packaged with this web app. No demo mutations are written from that page.</div></div><Link className="btn primary" href="/offline-demo">Open fallback demo</Link></section>}
+        {data && <section className="decision-hero" aria-label="Cash exposure and actions today">
+          <div><span className="eyebrow">Cash exposure · {data.as_of}</span><strong>{formatAmounts(data.currency_totals)} open</strong><span>{data.view_counts.overdue} past due · {data.view_counts.open} open invoices · {data.drifting_client_count} new or worsening client signals</span></div>
+          <div className="decision-hero-action"><span>Today&apos;s actions</span><strong>{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} ready for review</strong><Link className="btn primary" href="/actions">Open action queue</Link></div>
+          {data.expected_cash_by_week.length > 0 && <div className="decision-hero-cash"><span>Probability-weighted expected cash · first forecast week</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === data.expected_cash_by_week[0].week_start))}</strong></div>}
+        </section>}
+        <details className="panel dashboard-secondary"><summary>Ask questions and view the morning brief</summary>
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Ask your receivables</div><div className="panel-subtitle">Answers come from bounded invoice and client summaries.</div></div></div>
           <form className="toolbar-tools" onSubmit={ask}><input className="search" aria-label="Ask your receivables" placeholder="Who owes me the most in EUR?" value={askQuestion} onChange={event => setAskQuestion(event.target.value)}/><button className="btn primary" disabled={askLoading || !askQuestion.trim()}>{askLoading ? "Checking…" : "Ask"}</button></form>
           {askResult && <div className="action-message" role="status" style={{ marginTop: 12 }}>{askResult.answer}<small className="fine-print"> Grounded in: {askResult.grounded_in || "current scoped invoice facts"}</small></div>}
         </section>
         <section className="panel"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Hide brief" : "Show brief"}</button></div>
           {briefOpen && (briefLoading ? <div className="empty-inline">Building the structured brief…</div> : brief ? <><div className="fine-print">As of {brief.as_of} · this week through {brief.week_end}</div>
-            <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>{item.invoice_count} p50 settlement{item.invoice_count === 1 ? "" : "s"}</small></div>) : <div className="empty-inline">No p50 settlements fall this week.</div>}</div>
+            <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash</span><strong>{money(item.currency, item.amount)}</strong><small>Probability-weighted · {item.invoice_count} invoices contribute</small></div>) : <div className="empty-inline">No expected settlements this week.</div>}</div>
             <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{decisionLabel(item.action)}</span></div><p>{item.client_name} · {money(item.currency, item.outstanding)}</p><div className="fine-print">Expected gain {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review today.</div>}</div>
             <div className="fine-print" style={{ marginTop: 12 }}>Clients slowing down: {brief.clients_slowing_down.map(client => `${client.client_name} (${signalLabel(client.signal_type)})`).join(" · ") || "none"}</div>
           </> : null)}
         </section>
-        {authenticated && <section className="panel"><div className="panel-head"><div><div className="panel-title">PayPal Sandbox</div><div className="panel-subtitle">Create a controlled test invoice and review the last import.</div></div><span className="status-pill">Sandbox only</span></div>
+        </details>
+        {authenticated && <details className="panel dashboard-secondary"><summary>PayPal Sandbox · controlled invoice and sync workflow</summary><section className="panel"><div className="panel-head"><div><div className="panel-title">PayPal Sandbox</div><div className="panel-subtitle">Create a controlled test invoice and review the last import.</div></div><span className="status-pill">Sandbox only</span></div>
           <div className="fine-print">{syncStatus?.last_run ? `Last sync ${new Date(syncStatus.last_run.completed_at || syncStatus.last_run.started_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${syncStatus.last_run.created} imported · ${syncStatus.last_run.updated} updated · ${syncStatus.last_run.status}` : "No PayPal sync has completed yet."} · times shown in IST · Webhook retries failed: {syncStatus?.webhook_failures ?? "unavailable"}</div>
           {syncStatus?.last_run?.errors?.length ? <div className="error-box" style={{ marginTop: 10 }}>{syncStatus.last_run.errors.join(" · ")}</div> : null}
           <form className="toolbar-tools" onSubmit={createInvoice} style={{ marginTop: 14 }}>
@@ -450,7 +492,7 @@ export default function PortfolioClient() {
           </form>
           {!paypalRecipients.length && <div className="empty-inline" style={{ marginTop: 10 }}>No allowlisted PayPal recipient is synced. Sync Sandbox invoices and check PAYPAL_ALLOWED_RECIPIENT_EMAILS.</div>}
           {createdInvoice && <div className="action-message" role="status" style={{ marginTop: 12 }}>Created and sent <Link className="table-link" href={`/invoices/${encodeURIComponent(createdInvoice.id)}`}>{createdInvoice.number}</Link> through PayPal Sandbox.</div>}
-        </section>}
+        </section></details>}
         {loading && !data && <div role="status" aria-label="Loading portfolio" className="portfolio-skeleton"><div className="stats-grid">{[1,2,3,4].map(key => <div className="skeleton-card" key={key} />)}</div><div className="skeleton-grid" /></div>}
         {data && <>
           {data.as_of !== data.as_of_max && <div className="demo-banner" role="status">Viewing as of {data.as_of} · simulation is disabled while the clock is moved back.</div>}
@@ -459,8 +501,9 @@ export default function PortfolioClient() {
             <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
             <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
             <button className="stat-card stat-button" onClick={() => setCardFilter("actions")}><div className="stat-label">Ready for review</div><div className="stat-value">{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} of {data.ready_for_review_count}</div><div className="stat-note">Daily cap {data.daily_suggestion_cap} · pending proposed actions</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">Client timing signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet} · Habitually late {driftCounts.habituallyLate}</div></button>
+            <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">New or worsening signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet}</div></button>
           </section>
+          <p className="fine-print">Habitually late clients are tracked separately ({driftCounts.habituallyLate}); only a ≥7-day worsening, a sustained ≥1.5-day-per-invoice slope, or a strong overdue outlier enters the action signal count.</p>
           <p className="fine-print" style={{ marginTop: -8, marginBottom: 14 }}>The demo cohort has {data.view_counts.all.toLocaleString("en-US")} invoices: {data.view_counts.paid.toLocaleString("en-US")} historical paid records provide model context, alongside {data.view_counts.open.toLocaleString("en-US")} currently open invoices.</p>
           <section className="insight-strip"><div className="drift-strip-head"><div><div className="insight-title">Client payment timing</div><div className="insight-text">Signals sorted by money at risk and signal strength. Risk equals open balances plus the median settled invoice amount, kept separate by currency.</div></div><span className="fine-print">Activity signal · not a churn score</span></div>
             {drifting.length ? <div className="drift-signal-grid">{drifting.slice(0, 5).map(client => {
@@ -481,10 +524,10 @@ export default function PortfolioClient() {
             })}</div>
           </section>
 
-          <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Risk-weighted cash grouped by the curve’s p50 settlement week.</div></div></div>
-            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === week))}</strong></button>)}</div> : <div className="empty-inline">No open invoice has a p50 settlement date inside the next eight weeks.</div>}
+          <section className="cash-forecast-panel"><div className="panel-head"><div><div className="panel-title">Expected cash in · next 8 weeks</div><div className="panel-subtitle">Outstanding balances are allocated across calendar weeks using each forecast curve&apos;s settlement probability mass.</div></div></div>
+            {data.expected_cash_by_week.length ? <div className="cash-week-grid">{Array.from(new Set(data.expected_cash_by_week.map(entry => entry.week_start))).map(week => <button className="cash-week" key={week} onClick={() => { updateUrl({ predicted_week: week }); document.getElementById("invoice-grid")?.scrollIntoView({ behavior: "smooth" }); }}><span>Week of {new Date(`${week}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</span><strong>{formatCashEntries(data.expected_cash_by_week.filter(entry => entry.week_start === week))}</strong></button>)}</div> : <div className="empty-inline">No forecast settlement probability mass falls inside the next eight weeks.</div>}
           </section>
-          <section className="panel"><div className="panel-title">Open balance by forecast horizon</div><div className="panel-subtitle">Principal balance and invoice count are grouped by the same p50 curve; these amounts reconcile to the open book.</div><div className="aging-grid">{[["next_8_weeks", "Next 8 weeks"], ["after_8_weeks", "After 8 weeks · within 180 days"], ["beyond_180_days", "Beyond 180 days / no median"]].map(([key, label]) => { const bucket = data.cash_horizon[key] || { count: 0, amounts: {} }; return <article className="aging-bucket" key={key}><span>{label}</span><strong>{bucket.count}</strong><small>{formatAmounts(bucket.amounts)}</small></article>; })}</div></section>
+          <section className="panel"><div className="panel-title">Open balance by forecast horizon</div><div className="panel-subtitle">Gross principal is grouped by p50 settlement horizon for exposure review; disputed or unforecastable invoices remain visible. Reconciliation: {data.open_balance_reconciliation?.count ?? data.view_counts.open} invoices against the {data.view_counts.open}-invoice open book.</div><div className="aging-grid">{[["next_8_weeks", "Next 8 weeks"], ["after_8_weeks", "After 8 weeks · within 180 days"], ["beyond_180_days", "Beyond 180 days / no median"], ["disputed_unforecastable", "Disputed / unforecastable"]].map(([key, label]) => { const bucket = data.cash_horizon[key] || { count: 0, amounts: {} }; return <article className="aging-bucket" key={key}><span>{label}</span><strong>{bucket.count}</strong><small>{formatAmounts(bucket.amounts)}</small></article>; })}</div></section>
           <section className="panel"><div className="panel-head"><div><div className="panel-title">If the top five late clients pay within 14 days</div><div className="panel-subtitle">A hypothetical scenario; it is not the forecast.</div></div><button className="btn" onClick={() => setScenarioOpen(value => !value)}>{scenarioOpen ? "Hide scenario" : "Show week-by-week cash"}</button></div>{scenarioOpen && <><p className="fine-print">{data.top_late_scenario.assumption}</p><p>{data.top_late_scenario.clients.map(client => `${client.name} (${client.late_invoice_count} late)`).join(" · ") || "No currently late client is available."}</p><div className="cash-week-grid">{data.top_late_scenario.cash_by_week.map(entry => <article className="cash-week" key={`${entry.week_start}-${entry.currency}`}><span>Week of {entry.week_start}</span><strong>{formatCashEntries([entry])}</strong></article>)}</div>{!data.top_late_scenario.cash_by_week.length && <div className="empty-inline">No overdue balance is available for this scenario.</div>}</>}</section>
 
           <section className="grid-panel" id="invoice-grid">

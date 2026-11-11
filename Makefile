@@ -1,4 +1,4 @@
-.PHONY: setup dev web api migrate seed-demo train evaluate-public rescore-demo sync seed-sandbox record-payment check smoke browser-smoke clean
+.PHONY: setup dev web api migrate seed-demo train evaluate-public rescore-demo demo-fallback sync seed-sandbox record-payment check smoke browser-smoke clean
 
 AS_OF ?= today
 
@@ -29,6 +29,7 @@ seed-demo:
 	AS_OF="$(AS_OF)" PYTHONPATH=.:services/api uv run python scripts/seed_demo.py
 	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/train_model.py
 	AS_OF="$(AS_OF)" PYTHONPATH=.:services/api uv run python scripts/rescore_demo.py
+	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/export_demo_fallback.py
 
 train:
 	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/train_model.py
@@ -39,6 +40,9 @@ evaluate-public:
 
 rescore-demo:
 	PYTHONPATH=.:services/api uv run python scripts/rescore_demo.py
+
+demo-fallback:
+	PYTHONPATH=. uv run python scripts/export_demo_fallback.py
 
 sync:
 	PYTHONPATH=.:services/api uv run python scripts/sync_paypal.py

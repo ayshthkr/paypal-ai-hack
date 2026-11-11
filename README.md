@@ -13,7 +13,7 @@ For the guided screen-by-screen tour, see [walkthrough.md](walkthrough.md).
 ## Local setup
 
 ```sh
-cp .env.example .env
+test -f .env || cp .env.example .env
 # Set OPERATOR_USERNAME, OPERATOR_PASSWORD, and SESSION_SECRET in .env.
 bun install
 make setup
@@ -25,7 +25,7 @@ Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for
 ## Commands
 
 - `make seed-demo` — deterministically reset the synthetic fixture set.
-- `make train` — train and evaluate the daily LightGBM hazard model; the application uses Kaplan–Meier when validation selects it or the model/history is unavailable.
+- `make train` — train and evaluate LightGBM, Cox PH, and Kaplan–Meier candidates; select by validation integrated Brier score and refit the selected runtime artifact through the release cutoff.
 - `make seed-sandbox` — create and send up to three controlled PayPal Sandbox invoices to emails in `PAYPAL_ALLOWED_RECIPIENT_EMAILS`.
 - `make sync` — import PayPal invoices and retry verified webhook refreshes.
 - `make record-payment INVOICE_ID=... AMOUNT=... CURRENCY=...` — record an already completed external payment against an allowlisted Sandbox invoice, then refresh local state. If PayPal accepted the record but refresh failed, run `make sync` and do not submit the payment again.
@@ -37,17 +37,21 @@ Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for
 
 Keep `PAYPAL_MODE=sandbox`. In `.env`, configure the Sandbox REST app's `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`, then set `PAYPAL_ALLOWED_RECIPIENT_EMAILS` to controlled Sandbox buyer accounts. `PAYPAL_SANDBOX_CURRENCY` defaults to USD and can be changed to a currency supported by the Sandbox merchant. Never place secrets in source control. Seed a small set using `make seed-sandbox`, import with `make sync`, and complete checkout as the Sandbox buyer. The app re-fetches invoice state before any reminder.
 
-PayPal's native reminder endpoint controls the email body. The operator can edit and approve the displayed copy, which is stored for audit, while the actual request asks PayPal to send its own reminder template. The UI states this before approval.
+PayPal's native reminder endpoint controls the email body. The editable text is an internal collection note stored for review; the recipient receives PayPal's system-generated reminder. The UI previews and states this before approval.
 
 After deploying the API, register its HTTPS `/webhooks/paypal` endpoint in the same PayPal app, subscribe to the invoice paid/cancelled/refunded/sent events, and configure `PAYPAL_WEBHOOK_ID`. Webhooks are verified with PayPal, stored, deduplicated, and reconciled from the current invoice resource. Manual sync is available as recovery.
 
 ## Operator access and public demo
 
-Configure `OPERATOR_USERNAME`, `OPERATOR_PASSWORD`, and a random `SESSION_SECRET`. Cookies are HttpOnly and same-site; production cookies are secure. Public routes expose only synthetic records. Demo approval and payment buttons change synthetic data and never call PayPal. Live PayPal records and provider mutations require operator login; reminder dispatch is sandbox-only and recipient-allowlisted.
+Configure `OPERATOR_USERNAME`, `OPERATOR_PASSWORD`, and a random `SESSION_SECRET`. Cookies are HttpOnly and same-site; production cookies are secure. Public routes expose only synthetic records. Each browser session gets an isolated copy of the synthetic portfolio, so simulated approvals, replies, and payments do not alter another reviewer's session or the shared base snapshot. Reset rotates only the current browser's demo session. Live PayPal records and provider mutations require operator login; reminder dispatch is sandbox-only and recipient-allowlisted. The static read-only fallback is available at `/offline-demo` when the API is unavailable.
 
 ## AG Grid license
 
 The invoice dashboard uses **AG Grid Community**, the free MIT-licensed edition. There is no AG Studio package, paid feature, or license key in this project. The survival curve is a small custom SVG component.
+
+## Gemini API key
+
+`GEMINI_API_KEY` is read only by the API and is never returned by status routes. `/ai/status` reports whether the deployed key is configured and which Gemini model is selected. Reminder drafts and reply classification identify whether Gemini or the deterministic fallback produced the result and show the grounding facts. A template fallback is explicitly labeled.
 
 ## Render
 
@@ -57,7 +61,7 @@ Full external actions and account configuration are listed in [docs/external-set
 
 ## Data and model limits
 
-The synthetic generator uses seed `20261110`, 52 clients, 1,500–3,000 invoices with exactly 50 intentionally open at reset, and five transparent payment-timing profiles. `AS_OF` sets the observation cutoff. Training uses invoice-day risk rows; only full settlement is an event, open invoices are right-censored, and cancelled invoices are excluded. The application produces a 180-day conditional survival curve and p10/p50/p90 date estimates. Metrics and calibration report are synthetic pipeline checks, not evidence of real-world forecast accuracy. Client drift is a descriptive heuristic, not a churn probability.
+The synthetic generator uses seed `20261110`, 52 clients, 1,500–3,000 invoices with exactly 50 intentionally open at reset, and five transparent payment-timing profiles. `AS_OF` sets the observation cutoff. Training uses invoice-day risk rows; only full settlement is an event, open invoices are right-censored, and cancelled invoices are excluded. The application produces a 180-day conditional survival curve and p10/p50/p90 date estimates. Release facts are generated in the model artifacts and read by the performance page; they are synthetic pipeline checks, not evidence of real-world forecast accuracy. Expected cash multiplies open balances by each forecast's daily settlement probability and aggregates event mass by calendar week. Gross-balance horizon buckets include disputed or unforecastable exposure so counts and amounts reconcile to the open book. Client drift is a descriptive heuristic, not a churn probability; only newly worsening behavior or a strong overdue outlier is counted as an action signal.
 
 - The reminder-uplift table is an assumed sensitivity analysis; synthetic outcomes do not estimate reminder causality.
 - The validation-calibrated coverage interval uses paid invoices; right-censoring and client dependence limit coverage guarantees.

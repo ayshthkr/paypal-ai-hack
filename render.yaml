@@ -41,6 +41,8 @@ services:
         sync: false
       - key: PAYPAL_ALLOWED_RECIPIENT_EMAILS
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: MERCHANT_TIMEZONE
         value: Asia/Kolkata
 

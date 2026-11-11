@@ -2,8 +2,8 @@ name: Demo health wake-up
 on:
   workflow_dispatch:
   schedule:
-    # 09:37–19:27 IST; avoid keeping two free services awake around the clock.
-    - cron: '7,17,27,37,47,57 4-13 * * *'
+    # Stay ahead of Render's idle shutdown window throughout the judging day.
+    - cron: '*/10 * * * *'
 permissions: {}
 concurrency:
   group: demo-health
@@ -19,6 +19,12 @@ jobs:
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-web.onrender.com/api/health
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 'https://latepayer-api.onrender.com/portfolio?view=open&page=1&page_size=1' -o /tmp/portfolio.json
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/action-queue -o /tmp/action-queue.json
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/facts/morning-brief -o /tmp/morning-brief.json
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/demo-stories -o /tmp/demo-stories.json
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/evaluation -o /tmp/evaluation.json
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 https://latepayer-api.onrender.com/ai/status -o /tmp/ai-status.json
           invoice_id="$(python -c 'import json; payload=json.load(open("/tmp/portfolio.json")); print(payload["items"][0]["id"])')"
           test -n "$invoice_id"
           curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 "https://latepayer-api.onrender.com/invoices/$invoice_id" -o /dev/null
+          python -c 'import json; status=json.load(open("/tmp/ai-status.json")); assert status["configured"], "GEMINI_API_KEY is not configured on the deployed API"; print("AI provider configuration:", status["provider"], status["model"])'
+          python -c 'import json; assert json.load(open("/tmp/demo-stories.json"))["items"]; assert json.load(open("/tmp/evaluation.json")); assert json.load(open("/tmp/morning-brief.json"))["as_of"]'

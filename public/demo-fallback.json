@@ -1,0 +1,175 @@
+{
+  "as_of": "2026-11-11",
+  "generated_from": "ml.synthetic.generate_records \u00b7 seed 20261110",
+  "invoice_count": 2129,
+  "open_count": 50,
+  "overdue_count": 30,
+  "disputed_count": 1,
+  "currency_totals": {
+    "EUR": "55348.10",
+    "GBP": "74940.00",
+    "USD": "78391.20"
+  },
+  "aging_buckets": {
+    "not_due": {
+      "count": 20,
+      "amounts": {
+        "EUR": "29279.00",
+        "GBP": "26348.00",
+        "USD": "40139.00"
+      }
+    },
+    "late_1_30": {
+      "count": 18,
+      "amounts": {
+        "EUR": "16297.10",
+        "GBP": "29872.00",
+        "USD": "17303.20"
+      }
+    },
+    "late_31_60": {
+      "count": 4,
+      "amounts": {
+        "GBP": "13899.00",
+        "USD": "5510.00"
+      }
+    },
+    "late_61_89": {
+      "count": 2,
+      "amounts": {
+        "EUR": "2483.00",
+        "GBP": "1168.00"
+      }
+    },
+    "late_90_plus": {
+      "count": 6,
+      "amounts": {
+        "EUR": "7289.00",
+        "GBP": "3653.00",
+        "USD": "15439.00"
+      }
+    }
+  },
+  "sample": [
+    {
+      "id": "demo-invoice-06-051",
+      "invoice_number": "LP-06-051",
+      "client_name": "Cinder & Co",
+      "currency": "GBP",
+      "outstanding": "7539.00",
+      "due_date": "2026-12-10",
+      "status": "SENT",
+      "disputed": true
+    },
+    {
+      "id": "demo-invoice-16-045",
+      "invoice_number": "LP-16-045",
+      "client_name": "Verdant Market",
+      "currency": "USD",
+      "outstanding": "4893.00",
+      "due_date": "2026-07-09",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-41-084",
+      "invoice_number": "LP-41-084",
+      "client_name": "Willow Metric",
+      "currency": "EUR",
+      "outstanding": "4097.00",
+      "due_date": "2026-07-29",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-43-044",
+      "invoice_number": "LP-43-044",
+      "client_name": "Yarrow Systems",
+      "currency": "USD",
+      "outstanding": "3322.00",
+      "due_date": "2026-08-03",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-05-031",
+      "invoice_number": "LP-05-031",
+      "client_name": "Beacon Creative",
+      "currency": "EUR",
+      "outstanding": "3192.00",
+      "due_date": "2026-08-07",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-49-038",
+      "invoice_number": "LP-49-038",
+      "client_name": "Elm Street Creative",
+      "currency": "USD",
+      "outstanding": "7224.00",
+      "due_date": "2026-08-12",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-18-034",
+      "invoice_number": "LP-18-034",
+      "client_name": "Yellow Finch",
+      "currency": "GBP",
+      "outstanding": "3653.00",
+      "due_date": "2026-08-13",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-15-026",
+      "invoice_number": "LP-15-026",
+      "client_name": "Umber Analytics",
+      "currency": "GBP",
+      "outstanding": "1168.00",
+      "due_date": "2026-08-21",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-47-026",
+      "invoice_number": "LP-47-026",
+      "client_name": "Cobalt Studio",
+      "currency": "EUR",
+      "outstanding": "2483.00",
+      "due_date": "2026-09-02",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-30-023",
+      "invoice_number": "LP-30-023",
+      "client_name": "Lumen Creative",
+      "currency": "GBP",
+      "outstanding": "7129.00",
+      "due_date": "2026-09-13",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-52-043",
+      "invoice_number": "LP-52-043",
+      "client_name": "Harborlight Design",
+      "currency": "USD",
+      "outstanding": "3379.00",
+      "due_date": "2026-09-24",
+      "status": "OVERDUE",
+      "disputed": false
+    },
+    {
+      "id": "demo-invoice-37-043",
+      "invoice_number": "LP-37-043",
+      "client_name": "Solstice Supply",
+      "currency": "USD",
+      "outstanding": "2131.00",
+      "due_date": "2026-10-04",
+      "status": "OVERDUE",
+      "disputed": false
+    }
+  ]
+}
