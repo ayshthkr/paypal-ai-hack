@@ -21,7 +21,9 @@ from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
 from ml.scoring import (
     apply_promise_scenario as _apply_promise_scenario,
     apply_production_overlays,
+    calibrate_survival_curve as _calibrate_survival_curve,  # noqa: F401 - compatibility helper
     collection_probability,
+    conditional_tail,  # noqa: F401 - compatibility helper
     conditional_survival_from_absolute,
     survival_from_hazards as _survival,
 )
@@ -299,7 +301,6 @@ def forecast_invoice(
     else:
         curve = None
     hazards: list[float] = []
-    curve = None
     if not existing and use_model:
         try:
             if active_model == "cox":
