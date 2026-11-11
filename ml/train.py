@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +20,10 @@ from ml.evaluation import (
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
     GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
+)
+from ml.scoring import (
+    apply_production_overlays, conditional_survival_from_absolute,
+    survival_from_hazards,
 )
 from ml.survival_metrics import fit_cox, predict_cox_survival, time_dependent_auc, uno_concordance
 from ml.drift import backtest_drift
@@ -93,12 +96,7 @@ def km_hazards(subjects: list[tuple[dict, int, int]]) -> list[float]:
 
 
 def _survival_from_hazards(hazards: list[float]) -> list[float]:
-    result = [1.0]
-    survival = 1.0
-    for hazard in hazards[:HORIZON]:
-        survival *= 1.0 - min(1.0, max(0.0, hazard))
-        result.append(float(survival))
-    return result + [result[-1]] * (HORIZON + 1 - len(result))
+    return survival_from_hazards(hazards, HORIZON)
 
 
 def _censor_survival(subjects: list[tuple[dict, int, int]]) -> list[float]:
@@ -154,6 +152,121 @@ def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_
     else:
         hazards = np.asarray(model.predict(raw[:, indices], num_threads=1), dtype=float).tolist()
     return [min(1.0, max(0.0, float(hazard))) for hazard in hazards]
+
+
+def _as_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _records_as_of(records: list[dict], score_date: date) -> list[dict]:
+    """Build the invoice snapshot production would know on a historical score date."""
+    known = []
+    for row in records:
+        if row["issue_date"] > score_date:
+            continue
+        snapshot = dict(row)
+        paid_at = _as_date(row.get("outcome_paid_at") or row.get("settled_at"))
+        cancelled_at = _as_date(row.get("cancelled_at"))
+        partial_at = _as_date(row.get("partial_at"))
+        partial_is_known = partial_at is not None and partial_at <= score_date
+        snapshot["partial_at"] = partial_at if partial_is_known else None
+        snapshot["partial_amount"] = row.get("partial_amount", 0) if partial_is_known else 0
+        if paid_at and paid_at <= score_date:
+            snapshot["settled_at"] = paid_at
+            snapshot["paid"] = row["total"]
+            snapshot["outstanding"] = 0
+            snapshot["status"] = "PAID"
+        else:
+            snapshot["settled_at"] = None
+            snapshot["paid"] = snapshot["partial_amount"]
+            snapshot["outstanding"] = row["total"] - snapshot["paid"]
+            snapshot["status"] = "PARTIALLY_PAID" if snapshot["paid"] else "UNPAID"
+        snapshot["cancelled_at"] = cancelled_at if cancelled_at and cancelled_at <= score_date else None
+        if snapshot["cancelled_at"]:
+            snapshot["status"] = "CANCELLED"
+            snapshot["outstanding"] = 0
+        viewed_at = _as_date(row.get("viewed_at"))
+        snapshot["viewed_at"] = viewed_at if viewed_at and viewed_at <= score_date else None
+        observed_at = _as_date(row.get("viewed_observed_at"))
+        snapshot["viewed_observed_at"] = observed_at if observed_at and observed_at <= score_date else None
+        snapshot["viewed_by_recipient"] = bool(
+            row.get("viewed_by_recipient") and snapshot["viewed_observed_at"]
+        )
+        snapshot["reminder_events"] = [
+            event for event in row.get("reminder_events", [])
+            if (event_date := _as_date(event.get("sent_at") if isinstance(event, dict) else event))
+            and event_date <= score_date
+        ]
+        for key in ("outcome_paid_at", "observation_cutoff", "cancelled"):
+            snapshot.pop(key, None)
+        known.append(snapshot)
+    return known
+
+
+def _production_curve_at_checkpoint(
+    records_by_client: dict[str, list[dict]], invoice: dict, score_date: date,
+    model, active_model: str, baseline: list[float], calibration: dict,
+) -> list[float]:
+    """Replay API scoring from the facts and model outputs known at score_date."""
+    visible_records = _records_as_of(records_by_client[invoice["client_id"]], score_date)
+    visible_by_id = {row["id"]: row for row in visible_records}
+    target = visible_by_id[invoice["id"]]
+    history = [
+        row for row in visible_records
+        if row.get("settled_at") and row["settled_at"] <= score_date
+    ]
+    age = max(0, (score_date - target["issue_date"]).days)
+    base_features = features(target, score_date, history, visible_records)
+    use_model = model is not None and (active_model == "cox" or base_features["history_count"] >= 3)
+    if use_model and active_model == "cox":
+        feature_row = [base_features[name] for name in FEATURES]
+        absolute = predict_cox_survival(np.asarray([feature_row], dtype=np.float32), model)[0]
+        curve = conditional_survival_from_absolute(absolute, age, HORIZON)
+    elif use_model:
+        matrix = [
+            [features(target, score_date + timedelta(days=offset), history, visible_records)[name] for name in FEATURES]
+            for offset in range(HORIZON)
+        ]
+        hazards = np.asarray(model.predict(np.asarray(matrix, dtype=np.float32), num_threads=1), dtype=float).tolist()
+        curve = survival_from_hazards(hazards, HORIZON)
+    else:
+        hazards = [baseline[age + offset] if age + offset < len(baseline) else 0.0 for offset in range(HORIZON)]
+        curve = survival_from_hazards(hazards, HORIZON)
+    curve, _, _ = apply_production_overlays(
+        curve, target, visible_records, history, score_date, calibration, HORIZON,
+    )
+    return curve
+
+
+def _conditional_ipcw_brier_term(
+    curve: list[float], event: int, remaining: int, age: int,
+    horizon: int, censor_g: list[float],
+) -> float | None:
+    """Return a conditional IPCW Brier contribution, or None for unobserved outcomes."""
+    if not curve or len(curve) <= horizon or not censor_g:
+        return None
+    estimate = min(1.0, max(0.0, 1.0 - float(curve[horizon])))
+    if event == 1 and remaining <= horizon:
+        label = 1.0
+        censor_time = max(0, age + remaining - 1)
+    elif remaining >= horizon:
+        label = 0.0
+        censor_time = age + horizon
+    else:
+        return None
+    at_checkpoint = max(1e-6, float(censor_g[min(max(0, age), len(censor_g) - 1)]))
+    through_outcome = max(1e-6, float(censor_g[min(max(0, censor_time), len(censor_g) - 1)]))
+    weight = at_checkpoint / through_outcome
+    return weight * (estimate - label) ** 2
 
 
 def brier_score_at(subjects, predictions: dict[str, list[float]], censor_g: list[float], horizon: int) -> float | None:
@@ -479,15 +592,17 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     coverage = covered / eligible_for_coverage if eligible_for_coverage else None
     monthly_coverage = coverage_by_issue_month(backtest_rows)
 
-    # Replay the conditional production path at overdue checkpoints. This
-    # includes the client-history tail blend, 14-day calibration, and the
-    # mature-invoice recovery ceiling used by the online scorer.
+    # Replay the conditional production path from the point-in-time invoice
+    # snapshot at each checkpoint, including the same shared scoring overlays.
     records_by_client: dict[str, list[dict]] = {}
     for record in records:
         records_by_client.setdefault(record["client_id"], []).append(record)
     deployed_p50_errors: list[float] = []
-    deployed_brier_terms: dict[int, list[float]] = {14: [], 30: [], 60: []}
+    deployed_brier_sums: dict[int, float] = {14: 0.0, 30: 0.0, 60: 0.0}
+    deployed_brier_counts: dict[int, int] = {14: 0, 30: 0, 60: 0}
+    deployed_brier_censored: dict[int, int] = {14: 0, 30: 0, 60: 0}
     deployed_observation_count = 0
+    replay_model = booster if active_model == "lightgbm" else cox_model if active_model == "cox" else None
     for invoice, duration, event in test_subjects:
         terms = max(0, (invoice["due_date"] - invoice["issue_date"]).days)
         for overdue_checkpoint in (1, 30, 90):
@@ -495,91 +610,42 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             if age >= duration or age >= HORIZON:
                 continue
             score_date = invoice["issue_date"] + timedelta(days=age)
-            history = [
-                row for row in records_by_client.get(invoice["client_id"], [])
-                if row.get("settled_at") and row["settled_at"] <= score_date
-            ]
-            prior_durations = [
-                max(1, (row["settled_at"] - row["issue_date"]).days)
-                for row in history
-                if row["id"] != invoice["id"] and row["issue_date"] < invoice["issue_date"]
-            ]
-            prior = max(7, terms + 14)
-            kernel_values = prior_durations + [prior] * max(0, 5 - len(prior_durations))
-
-            def kernel_survival(day: int) -> float:
-                sigma = 0.5
-                return sum(
-                    0.5 * math.erfc((math.log(max(0.01, day)) - math.log(value)) / (sigma * math.sqrt(2)))
-                    for value in kernel_values
-                ) / len(kernel_values)
-
-            kernel_denominator = max(1e-12, kernel_survival(age))
-            tail_curve = [
-                min(1.0, max(0.0, kernel_survival(age + offset) / kernel_denominator))
-                for offset in range(HORIZON + 1)
-            ]
-            source_curve = active_test_predictions[invoice["id"]]
-            source_denominator = max(1e-12, source_curve[age])
-            curve = [
-                min(1.0, max(0.0, source_curve[min(age + offset, HORIZON)] / source_denominator))
-                for offset in range(HORIZON + 1)
-            ]
-            overdue_weight = min(1.0, overdue_checkpoint / 30.0)
-            curve = [
-                (1 - overdue_weight) * modeled + overdue_weight * empirical
-                for modeled, empirical in zip(curve, tail_curve, strict=True)
-            ]
-            if len(curve) > 14 and calibration_artifact.get("applied"):
-                raw_p14 = min(1.0, max(0.0, 1.0 - curve[14]))
-                target_p14 = min(1.0, max(0.0, float(np.interp(
-                    raw_p14, calibration_artifact.get("thresholds_x", [0.0, 1.0]), calibration_artifact.get("thresholds_y", [0.0, 1.0]),
-                ))))
-                calibrated_curve = []
-                for day, survival in enumerate(curve):
-                    raw_probability = 1.0 - survival
-                    if day <= 14:
-                        probability = raw_probability * target_p14 / raw_p14 if raw_p14 > 1e-12 else target_p14 * day / 14
-                    elif raw_p14 < 1.0 - 1e-12:
-                        probability = target_p14 + (raw_probability - raw_p14) * (1.0 - target_p14) / (1.0 - raw_p14)
-                    else:
-                        probability = target_p14
-                    calibrated_curve.append(1.0 - min(1.0, max(0.0, probability)))
-                curve = calibrated_curve
-            if overdue_checkpoint >= 90:
-                mature = [row for row in records_by_client.get(invoice["client_id"], [])
-                          if (score_date - row["due_date"]).days >= 180]
-                late_risk = [row for row in mature if not row.get("settled_at")
-                             or (row["settled_at"] - row["due_date"]).days >= 90]
-                recovered = sum(bool(row.get("settled_at") and row["settled_at"] <= score_date) for row in late_risk)
-                recovery = (recovered + 3.5) / (len(late_risk) + 10)
-                curve = [max(1.0 - recovery, survival) for survival in curve]
-
+            curve = _production_curve_at_checkpoint(
+                records_by_client, invoice, score_date, replay_model, active_model,
+                baseline, calibration_artifact,
+            )
             deployed_observation_count += 1
             remaining = duration - age
             p50_day = next((day for day, survival in enumerate(curve) if day > 0 and survival <= 0.5), None)
             if event and p50_day is not None:
                 deployed_p50_errors.append(abs(p50_day - remaining))
-            observable = min(HORIZON, duration - age)
-            for horizon, terms_at_horizon in deployed_brier_terms.items():
-                if horizon > observable:
-                    continue
-                label = int(bool(event and remaining <= horizon))
-                deployed_probability = 1.0 - curve[horizon]
-                terms_at_horizon.append((deployed_probability - label) ** 2)
+            for horizon in deployed_brier_sums:
+                deployed_brier_counts[horizon] += 1
+                contribution = _conditional_ipcw_brier_term(
+                    curve, event, remaining, age, horizon, test_censor_g,
+                )
+                if contribution is None:
+                    deployed_brier_censored[horizon] += 1
+                else:
+                    deployed_brier_sums[horizon] += contribution
     deployed_forecast_evaluation = {
         "model": active_model,
-        "scoring_path": "conditional survival, client-history lognormal tail blend, validation-fitted 14-day calibration, and mature overdue recovery ceiling",
+        "scoring_path": "production model scoring from point-in-time invoice and client history at each checkpoint, conditional survival, client-history tail blend, validation-fitted 14-day calibration, mature overdue recovery ceiling, and promise scenario overlay",
         "overdue_checkpoints_days": [1, 30, 90],
         "observation_count": deployed_observation_count,
         "paid_only_p50_median_absolute_error_days": float(np.median(deployed_p50_errors)) if deployed_p50_errors else None,
         "paid_only_p50_count": len(deployed_p50_errors),
         "brier_by_horizon": {
-            f"{horizon}d": float(np.mean(values)) if values else None
-            for horizon, values in deployed_brier_terms.items()
+            f"{horizon}d": deployed_brier_sums[horizon] / deployed_brier_counts[horizon]
+            if deployed_brier_counts[horizon] else None
+            for horizon in deployed_brier_sums
         },
-        "brier_observation_counts": {f"{horizon}d": len(values) for horizon, values in deployed_brier_terms.items()},
-        "limitations": "Synthetic held-out replay at due-date +1/+30/+90 days; horizons beyond the original 180-day observation window are censored. The synthetic cohort has no observed promise-adherence outcomes, so the illustrative promise overlay is not scored.",
+        "brier_observation_counts": {f"{horizon}d": count for horizon, count in deployed_brier_counts.items()},
+        "brier_censored_before_horizon_excluded_counts": {
+            f"{horizon}d": count for horizon, count in deployed_brier_censored.items()
+        },
+        "brier_method": "Conditional inverse-probability-of-censoring-weighted Brier score; known payments within a horizon are positive outcomes, invoices observed through the horizon are negative outcomes, and earlier censoring contributes zero over the at-risk denominator.",
+        "limitations": "Synthetic held-out replay at due-date +1/+30/+90 days using each checkpoint's observable facts. Conditional horizons beyond the original 180-day observation window are right-censored. The synthetic cohort has no observed promise-adherence outcomes, so its illustrative promise overlay receives no independent adherence validation.",
     }
 
     # Decile plot uses held-out 14-day probabilities and the validation-trained mapping.

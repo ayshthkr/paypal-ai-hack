@@ -181,26 +181,32 @@
   },
   "deployed_forecast_evaluation": {
     "model": "cox",
-    "scoring_path": "conditional survival, client-history lognormal tail blend, validation-fitted 14-day calibration, and mature overdue recovery ceiling",
+    "scoring_path": "production model scoring from point-in-time invoice and client history at each checkpoint, conditional survival, client-history tail blend, validation-fitted 14-day calibration, mature overdue recovery ceiling, and promise scenario overlay",
     "overdue_checkpoints_days": [
       1,
       30,
       90
     ],
     "observation_count": 377,
-    "paid_only_p50_median_absolute_error_days": 12.0,
+    "paid_only_p50_median_absolute_error_days": 11.0,
     "paid_only_p50_count": 330,
     "brier_by_horizon": {
-      "14d": 0.08569992302515075,
-      "30d": 0.2794972389193021,
-      "60d": 0.6577580033610705
+      "14d": 0.215856064622587,
+      "30d": 0.2049543587226803,
+      "60d": 0.08726360688607604
     },
     "brier_observation_counts": {
-      "14d": 241,
-      "30d": 128,
-      "60d": 34
+      "14d": 377,
+      "30d": 377,
+      "60d": 377
     },
-    "limitations": "Synthetic held-out replay at due-date +1/+30/+90 days; horizons beyond the original 180-day observation window are censored. The synthetic cohort has no observed promise-adherence outcomes, so the illustrative promise overlay is not scored."
+    "brier_censored_before_horizon_excluded_counts": {
+      "14d": 12,
+      "30d": 25,
+      "60d": 32
+    },
+    "brier_method": "Conditional inverse-probability-of-censoring-weighted Brier score; known payments within a horizon are positive outcomes, invoices observed through the horizon are negative outcomes, and earlier censoring contributes zero over the at-risk denominator.",
+    "limitations": "Synthetic held-out replay at due-date +1/+30/+90 days using each checkpoint's observable facts. Conditional horizons beyond the original 180-day observation window are right-censored. The synthetic cohort has no observed promise-adherence outcomes, so its illustrative promise overlay receives no independent adherence validation."
   },
   "ablation_metrics": [
     {

@@ -84,6 +84,52 @@ def test_forecast_summary_projection_preserves_weekly_cash_mass(api, monkeypatch
         assert summary.payload["weekly_settlement_probabilities"] == weekly
 
 
+def test_deployed_brier_includes_known_payments_inside_horizon():
+    from ml.train import _conditional_ipcw_brier_term
+
+    curve = [1.0] + [0.5] * 180
+    censor_survival = [1.0] * 181
+    paid_within_horizon = _conditional_ipcw_brier_term(
+        curve, event=1, remaining=5, age=30, horizon=14, censor_g=censor_survival,
+    )
+    right_censored_before_horizon = _conditional_ipcw_brier_term(
+        curve, event=0, remaining=5, age=30, horizon=14, censor_g=censor_survival,
+    )
+    paid_after_horizon = _conditional_ipcw_brier_term(
+        curve, event=1, remaining=20, age=30, horizon=14, censor_g=censor_survival,
+    )
+
+    assert paid_within_horizon == pytest.approx(0.25)
+    assert right_censored_before_horizon is None
+    assert paid_after_horizon == pytest.approx(0.25)
+
+
+def test_deployed_replay_freezes_outcomes_after_score_date():
+    from ml.train import _records_as_of
+
+    score_date = date(2026, 11, 11)
+    row = {
+        "id": "point-in-time", "client_id": "pit-client", "issue_date": date(2026, 9, 1),
+        "due_date": date(2026, 10, 1), "total": Decimal("100.00"), "paid": Decimal("20.00"),
+        "outstanding": Decimal("80.00"), "partial_at": date(2026, 11, 1),
+        "partial_amount": Decimal("20.00"), "outcome_paid_at": date(2026, 12, 1),
+        "settled_at": None, "viewed_at": date(2026, 11, 20),
+        "reminder_events": [
+            {"sent_at": "2026-11-05T12:00:00+00:00"},
+            {"sent_at": "2026-11-20T12:00:00+00:00"},
+        ],
+    }
+
+    snapshot = _records_as_of([row], score_date)[0]
+
+    assert snapshot["settled_at"] is None
+    assert snapshot["paid"] == Decimal("20.00")
+    assert snapshot["outstanding"] == Decimal("80.00")
+    assert snapshot["viewed_at"] is None
+    assert len(snapshot["reminder_events"]) == 1
+    assert "outcome_paid_at" not in snapshot
+
+
 def test_feature_history_is_cut_off_at_scoring_date_and_ignores_later_settlement():
     target_issue = date(2026, 2, 1)
     target = {"id": "target", "client_id": "c", "issue_date": target_issue, "due_date": target_issue + timedelta(days=30), "total": 200, "outstanding": 200, "currency": "USD"}
