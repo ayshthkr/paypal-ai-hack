@@ -14,7 +14,7 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ### Active release — commit `8bf6675`, 2026-11-11
 
-- Render reports API and web deployed at `8bf6675`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
+- Render API and web are live with application code from `8bf6675`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
 - Local verification passes: Ruff, 86 Python tests, ESLint, TypeScript, and the Next.js production build.
 - Runtime model selection now compares LightGBM, Kaplan–Meier, and Cox PH on validation IPCW integrated Brier; the checked-in release artifact selects Cox PH (`cox-ph-v7-seed-20261110-asof-2026-11-11`). `artifacts/eval.json` separately reports the complete deployed scoring-path replay and synthetic-data limitations.
 - Cash summaries use probability-weighted settlement mass consistently, and disputed/unforecastable open balances reconcile into a separate gross exposure bucket. Hypothetical terms scoring now uses new issue/due dates.
@@ -33,7 +33,7 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-At handoff, branch `codex/late-payer-v1` is at `8bf6675` (`fix: retry transient Gemini generation failures`), pushed to `origin`, with both Render services reporting that commit as deployed. Preserve the user's modified `AGENTS.md`; release documentation changes are being committed separately.
+Application release `8bf6675` (`fix: retry transient Gemini generation failures`) is pushed to `origin/codex/late-payer-v1`; documentation follow-ups are committed separately. Both Render services are deployed and healthy. Preserve the user's modified `AGENTS.md`.
 
 ## Next checks
 

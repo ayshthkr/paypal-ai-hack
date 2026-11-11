@@ -9,7 +9,7 @@ The current source and generated files are the release authority. `artifacts/mod
 - Drift backtest from the generated artifact: 9 clients flagged, 5 generator-defined positives (55.6% precision; 33.3% recall) in a 90-day synthetic evaluation. This is not a real-world alert guarantee.
 - The static fallback snapshot is generated from the seeded data and checked for open invoice count/amount reconciliation, including disputed and unforecastable balances.
 - Current `make check`: Ruff passed, 86 tests passed, ESLint passed, TypeScript passed, and the Next.js production build passed. Two upstream Starlette/AnyIO deprecation warnings remain.
-- Render deployed API and web at `8bf6675`; live portfolio, queue, brief, stories, evaluation, web proxy, tour, performance page, and packaged fallback were checked. Live AI status is `configured: true` for Google Gemini `gemini-3.5-flash-lite`. An isolated synthetic run returned a grounded Gemini invoice draft with persisted model provenance and a Gemini-classified reply preview awaiting approval. See `docs/execution-status.md`.
+- Render API and web are live with application code from `8bf6675`; portfolio, queue, brief, stories, evaluation, web proxy, tour, performance page, and packaged fallback were checked. Live AI status is `configured: true` for Google Gemini `gemini-3.5-flash-lite`. An isolated synthetic run returned a grounded Gemini invoice draft with persisted model provenance and a Gemini-classified reply preview awaiting approval. See `docs/execution-status.md`.
 
 ## Original V1 verification — historical, 2026-11-10
 
