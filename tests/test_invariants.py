@@ -271,6 +271,31 @@ def test_monthly_coverage_uses_only_invoices_with_complete_interval_bounds():
     }]
 
 
+def test_current_seed_invalidates_stale_forecasts_without_startup_rescoring(api, monkeypatch):
+    from app.models import ReadModel
+    from app.services.forecast import FORECAST_REVISION
+    from scripts import seed_demo, seed_demo_if_empty
+
+    _, Session = api
+    today = date.today()
+    monkeypatch.setattr(seed_demo, "SessionLocal", Session)
+    seed_demo.seed(today)
+    with Session() as db:
+        db.add(ReadModel(key="forecast_summary:stale", as_of=today, version="1", payload={"inference_revision": "old"}))
+        db.add(ReadModel(key="forecast_summary:current", as_of=today, version="1", payload={"inference_revision": FORECAST_REVISION}))
+        db.commit()
+
+    monkeypatch.setattr(seed_demo_if_empty, "SessionLocal", Session)
+    monkeypatch.setattr(seed_demo_if_empty, "resolve_as_of", lambda: today)
+    result = seed_demo_if_empty.seed_if_empty()
+
+    assert result["seeded"] is False
+    assert result["invalidated_forecast_projections"] == 1
+    with Session() as db:
+        assert db.get(ReadModel, ("forecast_summary:stale", today)) is None
+        assert db.get(ReadModel, ("forecast_summary:current", today)) is not None
+
+
 def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():
     today = date.today()
     invoice = SimpleNamespace(disputed=False, status="SENT", outstanding=Decimal("50.00"),
@@ -809,7 +834,9 @@ def test_public_demo_reset_reseeds_only_after_rate_limit_and_preserves_cooldown(
     assert calls == [date(2026, 11, 10)]
 
 
-def test_deployment_bootstrap_replaces_legacy_demo_and_rescores(api, monkeypatch):
+def test_deployment_bootstrap_replaces_legacy_demo_without_full_rescore(api, monkeypatch):
+    from scripts import rescore_demo
+
     _, Session = api
     with Session() as db:
         owner = Client(id="legacy-owner", display_name="Legacy", source="demo", drift={})
@@ -818,14 +845,15 @@ def test_deployment_bootstrap_replaces_legacy_demo_and_rescores(api, monkeypatch
         db.add(_invoice("legacy-invoice", owner.id))
         db.commit()
     monkeypatch.setattr(seed_demo_if_empty, "SessionLocal", Session)
-    seeded, rescored = [], []
+    seeded = []
     monkeypatch.setattr(seed_demo_if_empty, "seed", lambda: seeded.append(True) or {"clients": 50, "invoices": 2000})
-    monkeypatch.setattr(seed_demo_if_empty, "rescore_and_report", lambda: rescored.append(True) or {"forecast_inside_horizon_share": 0.9})
+    monkeypatch.setattr(rescore_demo, "rescore_and_report", lambda **_: pytest.fail("startup must not rescore the full portfolio"))
 
     result = seed_demo_if_empty.seed_if_empty()
     assert result["seeded"] is True
     assert result["previous_clients"] == 1 and result["previous_invoices"] == 1
-    assert seeded == [True] and rescored == [True]
+    assert seeded == [True]
+    assert result["projections"] == "forecast and drift read models are computed on demand"
 
 
 def test_new_client_forecast_marks_limited_history_and_reports_model_metadata(api):

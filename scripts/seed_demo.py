@@ -5,7 +5,7 @@ import json
 from sqlalchemy import delete, select
 
 from app.db import SessionLocal
-from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage, now_utc
+from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage, now_utc
 from ml.synthetic import OPEN_BUCKET_COUNTS, OPEN_COUNT, generate_records, resolve_as_of, utc_datetime
 
 
@@ -26,6 +26,12 @@ def seed(as_of=None) -> dict[str, object]:
         db.execute(delete(ReplyTriage).where(ReplyTriage.invoice_id.in_(demo_invoice_ids)))
         db.execute(delete(Prediction).where(Prediction.invoice_id.in_(demo_invoice_ids)))
         db.execute(delete(Payment).where(Payment.invoice_id.in_(demo_invoice_ids)))
+        db.execute(delete(ReadModel).where(
+            ReadModel.key.like("forecast:demo-%")
+            | ReadModel.key.like("forecast_summary:demo-%")
+            | ReadModel.key.like("drift:demo-%")
+            | (ReadModel.key == "activity:demo")
+        ))
         db.execute(delete(Invoice).where(Invoice.source == "demo"))
         db.execute(delete(Client).where(Client.source == "demo"))
         db.merge(DemoState(id="demo", as_of_date=cutoff, seeded_at=now_utc(), reset_completed_at=reset_completed_at))
