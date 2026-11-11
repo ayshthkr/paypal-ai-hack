@@ -9,7 +9,7 @@ The current source and generated files are the release authority. `artifacts/mod
 - Drift backtest from the generated artifact: 9 clients flagged, 5 generator-defined positives (55.6% precision; 33.3% recall) in a 90-day synthetic evaluation. This is not a real-world alert guarantee.
 - The static fallback snapshot is generated from the seeded data and checked for open invoice count/amount reconciliation, including disputed and unforecastable balances.
 - Current `make check`: Ruff passed, 83 tests passed, ESLint passed, TypeScript passed, and the Next.js production build passed. Two upstream Starlette/AnyIO deprecation warnings remain.
-- Deployment status for this candidate is recorded in `docs/execution-status.md` after the commit and live verification.
+- Render deployed API and web at `4d1a543`; live portfolio, queue, brief, stories, evaluation, web proxy, tour, performance page, and packaged fallback were checked. Live AI status is `configured: false`; the scheduled workflow currently exits on this assertion, and a successful grounded Gemini generation awaits the secret being set directly in Render. See `docs/execution-status.md`.
 
 ## Original V1 verification — historical, 2026-11-10
 

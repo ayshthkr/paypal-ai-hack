@@ -12,16 +12,18 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
-### Active release candidate — 2026-11-11
+### Active release — commit `4d1a543`, 2026-11-11
 
-- Local verification passes: Ruff, 83 Python tests, ESLint, TypeScript, and the Next.js production build. Deployment verification is pending this candidate's commit.
+- Render reports API and web deployed at `4d1a543`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
+- Local verification passes: Ruff, 83 Python tests, ESLint, TypeScript, and the Next.js production build.
 - Runtime model selection now compares LightGBM, Kaplan–Meier, and Cox PH on validation IPCW integrated Brier; the checked-in release artifact selects Cox PH (`cox-ph-v7-seed-20261110-asof-2026-11-11`). `artifacts/eval.json` separately reports the complete deployed scoring-path replay and synthetic-data limitations.
 - Cash summaries use probability-weighted settlement mass consistently, and disputed/unforecastable open balances reconcile into a separate gross exposure bucket. Hypothetical terms scoring now uses new issue/due dates.
 - Public synthetic mutations are isolated per browser session, and `/offline-demo` serves a generated, read-only snapshot. Dashboard clock changes are committed with their data; action and cash exposure are above the fold.
 - Reply triage has a persisted preview/correct/approve/dismiss flow and dispute resolution. Collections review stores owner, notes, follow-up date, and resolution. PayPal reminder screens disclose that the provider sends its native email; edits remain internal notes.
 - Alerts exclude habitual lateness and require stronger recent-worsening/outlier evidence. The generated synthetic backtest has 9 flags and 5 generator-defined positives; it does not establish real-world precision.
 - `/ai/status` reports safe provider/model/configured metadata, while draft responses identify source and grounding facts. After deployment, record the live status and a successful grounded draft without exposing the key. Render's `GEMINI_API_KEY` is dashboard-managed; never copy it into source or logs.
-- The scheduled `.github/workflows/demo-health.yml` workflow runs every 10 minutes, checks the core routes and AI status, and keeps both Render services warm. Confirm its first successful run after the commit.
+- The scheduled `.github/workflows/demo-health.yml` workflow runs every 10 minutes from the default branch. Live core routes pass; the latest manual run failed only at the AI configuration assertion because `/ai/status` reports `configured: false`.
+- The user authorized configuring the local Gemini key in Render, but browser security blocked access to local `.env` and forbids bypassing that block. Ask the user to set `GEMINI_API_KEY` directly in Render service `latepayer-api` → **Environment**, save/rebuild/deploy, then rerun the health workflow and generate a grounded invoice draft. Do not send the key through chat.
 
 ### Earlier deployed state and evidence
 
