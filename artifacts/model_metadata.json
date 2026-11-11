@@ -41,7 +41,7 @@
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-11T17:31:26.142119+00:00",
+  "trained_at": "2026-11-11T17:51:20.904944+00:00",
   "as_of_date": "2026-11-11",
   "history_cutoff": "2026-11-11",
   "training_date_range": [

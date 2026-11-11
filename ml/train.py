@@ -799,6 +799,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "backtest": {
             "paid_invoice_count": len(backtest_rows), "p50_median_absolute_error_days": float(np.median(p50_errors)) if p50_errors else None,
             "p10_p90_coverage": coverage, "coverage_invoice_count": eligible_for_coverage,
+            "coverage_hit_count": covered,
             "target_coverage": 0.8, "invoices": backtest_rows,
             "interval_label": "Validation-calibrated coverage interval; P10/P50/P90 dates separately come from the displayed survival curve.",
             "raw_quantile_coverage": sum(row["within_p10_p90"] for row in backtest_rows) / len(backtest_rows) if backtest_rows else None,

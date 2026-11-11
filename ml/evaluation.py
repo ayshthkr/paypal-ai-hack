@@ -170,10 +170,21 @@ def coverage_by_issue_month(rows) -> list[dict]:
     for row in rows:
         if row.get("issue_date"):
             grouped[str(row["issue_date"])[:7]].append(row)
-    return [
-        {
-            "month": month, "count": len(values),
-            "coverage": sum(bool(row.get("within_interval")) for row in values) / len(values),
-        }
-        for month, values in sorted(grouped.items())
-    ]
+    monthly = []
+    for month, values in sorted(grouped.items()):
+        eligible = [
+            row for row in values
+            if row.get("coverage_interval_lower_date")
+            and row.get("coverage_interval_upper_date")
+        ]
+        monthly.append({
+            "month": month,
+            "paid_invoice_count": len(values),
+            "eligible_interval_count": len(eligible),
+            "excluded_count": len(values) - len(eligible),
+            "coverage": (
+                sum(bool(row.get("within_interval")) for row in eligible) / len(eligible)
+                if eligible else None
+            ),
+        })
+    return monthly

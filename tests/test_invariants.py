@@ -24,6 +24,7 @@ from app.services import ai as ai_service
 from ml.features import features
 from ml.synthetic import OPEN_BUCKET_COUNTS, generate_records
 from ml.activity import fit_bgnbd
+from ml.evaluation import coverage_by_issue_month
 from ml.train import _duration, _survival_from_hazards, km_hazards
 from scripts import seed_demo_if_empty
 
@@ -256,6 +257,18 @@ def test_bgnbd_activity_and_drift_backtest_are_bounded_and_compare_recency():
     assert report["flagged_client_count"] == report["recency_only_flagged_client_count"]
     assert report["precision"] is not None
     assert report["recency_only_precision"] is not None
+
+
+def test_monthly_coverage_uses_only_invoices_with_complete_interval_bounds():
+    report = coverage_by_issue_month([
+        {"issue_date": "2026-08-01", "coverage_interval_lower_date": "2026-08-02", "coverage_interval_upper_date": "2026-08-10", "within_interval": True},
+        {"issue_date": "2026-08-02", "coverage_interval_lower_date": "2026-08-03", "coverage_interval_upper_date": "2026-08-11", "within_interval": False},
+        {"issue_date": "2026-08-03", "coverage_interval_lower_date": "2026-08-04", "coverage_interval_upper_date": None, "within_interval": False},
+    ])
+    assert report == [{
+        "month": "2026-08", "paid_invoice_count": 3, "eligible_interval_count": 2,
+        "excluded_count": 1, "coverage": 0.5,
+    }]
 
 
 def test_policy_wait_friendly_firm_and_closed_currencies_are_safe():

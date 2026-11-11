@@ -694,32 +694,44 @@
   "coverage_by_issue_month": [
     {
       "month": "2026-05",
-      "count": 46,
-      "coverage": 0.8913043478260869
+      "paid_invoice_count": 46,
+      "eligible_interval_count": 45,
+      "excluded_count": 1,
+      "coverage": 0.9111111111111111
     },
     {
       "month": "2026-06",
-      "count": 75,
-      "coverage": 0.8133333333333334
+      "paid_invoice_count": 75,
+      "eligible_interval_count": 71,
+      "excluded_count": 4,
+      "coverage": 0.8591549295774648
     },
     {
       "month": "2026-07",
-      "count": 73,
-      "coverage": 0.863013698630137
+      "paid_invoice_count": 73,
+      "eligible_interval_count": 70,
+      "excluded_count": 3,
+      "coverage": 0.9
     },
     {
       "month": "2026-08",
-      "count": 63,
-      "coverage": 0.9047619047619048
+      "paid_invoice_count": 63,
+      "eligible_interval_count": 61,
+      "excluded_count": 2,
+      "coverage": 0.9344262295081968
     },
     {
       "month": "2026-09",
-      "count": 41,
-      "coverage": 0.8780487804878049
+      "paid_invoice_count": 41,
+      "eligible_interval_count": 39,
+      "excluded_count": 2,
+      "coverage": 0.9230769230769231
     },
     {
       "month": "2026-10",
-      "count": 8,
+      "paid_invoice_count": 8,
+      "eligible_interval_count": 8,
+      "excluded_count": 0,
       "coverage": 1.0
     }
   ],
@@ -878,6 +890,7 @@
     "p50_median_absolute_error_days": 9.0,
     "p10_p90_coverage": 0.9047619047619048,
     "coverage_invoice_count": 294,
+    "coverage_hit_count": 266,
     "target_coverage": 0.8,
     "invoices": [
       {
