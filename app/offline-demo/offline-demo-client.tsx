@@ -43,7 +43,7 @@ export default function OfflineDemoClient() {
   };
   const current = stops[stop - 1];
   return <>
-    <div className="demo-banner"><strong>Read-only fallback demo</strong><span>The API is unavailable. This snapshot is packaged with the web app and does not change shared demo data.</span></div>
+    <div className="demo-banner"><strong>Read-only fallback demo</strong><span>This packaged snapshot stays available if the live API is slow or unavailable. It does not change shared demo data.</span></div>
     {error && <div className="error-box" role="alert">{error}</div>}
     {snapshot && <>
       <section className="panel"><div className="eyebrow">Snapshot as of {snapshot.as_of}</div><h1>{snapshot.open_count} open invoices · {snapshot.overdue_count} past due · {snapshot.disputed_count} disputed</h1>
