@@ -36,7 +36,7 @@ test("operator creates an allowlisted Sandbox invoice through the browser proxy"
   const created = await response.json() as { invoice_id: string; invoice_number: string; status: string };
   expect(created.invoice_id).toBeTruthy();
   expect(created.invoice_number).toBeTruthy();
-  expect(created.status).toBe("UNPAID");
+  expect(created.status).toBe("SENT");
   await expect(sandboxPanel.getByRole("status")).toContainText(created.invoice_number);
 
   const invoice = await (await page.request.get(`/api/invoices/${encodeURIComponent(created.invoice_id)}`)).json();
