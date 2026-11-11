@@ -7,22 +7,25 @@ Read this first when continuing work in another chat. Check `git status` before 
 Late Payer is a receivables dashboard with payment-date forecasts, descriptive client-delay signals, and operator-approved invoice reminders. Stack: Next.js 16 / React / TypeScript with Bun 1.3.6, FastAPI / Python / `uv`, and Postgres. AG Grid Community is used under its free MIT license. The public dashboard is synthetic-only; provider operations are PayPal Sandbox-only and recipient-allowlisted.
 
 - Hosted demo: <https://latepayer-web.onrender.com>
-- API/readiness: <https://latepayer-api.onrender.com/ready>
+- API health: <https://latepayer-api.onrender.com/health>
 - Local UI/API: <http://localhost:3000> and <http://localhost:8000/docs>
 
 ## Current state
 
-### Active release — commit `8bf6675`, 2026-11-11
+### Active application release — commit `3aa93cb`, 2026-11-11
 
-- Render API and web are live with application code from `8bf6675`. Live portfolio, queue, brief, stories, evaluation, AI status, web proxy, dashboard, performance page, action queue, tour stop persistence, and `/offline-demo?stop=2` were verified. The portfolio reports Cox and 50 open balances; horizon counts reconcile, including disputed GBP 7,539.
-- Local verification passes: Ruff, 86 Python tests, ESLint, TypeScript, and the Next.js production build.
+- Render API and web are live with application code from `3aa93cb`. The API now skips full portfolio rescoring during startup, invalidates stale forecast projections, and rebuilds them lazily. The successful API deployment invalidated 1,532 old forecast projections, reached Uvicorn, and passed Render's `/health` check. The `/ready` path is not implemented; use `/health`.
+- The current hosted-read health workflow run `43076467172` passed on `3aa93cb` in 23 seconds, including API and web health, portfolio, invoice detail, action queue, morning brief, demo stories, evaluation, and AI status.
+- Local verification passes: Ruff, 91 Python tests, ESLint, TypeScript, and the Next.js production build. A browser-to-PayPal Sandbox invoice creation test also passed with the controlled recipient allowlist and verified invoice reconciliation.
+- Invoice creation now forwards the browser idempotency key through the web proxy. Forecast summaries retain weekly settlement probabilities and old summaries are invalidated. Evaluation now replays the deployed scoring path, includes known positive outcomes before each horizon in IPCW Brier scoring, and reports interval eligibility and exclusions consistently.
+- Approval recovery reconciles server state after a failed or timed-out response. Synthetic queue actions say they are simulated; the terms simulator describes associations and uncertainty; the offline snapshot includes illustrative workflow examples; the tour retains navigation controls across destination screens.
 - Runtime model selection now compares LightGBM, Kaplan–Meier, and Cox PH on validation IPCW integrated Brier; the checked-in release artifact selects Cox PH (`cox-ph-v7-seed-20261110-asof-2026-11-11`). `artifacts/eval.json` separately reports the complete deployed scoring-path replay and synthetic-data limitations.
 - Cash summaries use probability-weighted settlement mass consistently, and disputed/unforecastable open balances reconcile into a separate gross exposure bucket. Hypothetical terms scoring now uses new issue/due dates.
 - Public synthetic mutations are isolated per browser session, and `/offline-demo` serves a generated, read-only snapshot. Dashboard clock changes are committed with their data; action and cash exposure are above the fold.
 - Reply triage has a persisted preview/correct/approve/dismiss flow and dispute resolution. Collections review stores owner, notes, follow-up date, and resolution. PayPal reminder screens disclose that the provider sends its native email; edits remain internal notes.
 - Alerts exclude habitual lateness and require stronger recent-worsening/outlier evidence. The generated synthetic backtest has 9 flags and 5 generator-defined positives; it does not establish real-world precision.
 - `/ai/status` reports Google Gemini `gemini-3.5-flash-lite`, `configured: true`. A live isolated synthetic run returned a Gemini draft grounded in invoice LP-48-021 (GBP 6,967.00, due 2026-10-31), persisted the exact model provenance, and returned a Gemini-classified promise-to-pay reply preview dated 2026-11-20 in pending state. The hosted invoice UI shows the provider, model, and grounding label. No reminder was sent and no PayPal record was changed.
-- The scheduled `.github/workflows/demo-health.yml` checks core web/API reads every 10 minutes, including AI configuration. Manual run `43056612066` succeeded on `8bf6675` in 8 seconds. Free Render instances may still sleep between runs, so the schedule reduces cold starts without promising uninterrupted warm capacity.
+- The scheduled `.github/workflows/demo-health.yml` checks core web/API reads every 10 minutes, including AI configuration. Manual run `43076467172` succeeded on `3aa93cb` in 23 seconds. Free Render instances may still sleep between runs, so the schedule reduces cold starts without promising uninterrupted warm capacity.
 
 ### Earlier deployed state and evidence
 
@@ -33,11 +36,11 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-Application release `8bf6675` (`fix: retry transient Gemini generation failures`) is pushed to `origin/codex/late-payer-v1`; documentation follow-ups are committed separately. Both Render services are deployed and healthy. Preserve the user's modified `AGENTS.md`.
+Application release `3aa93cb` (`fix: avoid full portfolio rescore during startup`) is pushed to `origin/codex/late-payer-v1`; both Render services are deployed and healthy. Preserve the user's modified `AGENTS.md`.
 
 ## Next checks
 
-1. Confirm the latest `demo-health.yml` run succeeded; Render deployments and live Gemini draft/reply checks for `8bf6675` have succeeded.
+1. The latest `demo-health.yml` run succeeded on `3aa93cb`; the API and web deployments are live and healthy.
 2. Keep PayPal in Sandbox mode and preserve the recipient allowlist for any future provider walkthrough.
 3. Preserve `AGENTS.md` changes when making later edits.
 
