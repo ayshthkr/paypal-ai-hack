@@ -14,7 +14,7 @@ from app.config import get_settings
 
 GEMINI_MODEL = "gemini-3.8-flash"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 _JSON_SCHEMA = {
     "type": "OBJECT",
     "properties": {"body": {"type": "STRING"}},
@@ -47,7 +47,7 @@ def _gemini_json_request(prompt: str) -> dict | None:
             GEMINI_URL,
             headers={"x-goog-api-key": key},
             json=request_body,
-            timeout=httpx.Timeout(10.0, connect=2.0),
+            timeout=httpx.Timeout(20.0, connect=3.0),
         )
         response.raise_for_status()
         parts = response.json()["candidates"][0]["content"]["parts"]
@@ -58,13 +58,13 @@ def _gemini_json_request(prompt: str) -> dict | None:
         logger.warning("Gemini generation rejected the request (HTTP %s)", exc.response.status_code)
         return None
     except httpx.TimeoutException:
-        logger.info("Gemini generation request timed out")
+        logger.warning("Gemini generation request timed out")
         return None
     except httpx.HTTPError:
-        logger.info("Gemini generation request failed at the network layer")
+        logger.warning("Gemini generation request failed at the network layer")
         return None
     except (ValueError, KeyError, IndexError, TypeError):
-        logger.info("Gemini response did not match the expected structured output")
+        logger.warning("Gemini response did not match the expected structured output")
         return None
 
 
@@ -80,17 +80,22 @@ def generate_reminder_body(facts: dict) -> str | None:
     )
     result = _gemini_json(prompt)
     if not result:
+        logger.warning("Gemini reminder generation produced no structured response")
         return None
     body = result.get("body")
     if not isinstance(body, str):
+        logger.info("Gemini reminder response did not contain a text body")
         return None
     body = " ".join(body.split()).strip()
     if (not 10 <= len(body) <= 420 or re.search(r"\d|[$€£]|https?://|\b\w+@\w+\.", body, re.IGNORECASE)
             or _NUMBER_WORDS.search(body)):
+        logger.info("Gemini reminder body failed the transaction-fact safety check")
         return None
     if re.match(r"^(hello|hi|dear)\b", body, re.IGNORECASE):
+        logger.info("Gemini reminder body included a greeting reserved for the deterministic composer")
         return None
     if body.count(".") + body.count("!") + body.count("?") > 3:
+        logger.info("Gemini reminder body exceeded the sentence limit")
         return None
     return body
 
@@ -188,7 +193,10 @@ _AI_SLOTS = BoundedSemaphore(2)
 
 
 def _gemini_json(prompt: str) -> dict | None:
-    if not get_settings().gemini_api_key or not _AI_SLOTS.acquire(blocking=False):
+    if not get_settings().gemini_api_key:
+        return None
+    if not _AI_SLOTS.acquire(blocking=False):
+        logger.warning("Gemini generation concurrency limit was reached")
         return None
     def run():
         try:
@@ -197,7 +205,7 @@ def _gemini_json(prompt: str) -> dict | None:
             _AI_SLOTS.release()
     future = _AI_EXECUTOR.submit(run)
     try:
-        return future.result(timeout=10.0)
+        return future.result(timeout=20.0)
     except TimeoutError:
-        logger.info("Gemini generation exceeded the application response budget")
+        logger.warning("Gemini generation exceeded the application response budget")
         return None

@@ -872,6 +872,7 @@ def test_gemini_38_request_uses_supported_generation_config(monkeypatch):
     assert result == {"body": "Please review the invoice when convenient."}
     assert calls["url"].endswith("/models/gemini-3.8-flash:generateContent")
     assert calls["headers"] == {"x-goog-api-key": "test-key"}
+    assert calls["timeout"].read == 20.0
     assert "temperature" not in calls["json"]["generationConfig"]
     assert calls["json"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
     assert calls["json"]["generationConfig"]["responseMimeType"] == "application/json"
