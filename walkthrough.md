@@ -1,39 +1,59 @@
-# Late Payer walkthrough
+# Late Payer website walkthrough
 
-Use the [Guided demo tour](https://latepayer-web.onrender.com/tour) for a five-stop introduction. The tour keeps the selected stop in the URL and browser session, supports previous/next navigation, retries named story requests, and links to the packaged fallback if the API is unavailable. Tour controls remain available on destination screens so you can return to the selected stop, continue, or exit.
+Use this as a three-minute presenter script for the [hosted demo](https://latepayer-web.onrender.com/). The site labels its public data **Synthetic demo** and says: “Deterministic sample invoices. Simulated actions never contact PayPal.”
 
-## Five-stop route
+## Start here
 
-1. **Portfolio** — Lead with open cash exposure, overdue invoices, probability-weighted expected cash, and today’s review actions. Expected cash allocates each balance across calendar weeks using settlement probability mass. The gross-balance horizon includes disputed or unforecastable invoices so the open book reconciles.
-2. **Verdant Market outlier** — Open the named synthetic invoice. Its unpaid age is a lower bound while it remains unpaid, not a payment-date prediction.
-3. **Action queue** — Review a suggested action, its forecast reason, the internal note, recorded approval or skip outcome, and observed post-reminder payments. For an eligible synthetic invoice, choose **Generate AI draft** and confirm the displayed provider, model, and grounding facts. PayPal sends its own system-generated reminder body; the editable text is an internal review note.
-4. **Model performance** — Show the release model, validation-based candidate selection, and the complete deployed scoring-path evaluation from generated artifacts. Expand the detailed tables for splits, calibration, and comparators. Synthetic metrics are pipeline evidence, not real-world accuracy claims.
-5. **Reply triage** — Paste a synthetic client reply to preview its classification source and extracted date. Correct the preview, then approve or dismiss it. Invoice state changes only after approval; an approved dispute can later be resolved.
+Open the home page and point out the headline, **Invoice portfolio**, and its line: “See what may get paid, who is slowing down, and what needs a human decision.” The header links to **Guided tour**, **Demo stories**, **Model performance**, and **Action queue**. Select **Guided tour** for the timed route.
 
-## Longer portfolio walkthrough
+The tour is labeled “THREE-MINUTE ROUTE · FIVE STOPS.” Each stop has a short talk track, an explanation, and a clearly labeled live or local-fallback destination. Use the tour page’s single set of stop controls to choose or continue the story; destination pages keep a compact previous/continue/exit strip. Every product page also has a direct **Read-only fallback** link.
 
-1. Use an aging bucket or expected-cash week to filter invoices.
-2. Open a client and compare newly issued NET 15, NET 30, and partial-payment scenarios. The simulator scores the hypothetical invoice dates and terms. These are model associations, not causal estimates; displayed P50 dates represent full settlement, so partial payments can occur earlier.
-3. Open an invoice to inspect its conditional forecast, source model/version, payment timeline, and reminder review. Choose **Generate AI draft** to request a draft grounded in the listed invoice and client-history facts. A successful draft identifies Google Gemini and its model; if generation is unavailable or fails validation, the template fallback is labeled. Review the facts and text before editing. Edited text remains an internal note and does not replace PayPal’s native recipient-facing email.
-4. In the action queue, save an owner, notes, and a follow-up date for an old balance, then record its resolution or next step. Queue review duration and observed payment outcomes are measured separately; there is no manual-time baseline and no causal reminder-uplift claim.
-5. Visit Model performance for generated release facts and the synthetic-data limits.
+## Five-stop talk track
 
-Currencies remain separate in the forecast. Client timing alerts distinguish habitual lateness from new worsening and require recent deterioration or a strong overdue outlier before creating a review signal.
+### 1. Portfolio
 
-## Isolated synthetic demo
+The tour’s prompt is: “Open balance, past-due invoices, and current client timing signals.” Open the portfolio and show the open balance, overdue work, client timing signals, and probability-weighted cash by week. The weekly view spreads expected receipts across the forecast distribution instead of assigning every balance to one median date.
 
-The public app creates an isolated synthetic invoice snapshot for each browser session. Simulated approvals, replies, and payments affect only that session. Reset rotates the current browser session without changing another reviewer’s data or the shared base snapshot. If the API is unavailable, open [`/offline-demo`](https://latepayer-web.onrender.com/offline-demo) for the packaged, read-only snapshot, five navigation stops, and generated invoice, queue, model, and reply-triage examples. The 10-minute GitHub Actions health workflow warms both Render services and checks the portfolio, action queue, brief, stories, evaluation, invoice detail, and AI configuration; the free services can still have cold-start delays.
+### 2. Verdant Market outlier
 
-## PayPal Sandbox round trip
+The tour’s prompt is: “An unpaid invoice’s overdue age is a lower bound, not a predicted payment date.” Open **Verdant Market outlier** and explain that an invoice still unpaid at the snapshot date has not settled by then; that does not establish when it will settle. Review the conditional forecast, the client’s right-censored history, and the policy reason together. The tour bounds the live story lookup to 20 seconds. If it fails, the destination is labeled **Open local fallback**; the packaged invoice evidence remains expandable without the API.
 
-Use only the Sandbox merchant and recipients in `PAYPAL_ALLOWED_RECIPIENT_EMAILS`.
+### 3. Action queue
 
-1. Sign in at [`/login`](https://latepayer-web.onrender.com/login), then expand **PayPal Sandbox** on the portfolio.
+The tour’s prompt is: “Every suggestion has a forecast reason and a human approval step.” Open **Action queue**. The page describes “suggested reminders and partial-payment changes,” explains why policy thresholds change reminder severity, and shows how the shared five-action cap rotates across currency lanes. Review the internal note, recipient-facing PayPal reminder boundary, human approval, and recorded outcome. The separate **Collections** route filters owner, follow-up, and resolution work. Synthetic approvals are simulations; they do not send reminders or change PayPal records.
+
+### 4. Model performance
+
+The tour’s prompt is: “The release model is named against its validation selection rule and held-out results.” When **Model performance** loads, show the model selection, censor-aware evaluation, and calibration. The tour cautions: “Synthetic results are pipeline evidence, not real-world accuracy claims.” Keep that distinction clear when discussing the reported scores.
+
+### 5. Reply triage
+
+The tour’s prompt is: “A reviewed promise changes the forecast as a labeled scenario; an approved dispute pauses reminders.” Show how a reply is previewed, corrected, and then explicitly approved. A preview alone does not change invoice state; approval is the decision point.
+
+## If the live API is slow
+
+Portfolio, queue, story, and performance details load from the API. Errors retain the last successful result when one exists and provide a task-specific retry; use the visible **Read-only fallback** link directly when you need to finish the route without the API. Avoid quoting live metrics until the performance page loads. Open the [offline demo](https://latepayer-web.onrender.com/offline-demo?stop=2) for the packaged versioned snapshot.
+
+The fallback identifies its package version and snapshot date. The current packaged snapshot is **late-payer-fallback-v2**, dated **2026-11-11**, matching the checked-in model evaluation: **50 open invoices · 30 past due · 1 disputed**. Currency totals remain separate. For a concrete row, show Verdant Market invoice **LP-16-045**, **USD 4,893.00**, due **2026-07-09**, marked **OVERDUE**. Expand its packaged evidence to show issue/due dates, total, paid and remaining balance, terms, partial receipts, and reminder dates. The disputed example is Cinder & Co invoice **LP-06-051**, **GBP 7,539.00**. The page explains that it still needs the web app and packaged files to load, so airplane-mode availability is not guaranteed.
+
+Use the fallback to explain its read-only invoice evidence and navigation. It does not present the API as available and does not mutate shared data. Return to the live portfolio with **Retry live portfolio** when the API is available.
+
+## Optional deeper tour
+
+- Open an invoice to review its forecast, payment timeline, and reminder decision. Explain that the P50 date represents full settlement; partial payments may arrive earlier.
+- Open a client’s terms scenarios to compare the hypothetical dates and terms. Describe these as model associations, not causal effects.
+- In the action queue, show the owner, notes, follow-up date, and resolution fields used to organize collection work.
+- Use **Model performance** for the release artifact, held-out results, and synthetic-data limitations.
+
+## PayPal boundary
+
+The public tour uses synthetic invoices and simulated actions. For an operator walkthrough of provider features, sign in through [Operator login](https://latepayer-web.onrender.com/login), then open the dedicated [PayPal operator route](https://latepayer-web.onrender.com/operator). Keep PayPal in **Sandbox** mode with the controlled recipient allowlist. The checklist walks through create → pay → webhook or sync → balance confirmation and shows timestamped evidence. PayPal’s native reminder controls the recipient-facing message; edited copy is an internal review note.
+
+### Optional Sandbox invoice round trip
+
+1. Sign in as the operator, then open **PayPal operator** from the navigation.
 2. Choose an allowlisted Sandbox buyer, enter a small amount, select terms, and create/send the invoice. Open its detail and copy the hosted PayPal invoice link.
-3. Sign in to the corresponding Sandbox buyer account and complete checkout on PayPal’s hosted invoice page. No real payment is made.
-4. Confirm the `INVOICING.INVOICE.PAID` webhook reaches `/webhooks/paypal` and the invoice timeline records provider events. Use **Sync PayPal** if the callback is delayed.
-5. Return to invoice detail and verify `PAID`, the paid amount, and zero outstanding balance. The portfolio totals then reflect the reconciled provider state.
+3. Complete checkout using the matching Sandbox buyer account. This is a Sandbox payment, not a live payment.
+4. Confirm the paid event or use **Sync PayPal** if the callback is delayed. Verify the invoice shows `PAID` and zero outstanding balance.
 
-PayPal’s native reminder controls the recipient-facing email body. The editable text is stored as an internal review note. Keep credentials in ignored environment files or Render settings; never add them to this walkthrough.
-
-For local setup, see [README.md](README.md). Current Sandbox and deployment evidence is in [docs/execution-status.md](docs/execution-status.md).
+Use only the controlled recipient allowlist. See [execution status](docs/execution-status.md) for the verified Sandbox and deployment details.

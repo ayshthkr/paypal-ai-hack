@@ -84,7 +84,7 @@ test("queue explains an empty successful response", async ({ page }) => {
     }),
   }));
   await page.getByRole("button", { name: "Refresh queue" }).click();
-  await expect(page.getByText(/No reminder or partial-payment action is pending today/)).toBeVisible();
+  await expect(page.getByText(/No reminder or partial-payment action is pending for this snapshot/)).toBeVisible();
 });
 
 test("queue reports the waking state and stops retrying after a 30-second API outage", async ({ page }) => {
@@ -97,6 +97,64 @@ test("queue reports the waking state and stops retrying after a 30-second API ou
   }));
   await page.getByRole("button", { name: "Refresh queue" }).click();
   await expect(page.getByRole("status").getByText(/Waking the API/)).toBeVisible({ timeout: 5_000 });
-  await expect(page.getByText(/API did not wake within 30 seconds/)).toBeVisible({ timeout: 37_000 });
+  await expect(page.getByText(/Could not load the action queue/)).toBeVisible({ timeout: 37_000 });
   await expect(page.getByRole("button", { name: "Refresh queue" })).toBeEnabled();
+});
+
+test("guided tour exposes five stops and sends a failed live story to the packaged fallback", async ({ page }) => {
+  await page.route("**/api/demo/session", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  await page.route("**/api/demo-stories", route => route.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ items: [
+      { key: "verdant_outlier", title: "Verdant Market · stale outlier", summary: "Overdue age is a lower bound.", href: "/invoices/verdant-test" },
+      { key: "dispute", title: "Cinder & Co · disputed invoice", summary: "A dispute pauses reminders.", href: "/invoices/dispute-test" },
+    ] }),
+  }));
+  await page.goto("/tour?stop=1");
+  const titles = ["Portfolio", "Verdant Market outlier", "Action queue", "Model performance", "Reply triage"];
+  for (let index = 0; index < titles.length; index += 1) {
+    await expect(page.getByRole("heading", { name: titles[index], exact: true })).toBeVisible();
+    if (index < titles.length - 1) await page.getByRole("button", { name: "Next stop" }).click();
+  }
+
+  await page.route("**/api/demo-stories", route => route.abort());
+  await page.goto("/tour?stop=2");
+  await expect(page.getByRole("status").getByText(/Named story lookup failed/)).toBeVisible();
+  const fallback = page.getByRole("link", { name: /Open local fallback/ });
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toHaveAttribute("href", /\/offline-demo\?stop=2/);
+});
+
+test("collections save survives reload and refreshes from the saved record", async ({ page }) => {
+  const record = {
+    id: "collection-ui-invoice", invoice_number: "LP-UI-123", client_name: "Collections Demo",
+    client_id: "collection-ui-client", source: "demo", currency: "USD", outstanding: "100.00",
+    due_date: "2026-01-01", days_late: 300,
+    decision: { action: "review_for_writeoff_or_collections", reason: "Long-overdue balance", expected_cash_gain: 0 },
+    why: "Review this balance.", suggested_review_steps: [], recommendation: null,
+    collection_review: { owner: "", notes: "", follow_up_date: null as string | null, resolution_status: "open", updated_at: null as string | null },
+  };
+  const response = () => ({
+    items: [], count: 0, daily_cap: 5, as_of: "2026-11-11", synthetic_demo: true,
+    pending_count: 0, skipped_count: 0, skipped: [], collections_review: [record],
+    collections_closed: [], collections_totals: { USD: "100.00" },
+  });
+  await page.route("**/api/demo/session", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  await page.route("**/api/action-queue", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response()) }));
+  await page.route("**/api/invoices/collection-ui-invoice/collection-review", async route => {
+    const draft = route.request().postDataJSON() as { owner: string; notes: string; follow_up_date: string | null; resolution_status: string };
+    record.collection_review = { ...draft, updated_at: "2026-11-12T10:00:00Z" };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ invoice_id: record.id, ...record.collection_review }) });
+  });
+
+  await page.goto("/collections");
+  await expect(page.getByRole("heading", { name: "Collections", exact: true })).toBeVisible();
+  await page.getByRole("textbox", { name: "Owner" }).fill("A. Reviewer");
+  await page.getByLabel("Review notes").fill("Customer requested a corrected statement.");
+  await page.getByRole("button", { name: "Save review" }).click();
+  await expect(page.getByRole("status").getByText(/Saved ·/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Owner" })).toHaveValue("A. Reviewer");
+  await expect(page.getByLabel("Review notes")).toHaveValue("Customer requested a corrected statement.");
+  await expect(page.getByText(/Last saved/)).toBeVisible();
 });

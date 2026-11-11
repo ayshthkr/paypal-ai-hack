@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { requestJson, clearReads, ensureDemoSession, RequestError } from "../lib/api";
+import { requestJson, clearReads, ensureDemoSession, RequestError, currentReadTimeoutMs } from "../lib/api";
 import { decisionLabel } from "../lib/labels";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -11,10 +11,10 @@ type QueueItem = {
   why?: string;
   reminder_outcomes?: { sent_at: string; tone: string; status: "paid" | "partial" | "silent" | "checking"; amount_paid: string; currency: string; window_ends: string }[];
   suggested_review_steps?: string[];
-  collection_review?: { owner: string; notes: string; follow_up_date: string | null; resolution_status: string };
-  recommendation: { id: string; action: string; tone: string; edited_text: string; reason: string; state: string } | null;
+  collection_review?: { owner: string; notes: string; follow_up_date: string | null; resolution_status: string; updated_at?: string | null };
+  recommendation: { id: string; action: string; tone: string; edited_text: string; draft_text?: string; draft_source?: string; draft_model?: string | null; drafted_at?: string; approved_text?: string | null; approved_at?: string | null; reason: string; state: string } | null;
 };
-export type QueueResult = { items: QueueItem[]; count: number; daily_cap: number; as_of: string; synthetic_demo: boolean; pending_count: number; skipped_count: number; skipped: { id: string; invoice_id: string }[]; collections_review?: QueueItem[]; collections_totals?: Record<string, string>; review_time?: { completed_count: number; median_seconds: number | null; sample_window: string } };
+export type QueueResult = { items: QueueItem[]; count: number; daily_cap: number; as_of: string; synthetic_demo: boolean; pending_count: number; skipped_count: number; skipped: { id: string; invoice_id: string; invoice_number: string; client_name: string; replacement_state?: string | null; replacement_id?: string | null }[]; collections_review?: QueueItem[]; collections_closed?: QueueItem[]; collections_totals?: Record<string, string>; review_time?: { completed_count: number; median_seconds: number | null; sample_window: string } };
 
 function money(currency: string, value: number | string) { return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function reviewClockNow() { return performance.now(); }
@@ -24,7 +24,7 @@ function readDrafts(items: QueueItem[]) {
     sessionStorage.getItem(`latepayer-draft:${item.recommendation?.id}`) ?? item.recommendation?.edited_text ?? ""]));
 }
 
-export default function ActionQueue() {
+export default function ActionQueue({ collectionsOnly = false }: { collectionsOnly?: boolean }) {
   const [data, setData] = useState<QueueResult | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -37,6 +37,18 @@ export default function ActionQueue() {
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { owner: string; notes: string; follow_up_date: string; resolution_status: string }>>({});
   const [collectionStates, setCollectionStates] = useState<Record<string, "dirty" | "saving" | "saved" | "saved_refresh_failed" | "failed" | "uncertain">>({});
   const [operationStates, setOperationStates] = useState<Record<string, "uncertain" | "saved_refresh_failed" | "confirmed">>({});
+  const [draftSaveStates, setDraftSaveStates] = useState<Record<string, "saving" | "saved" | "failed">>({});
+  const [bulkResults, setBulkResults] = useState<string[]>([]);
+  const [skipRecovery, setSkipRecovery] = useState<Record<string, string>>({});
+  const [skipBusy, setSkipBusy] = useState("");
+  const [collectionTab, setCollectionTab] = useState<"open" | "closed" | "all">("open");
+  const [collectionSearch, setCollectionSearch] = useState("");
+  const [collectionOwner, setCollectionOwner] = useState("");
+  const [collectionStatus, setCollectionStatus] = useState("");
+  const [followUpFrom, setFollowUpFrom] = useState("");
+  const [followUpTo, setFollowUpTo] = useState("");
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [overdueFollowupsOnly, setOverdueFollowupsOnly] = useState(false);
   const collectionStatesRef = useRef(collectionStates);
   collectionStatesRef.current = collectionStates;
   const refresh = useCallback(async (): Promise<QueueResult | null> => {
@@ -44,7 +56,7 @@ export default function ActionQueue() {
     const wakeMessage = window.setTimeout(() => setWaking(true), 900);
     try {
       await ensureDemoSession();
-      const deadline = Date.now() + 30_000;
+      const deadline = Date.now() + (currentReadTimeoutMs() === 20_000 ? 20_000 : 30_000);
       let result: QueueResult | null = null;
       let lastError = "";
       while (Date.now() < deadline && !result) {
@@ -60,28 +72,35 @@ export default function ActionQueue() {
         }
         if (!result && Date.now() < deadline) await new Promise(resolve => window.setTimeout(resolve, Math.min(1_500, deadline - Date.now())));
       }
-      if (!result) throw new Error(`The API did not wake within 30 seconds. ${lastError || "Refresh to try again."}`);
+      if (!result) throw new Error(`Could not refresh the ${collectionsOnly ? "collections" : "action queue"} after repeated service checks. ${lastError ? "The last read did not complete." : "Choose Retry or the read-only fallback."}`);
       setData(result);
       setDrafts(readDrafts(result.items));
-      const serverDrafts = Object.fromEntries((result.collections_review || []).map(item => [item.id, {
+      const allCollectionRecords = [...(result.collections_review || []), ...(result.collections_closed || [])];
+      const serverDrafts = Object.fromEntries(allCollectionRecords.map(item => [item.id, {
         owner: item.collection_review?.owner || "", notes: item.collection_review?.notes || "",
         follow_up_date: item.collection_review?.follow_up_date || "",
         resolution_status: item.collection_review?.resolution_status || "open",
       }]));
-      setCollectionDrafts(current => Object.fromEntries(Object.entries(serverDrafts).map(([id, value]) => [
-        id, ["dirty", "saving", "saved_refresh_failed", "failed", "uncertain"].includes(collectionStatesRef.current[id]) ? current[id] || value : value,
-      ])));
+      setCollectionDrafts(current => Object.fromEntries(Object.entries(serverDrafts).map(([id, value]) => {
+        let stored: typeof value | null = null;
+        try { stored = JSON.parse(sessionStorage.getItem(`latepayer-collection:${id}`) || "null") as typeof value | null; } catch { stored = null; }
+        return [id, ["dirty", "saving", "saved_refresh_failed", "failed", "uncertain"].includes(collectionStatesRef.current[id]) ? current[id] || stored || value : stored || value];
+      })));
       return result;
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load today's action queue."); return null; }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load the action queue."); return null; }
     finally { window.clearTimeout(wakeMessage); setWaking(false); setLoading(false); }
-  }, []);
+  }, [collectionsOnly]);
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
   const updateCollection = (id: string, key: "owner" | "notes" | "follow_up_date" | "resolution_status", value: string) => {
-    setCollectionDrafts(current => ({ ...current, [id]: { ...{ owner: "", notes: "", follow_up_date: "", resolution_status: "open" }, ...current[id], [key]: value } }));
+    setCollectionDrafts(current => {
+      const next = { ...{ owner: "", notes: "", follow_up_date: "", resolution_status: "open" }, ...current[id], [key]: value };
+      sessionStorage.setItem(`latepayer-collection:${id}`, JSON.stringify(next));
+      return { ...current, [id]: next };
+    });
     setCollectionStates(current => ({ ...current, [id]: "dirty" }));
   };
 
@@ -96,13 +115,13 @@ export default function ActionQueue() {
     clearReads();
     const latest = await refresh();
     if (!latest) { setCollectionStates(current => ({ ...current, [item.id]: "uncertain" })); return; }
-    const currentItem = latest.collections_review?.find(row => row.id === item.id);
-    if (matchesCollectionDraft(currentItem, draft)) setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
+    const currentItem = [...(latest.collections_review || []), ...(latest.collections_closed || [])].find(row => row.id === item.id);
+    if (matchesCollectionDraft(currentItem, draft)) { sessionStorage.removeItem(`latepayer-collection:${item.id}`); setCollectionStates(current => ({ ...current, [item.id]: "saved" })); }
     else setCollectionStates(current => ({ ...current, [item.id]: "failed" }));
   };
 
-  const saveCollectionReview = async (item: QueueItem) => {
-    const draft = collectionDrafts[item.id] || { owner: "", notes: "", follow_up_date: "", resolution_status: "open" };
+  const saveCollectionReview = async (item: QueueItem, override?: { owner: string; notes: string; follow_up_date: string; resolution_status: string }) => {
+    const draft = override || collectionDrafts[item.id] || { owner: "", notes: "", follow_up_date: "", resolution_status: "open" };
     setCollectionStates(current => ({ ...current, [item.id]: "saving" }));
     setBusyId(item.id); setError("");
     try {
@@ -110,6 +129,7 @@ export default function ActionQueue() {
         method: "PATCH", body: JSON.stringify({ ...draft, follow_up_date: draft.follow_up_date || null }),
       });
       setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
+      sessionStorage.removeItem(`latepayer-collection:${item.id}`);
       clearReads();
       const latest = await refresh();
       if (!latest) setCollectionStates(current => ({ ...current, [item.id]: "saved_refresh_failed" }));
@@ -120,8 +140,9 @@ export default function ActionQueue() {
       if (!latest) {
         setError("Could not confirm the collections save. Your edits remain on this page. Check status before retrying.");
       } else {
-        const currentItem = latest.collections_review?.find(row => row.id === item.id);
+        const currentItem = [...(latest.collections_review || []), ...(latest.collections_closed || [])].find(row => row.id === item.id);
         if (matchesCollectionDraft(currentItem, draft)) {
+          sessionStorage.removeItem(`latepayer-collection:${item.id}`);
           setCollectionStates(current => ({ ...current, [item.id]: "saved" }));
           setError("");
         } else {
@@ -156,11 +177,55 @@ export default function ActionQueue() {
     }
   };
 
+  const reconcileSkipped = async (item: QueueResult["skipped"][number], checkOnly = false) => {
+    setSkipBusy(item.id); setSkipRecovery(current => ({ ...current, [item.id]: "Checking the current invoice action…" }));
+    clearReads();
+    try {
+      if (!checkOnly) await requestJson(`/api/recommendations/${encodeURIComponent(item.id)}/undo-skip`, { method: "POST" });
+      clearReads();
+      const current = await requestJson<{ recommendation: { id: string; state: string; action: string } | null }>(`/api/invoices/${encodeURIComponent(item.invoice_id)}`);
+      clearReads();
+      const recommendation = current.recommendation;
+      if (recommendation?.id === item.id && recommendation.state === "proposed") {
+        setSkipRecovery(value => ({ ...value, [item.id]: "The skip is restored and the same recommendation is pending again." }));
+      } else if (recommendation?.id !== item.id && recommendation) {
+        setSkipRecovery(value => ({ ...value, [item.id]: `Skip remains recorded. Current invoice action is ${recommendation.action} · ${recommendation.state}; review that record instead of restoring the old suggestion.` }));
+      } else if (recommendation?.state === "skipped") {
+        setSkipRecovery(value => ({ ...value, [item.id]: "Status check confirms this recommendation is still skipped. You can retry restoring it." }));
+      } else {
+        setSkipRecovery(value => ({ ...value, [item.id]: `Current invoice state: ${recommendation?.state || "no active recommendation"}. Review the invoice timeline before continuing.` }));
+      }
+      await refresh();
+    } catch (cause) {
+      clearReads();
+      try {
+        const current = await requestJson<{ recommendation: { id: string; state: string; action: string } | null }>(`/api/invoices/${encodeURIComponent(item.invoice_id)}`);
+        const recommendation = current.recommendation;
+        if (recommendation?.id === item.id && recommendation.state === "proposed") {
+          setSkipRecovery(value => ({ ...value, [item.id]: "Status check confirms the skip was restored; the response was lost. The same action is pending." }));
+        } else if (recommendation?.id !== item.id && recommendation) {
+          setSkipRecovery(value => ({ ...value, [item.id]: `A ${recommendation.state} replacement exists. The old skip remains in history; review the current invoice action.` }));
+        } else {
+          setSkipRecovery(value => ({ ...value, [item.id]: `Restore was not confirmed. Status check shows ${recommendation?.state || "no active recommendation"}; retry Check status before restoring again.` }));
+        }
+        await refresh();
+      } catch {
+        setSkipRecovery(value => ({ ...value, [item.id]: `Restore result is uncertain. Check status before retrying. ${cause instanceof Error ? cause.message : ""}` }));
+      }
+    } finally { setSkipBusy(""); }
+  };
+
   const editDraft = (id: string, text: string) => {
     setDrafts(current => ({ ...current, [id]: text }));
     sessionStorage.setItem(`latepayer-draft:${id}`, text);
+    setDraftSaveStates(current => ({ ...current, [id]: "saving" }));
     clearTimeout(saveTimers.current.get(id));
-    saveTimers.current.set(id, setTimeout(() => { if (text.trim()) void requestJson(`/api/recommendations/${id}/draft`, { method: "POST", body: JSON.stringify({ text }) }).catch(cause => setError(cause.message)); }, 500));
+    saveTimers.current.set(id, setTimeout(() => {
+      if (!text.trim()) return;
+      void requestJson(`/api/recommendations/${id}/draft`, { method: "POST", body: JSON.stringify({ text }) })
+        .then(() => setDraftSaveStates(current => ({ ...current, [id]: "saved" })))
+        .catch(cause => { setDraftSaveStates(current => ({ ...current, [id]: "failed" })); setError(`Draft save failed. The text remains in this session and can be retried. ${cause.message}`); });
+    }, 500));
   };
   const act = async (item: QueueItem, operation: "approve" | "skip", confirmed = false) => {
     const recommendation = item.recommendation;
@@ -210,29 +275,55 @@ export default function ActionQueue() {
     const cap = Math.min(5, data?.daily_cap ?? 5);
     const items = (data?.items.filter(item => item.recommendation?.action === "friendly") || []).slice(0, cap);
     if (!items.length) return;
+    const eligibleCount = data?.items.filter(item => item.recommendation?.action === "friendly").length || 0;
     const itemList = items.map(item => {
       const recipient = !item.source.startsWith("demo")
         ? item.client_email || "recipient email unavailable"
         : "synthetic demo; no email sent";
-      return `Invoice: ${item.invoice_number} · Recipient: ${item.client_name} (${recipient})`;
+      return `Invoice: ${item.invoice_number} · Recipient: ${item.client_name} (${recipient}) · Balance: ${money(item.currency, item.outstanding)} · Assumed 14-day cash uplift (10% scenario): ${money(item.currency, item.decision.expected_cash_gain)}`;
     }).join("\n");
     const deliveryNote = items.some(item => !item.source.startsWith("demo"))
       ? "PayPal Sandbox reminders send test notifications; synthetic reminders are simulated."
       : "Synthetic reminders are simulated; no PayPal email is sent.";
-    if (!window.confirm(`Review each item before approval. Batch capped at ${cap}.\n\n${itemList}\n\n${deliveryNote}\n\nApprove these ${items.length} friendly reminders?`)) return;
+    if (!window.confirm(`${eligibleCount} friendly reminders are eligible; ${items.length} are included under the shared cap of ${cap}.\n\n${itemList}\n\n${deliveryNote}\n\nApprove these ${items.length} reminders one at a time?`)) return;
     setBulkBusy(true);
-    try { for (const item of items) { if (!await act(item, "approve", true)) break; } }
+    setBulkResults([]);
+    try {
+      const outcomes: string[] = [];
+      for (const item of items) {
+        const ok = await act(item, "approve", true);
+        outcomes.push(`${item.invoice_number}: ${ok ? "success" : "failed or needs status check"}`);
+        setBulkResults([...outcomes]);
+        if (!ok) break;
+      }
+    }
     finally { setBulkBusy(false); }
   };
+  const allCollectionRecords = [...(data?.collections_review || []), ...(data?.collections_closed || [])];
+  const collectionOwners = Array.from(new Set(allCollectionRecords.map(item => item.collection_review?.owner.trim() || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const collectionRecords = allCollectionRecords.filter(item => {
+    const review = item.collection_review;
+    const closed = ["resolved", "written_off"].includes(review?.resolution_status || "");
+    if (collectionTab === "open" && closed || collectionTab === "closed" && !closed) return false;
+    if (collectionSearch && !`${item.invoice_number} ${item.client_name} ${item.client_id}`.toLowerCase().includes(collectionSearch.toLowerCase())) return false;
+    if (collectionOwner && (review?.owner || "") !== collectionOwner) return false;
+    if (unassignedOnly && (review?.owner || "").trim()) return false;
+    if (collectionStatus && review?.resolution_status !== collectionStatus) return false;
+    const followUp = review?.follow_up_date || "";
+    if (followUpFrom && (!followUp || followUp < followUpFrom)) return false;
+    if (followUpTo && (!followUp || followUp > followUpTo)) return false;
+    if (overdueFollowupsOnly && (!followUp || followUp >= (data?.as_of || "" ) || closed)) return false;
+    return true;
+  });
   return <>
-    <div className="heading-row"><div><div className="eyebrow">Daily workflow</div><h1>Action queue</h1><p className="subheading">Review suggested reminders and partial-payment changes. The five-action cap is shared across currencies by currency lane.</p></div><button data-queue-refresh className="btn" disabled={loading || Boolean(busyId)} onClick={() => void refresh()}>↻ Refresh queue</button></div>
-    {data && <div className="fine-print" style={{ marginBottom: 12 }}>As of {data.as_of} · {data.pending_count} pending · {data.skipped_count} skipped · cap {data.daily_cap} · {data.synthetic_demo ? "Synthetic actions are simulated" : "PayPal actions use Sandbox"}</div>}
-    {data?.review_time && <div className="fine-print" style={{ marginBottom: 12 }}>Measured queue review time: {data.review_time.median_seconds == null ? "no completed actions yet" : `${data.review_time.median_seconds}s median`} across {data.review_time.completed_count} completed actions. This is elapsed review time; no manual baseline is collected, so it is not reported as time saved.</div>}
-    {loading && data && waking && <div className="empty-inline" role="status">Waking the API… refreshing today&apos;s queue. The first request can take up to 30 seconds.</div>}
-    {data?.items.length ? <div className="fine-print" style={{ marginBottom: 12 }}>The 14-day uplift is a 10% assumed scenario, not an observed effect. The outcome rows below show recorded payments after reminders; results are descriptive and do not establish causality.</div> : null}
-    {data && <div className="action-buttons"><button className="btn primary" disabled={bulkBusy || Boolean(busyId) || !data.items.some(item => item.recommendation?.action === "friendly")} onClick={() => void approveFriendly()}>Approve all friendly</button>{data.skipped.map(item => <button key={item.id} className="btn" disabled={Boolean(busyId) || bulkBusy} onClick={() => { void requestJson(`/api/recommendations/${item.id}/undo-skip`, { method: "POST" }).then(() => refresh()).catch(cause => setError(cause.message)); }}>Undo skip · {item.invoice_id}</button>)}</div>}
+    <div className="heading-row"><div><div className="eyebrow">{collectionsOnly ? "Collections workflow" : "Daily workflow"}</div><h1>{collectionsOnly ? "Collections" : "Action queue"}</h1><p className="subheading">{collectionsOnly ? "Assign owners, set follow-ups, document resolution, and reopen a case when needed." : "Review suggested reminders and partial-payment changes. The five-action cap is shared across currencies."}</p></div><button data-queue-refresh className="btn" disabled={loading || Boolean(busyId)} onClick={() => void refresh()}>↻ {collectionsOnly ? "Refresh collections" : "Refresh queue"}</button></div>
+    {data && <div className="fine-print" style={{ marginBottom: 12 }}>Snapshot {data.as_of} · {collectionsOnly ? `${data.collections_review?.length || 0} open collections cases · ${data.collections_closed?.length || 0} archived cases` : `${data.pending_count} pending · ${data.skipped_count} skipped · cap ${data.daily_cap}`} · {data.synthetic_demo ? "Synthetic actions are simulated" : "PayPal actions use Sandbox"}</div>}
+    {!collectionsOnly && data?.review_time && <div className="fine-print" style={{ marginBottom: 12 }}>Measured queue review time: {data.review_time.median_seconds == null ? "no completed actions yet" : `${data.review_time.median_seconds}s median`} across {data.review_time.completed_count} completed actions. The timer starts with interaction and includes service delay; no manual baseline is collected.</div>}
+    {loading && data && waking && <div className="empty-inline" role="status">Waking the API… refreshing the snapshot-date queue. The first request can take up to 30 seconds.</div>}
+    {!collectionsOnly && data?.items.length ? <><div className="fine-print" style={{ marginBottom: 12 }}>Assumed 14-day cash uplift uses a 10% scenario; it is not measured incremental cash or an observed effect. The outcome rows below show recorded payments after reminders; results are descriptive and do not establish causality.</div><details className="panel policy-thresholds"><summary>Policy fact → threshold → action</summary><ul><li>Due within three days: a friendly reminder is eligible when predicted payment by the due date is below the configured probability threshold.</li><li>At least 3 days overdue: friendly follow-up when the 14-day payment probability is below 80%; 5-day reminder cooldown.</li><li>At least 10 days overdue: firm follow-up when 14-day payment probability is below 95%; 7-day cooldown.</li><li>At +21 days: offer partial payment only for balances of at least 2,500 with prior partial-payment history; at +45 days, recommend a personal call.</li><li>At +90 days: move the open balance to collections review instead of sending another reminder.</li><li>The shared daily cap is allocated round-robin across currency lanes in alphabetical order (EUR, GBP, USD); within each lane rank by assumed uplift, then due date, then stable invoice ID. No FX conversion is used for ranking.</li></ul></details><section id="recorded-outcomes" className="fine-print">Recorded outcomes are shown on each action card and linked to its invoice timeline. Payment after a reminder is descriptive evidence; it does not establish causality.</section></> : null}
+    {!collectionsOnly && data && <><div className="action-buttons"><button className="btn primary" disabled={bulkBusy || Boolean(busyId) || !data.items.some(item => item.recommendation?.action === "friendly")} onClick={() => void approveFriendly()}>Approve eligible friendly reminders</button>{data.skipped.map(item => <div className="skip-recovery" key={item.id}><span>{item.invoice_number} · {item.client_name}</span><Link className="btn" href={`/invoices/${encodeURIComponent(item.invoice_id)}#invoice-timeline`}>Open skipped record</Link>{item.replacement_state ? <span className="fine-print">A replacement action is already {item.replacement_state}; the original skip remains recorded.</span> : <button className="btn" disabled={Boolean(busyId) || bulkBusy || skipBusy === item.id} onClick={() => void reconcileSkipped(item)}>{skipBusy === item.id ? "Checking…" : "Restore skipped suggestion"}</button>}{skipRecovery[item.id] && <span className="fine-print" role="status">{skipRecovery[item.id]} <button className="btn" disabled={skipBusy === item.id} onClick={() => void reconcileSkipped(item, true)}>Check status</button></span>}</div>)}</div>{bulkResults.length > 0 && <div className="delivery-note" role="status"><strong>Bulk approval results</strong>{bulkResults.map(result => <div key={result}>{result}</div>)}</div>}</>}
     {error && <div className="error-box" role="alert">{error}</div>}
-    {loading && !data ? <div className="empty-box" role="status">{waking ? "Waking the API… the first request can take up to 30 seconds." : "Loading today’s suggested actions…"}</div> : error && !data ? <div className="empty-box">The action queue could not load. {error} <button className="btn" onClick={() => void refresh()}>Retry</button></div> : !data?.items.length ? <div className="empty-box">No reminder or partial-payment action is pending today. The policy may recommend waiting, or all suggestions may already be reviewed.</div> : <div className="queue-list">{data.items.map(item => {
+    {collectionsOnly && loading && !data ? <div className="empty-box" role="status">{waking ? "Waking the API… the first request can take up to 30 seconds." : "Loading collections…"}</div> : !collectionsOnly && loading && !data ? <div className="empty-box" role="status">{waking ? "Waking the API… the first request can take up to 30 seconds." : "Loading snapshot-date suggestions…"}</div> : error && !data ? <div className="empty-box">The {collectionsOnly ? "collections" : "action queue"} could not load. {error} <button className="btn" onClick={() => void refresh()}>Retry</button></div> : collectionsOnly ? null : !data?.items.length ? <div className="empty-box">No reminder or partial-payment action is pending for this snapshot. The policy may recommend waiting, or all suggestions may already be reviewed.</div> : <div className="queue-list" id="action-approval">{data.items.map(item => {
       const recommendation = item.recommendation;
       if (!recommendation) return null;
       const busy = busyId === recommendation.id;
@@ -243,22 +334,45 @@ export default function ActionQueue() {
         onPointerDownCapture={() => { if (!reviewStartedAt.current.has(recommendation.id)) reviewStartedAt.current.set(recommendation.id, reviewClockNow()); }}
         onFocusCapture={() => { if (!reviewStartedAt.current.has(recommendation.id)) reviewStartedAt.current.set(recommendation.id, reviewClockNow()); }}>
         <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">{decisionLabel(recommendation.action)}</span></div>
-        <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Assumed 14-day uplift <strong>{money(item.currency, item.decision.expected_cash_gain)}</strong></span></div>
+        <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Assumed 14-day cash uplift · 10% scenario <strong>{money(item.currency, item.decision.expected_cash_gain)}</strong></span></div>
         <p className="panel-subtitle">{item.why || item.decision.reason}</p>
-        {item.reminder_outcomes?.length ? <div className="fine-print">Next-week outcome: {item.reminder_outcomes.map(outcome => `${outcome.tone} · ${outcome.status === "checking" ? `checking through ${outcome.window_ends}` : outcome.status}${outcome.amount_paid !== "0.00" ? ` (${money(outcome.currency, outcome.amount_paid)})` : ""}`).join(" · ")}</div> : null}
-        {partial ? <div className="delivery-note">{synthetic ? "Approval simulates enabling partial payments in the synthetic demo; no PayPal change or email occurs." : "Approval enables partial payments on this PayPal Sandbox invoice; PayPal may notify the recipient."}</div> : <label className="field-label">{synthetic ? "Simulated reminder note · no email is sent" : "Internal reminder note · recipient receives PayPal&apos;s native message"}<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label>}
+        {item.reminder_outcomes?.length ? <div className="fine-print">Next-week outcome: {item.reminder_outcomes.map(outcome => `${outcome.tone} · ${outcome.status === "checking" ? `checking through ${outcome.window_ends}` : outcome.status}${outcome.amount_paid !== "0.00" ? ` (${money(outcome.currency, outcome.amount_paid)})` : ""}`).join(" · ")} · <Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}#invoice-timeline`}>View underlying reminder and payment events</Link></div> : null}
+        <div className="fine-print">Policy evidence: {item.decision.reason || item.why}. {item.source.startsWith("demo") ? "Synthetic action." : "Sandbox action."}</div>
+        {partial ? <div className="delivery-note"><strong>Approval effect</strong><p>{synthetic ? "Simulates enabling partial payments in the synthetic demo; no PayPal change or email occurs." : "Enables partial payments on this PayPal Sandbox invoice; PayPal may notify the recipient."}</p></div> : <><div className="delivery-note"><strong>Recipient preview</strong><p>{synthetic ? "This is a simulated reminder. No recipient message is sent." : "Approval sends or updates PayPal’s native reminder for the invoice. PayPal controls its subject and recipient-facing body; the note below is internal and is not transmitted."}</p></div><label className="field-label">Internal collection note · {synthetic ? "simulated; no email is sent" : "not sent to the recipient"}<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label><div className="draft-provenance" role="status"><span>{drafts[recommendation.id] && drafts[recommendation.id] !== recommendation.draft_text ? "Human edited" : recommendation.draft_source === "gemini" ? `AI-generated${recommendation.draft_model ? ` · ${recommendation.draft_model}` : ""}` : recommendation.draft_source === "policy" ? "Policy-generated" : "Template"}</span><span>{draftSaveStates[recommendation.id] === "saving" ? "Saving draft…" : draftSaveStates[recommendation.id] === "failed" ? "Draft save failed · text retained in session" : draftSaveStates[recommendation.id] === "saved" ? "Saved to server" : recommendation.drafted_at ? `Drafted ${new Date(recommendation.drafted_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata" })} IST` : "Draft save is automatic after typing stops"}</span>{recommendation.draft_text && <button className="btn" type="button" onClick={() => editDraft(recommendation.id, recommendation.draft_text || "")}>Revert to original draft</button>}</div></>}
         {operationState === "uncertain" && <div className="delivery-note" role="status"><strong>Action status needs reconciliation.</strong><p>The saved server state is not confirmed. Check it before retrying.</p><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button></div>}
         {operationState === "saved_refresh_failed" && <div className="delivery-note" role="status"><strong>Action saved; queue refresh failed.</strong><p>Check the invoice record or retry the queue refresh before continuing.</p><div className="action-buttons"><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button><button className="btn" disabled={loading} onClick={() => void refresh()}>Retry refresh</button></div></div>}
         {operationState === "confirmed" && <div className="fine-print" role="status">Server status checked. Refresh the queue before taking another action.</div>}
         <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || Boolean(operationState) || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Approve partial payments" : synthetic ? "Approve & simulate" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy || Boolean(operationState)} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
       </article>;
     })}</div>}
-    {data?.collections_review?.length ? <section className="collections-lane" aria-labelledby="collections-review-title">
+    {collectionsOnly && data && <section className="panel collections-workspace" aria-labelledby="collections-workspace-title">
+      <div className="panel-head"><div><div className="panel-title" id="collections-workspace-title">Collections cases</div><div className="panel-subtitle">Open and archived balances at least 90 days overdue · snapshot {data.as_of}. Saving a resolution changes review workflow only; it does not settle the balance or execute a write-off.</div></div></div>
+      <nav className="view-tabs" aria-label="Collections status">{(["open", "closed", "all"] as const).map(tab => <button className={collectionTab === tab ? "active" : ""} key={tab} onClick={() => setCollectionTab(tab)}>{tab === "open" ? "Open" : tab === "closed" ? "Closed archive" : "All"}<span>{tab === "open" ? data.collections_review?.length || 0 : tab === "closed" ? data.collections_closed?.length || 0 : allCollectionRecords.length}</span></button>)}</nav>
+      <div className="collections-filters"><label>Search invoice/client<input className="search" value={collectionSearch} onChange={event => setCollectionSearch(event.target.value)} placeholder="Invoice number or client"/></label><label>Owner<select className="select" value={collectionOwner} onChange={event => setCollectionOwner(event.target.value)}><option value="">All owners</option>{collectionOwners.map(owner => <option key={owner}>{owner}</option>)}</select></label><label>Resolution status<select className="select" value={collectionStatus} onChange={event => setCollectionStatus(event.target.value)}><option value="">All statuses</option>{["open", "in_progress", "awaiting_response", "disputed", "resolved", "written_off"].map(status => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label><label>Follow-up from<input type="date" value={followUpFrom} onChange={event => setFollowUpFrom(event.target.value)}/></label><label>Follow-up to<input type="date" value={followUpTo} onChange={event => setFollowUpTo(event.target.value)}/></label><label className="check-filter"><input type="checkbox" checked={unassignedOnly} onChange={event => setUnassignedOnly(event.target.checked)}/> Unassigned</label><label className="check-filter"><input type="checkbox" checked={overdueFollowupsOnly} onChange={event => setOverdueFollowupsOnly(event.target.checked)}/> Overdue follow-ups</label><button className="btn" onClick={() => { setCollectionSearch(""); setCollectionOwner(""); setCollectionStatus(""); setFollowUpFrom(""); setFollowUpTo(""); setUnassignedOnly(false); setOverdueFollowupsOnly(false); }}>Clear filters</button></div>
+      <div className="fine-print">Showing {collectionRecords.length} of {allCollectionRecords.length} records · {allCollectionRecords.filter(item => !(item.collection_review?.owner || "").trim() && !["resolved", "written_off"].includes(item.collection_review?.resolution_status || "")).length} unassigned · {allCollectionRecords.filter(item => item.collection_review?.follow_up_date && item.collection_review.follow_up_date < data.as_of && !["resolved", "written_off"].includes(item.collection_review.resolution_status)).length} overdue follow-ups</div>
+      {collectionRecords.length ? <div className="queue-list">{collectionRecords.map(item => {
+        const review = item.collection_review || { owner: "", notes: "", follow_up_date: null, resolution_status: "open" };
+        const draft = collectionDrafts[item.id] || { owner: review.owner, notes: review.notes, follow_up_date: review.follow_up_date || "", resolution_status: review.resolution_status };
+        const closed = ["resolved", "written_off"].includes(review.resolution_status);
+        const savedTime = review.updated_at ? new Date(review.updated_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata" }) + " IST" : "not yet saved";
+        return <article className="queue-card collection-card" key={item.id}>
+          <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">{review.resolution_status.replaceAll("_", " ")}</span></div>
+          <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Overdue <strong>{item.days_late} days</strong></span><span>Due <strong>{item.due_date}</strong></span></div>
+          <div className="fine-print">Last saved {savedTime} · resolution does not settle or write off this balance.</div>
+          <div className="collection-review-form"><label className="field-label">Owner<input value={draft.owner} maxLength={128} placeholder="Assign a reviewer" onChange={event => updateCollection(item.id, "owner", event.target.value)}/></label><label className="field-label">Follow-up date<input type="date" value={draft.follow_up_date} onChange={event => updateCollection(item.id, "follow_up_date", event.target.value)}/></label><label className="field-label">Resolution status<select className="select" value={draft.resolution_status} onChange={event => updateCollection(item.id, "resolution_status", event.target.value)}>{["open", "in_progress", "awaiting_response", "disputed", "resolved", "written_off"].map(status => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label><label className="field-label">Review notes<textarea maxLength={4000} value={draft.notes} placeholder="Call outcome, dispute details, or resolution" onChange={event => updateCollection(item.id, "notes", event.target.value)}/></label>
+            {collectionStates[item.id] === "dirty" && <div className="fine-print" role="status">Unsaved changes retained in this browser session · explicit Save required; blur does not save.</div>}{collectionStates[item.id] === "saving" && <div className="fine-print" role="status">Saving…</div>}{collectionStates[item.id] === "saved" && <div className="fine-print" role="status">Saved · {savedTime}</div>}{collectionStates[item.id] === "saved_refresh_failed" && <div className="delivery-note" role="status"><strong>Saved, but refresh failed.</strong><button className="btn" onClick={() => void checkCollectionStatus(item)}>Check status</button><button className="btn" onClick={() => void refresh()}>Retry refresh</button></div>}{collectionStates[item.id] === "uncertain" && <div className="delivery-note" role="status"><strong>Save result uncertain.</strong><button className="btn" onClick={() => void checkCollectionStatus(item)}>Check status</button></div>}{collectionStates[item.id] === "failed" && <div className="delivery-note" role="alert">Save failed · edits remain available for retry.</div>}
+            <div className="action-buttons"><button className="btn primary" disabled={busyId === item.id} onClick={() => void saveCollectionReview(item)}>{busyId === item.id ? "Saving…" : "Save review"}</button>{closed && <button className="btn" disabled={busyId === item.id} onClick={() => { const reopened = { ...draft, resolution_status: "open" }; setCollectionDrafts(current => ({ ...current, [item.id]: reopened })); sessionStorage.setItem(`latepayer-collection:${item.id}`, JSON.stringify(reopened)); void saveCollectionReview(item, reopened); }}>Reopen case</button>}<Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
+          </div>
+        </article>;
+      })}</div> : <div className="empty-box">No cases match these collection filters.</div>}
+    </section>}
+    {!collectionsOnly && data?.collections_review?.length ? <section className="collections-lane" aria-labelledby="collections-review-title">
       <div className="panel-head"><div><div className="panel-title" id="collections-review-title">Collections review</div><div className="panel-subtitle">Open balances at least 90 days overdue. These need a person to review disputes, lost invoices, write-off, or collections options; no reminder is sent from this lane.</div><div className="fine-print">Lane total · {Object.entries(data.collections_totals || {}).map(([currency, amount]) => money(currency, amount)).join(" · ") || "No balances"}</div></div></div>
       <div className="queue-list">{data.collections_review.map(item => <article className="queue-card collection-card" key={item.id}>
         <div className="queue-card-head"><div><Link className="table-link" href={`/invoices/${encodeURIComponent(item.id)}`}>{item.invoice_number}</Link><span className="queue-client"> · <Link href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link></span></div><span className="recommendation-tag">Collections review</span></div>
         <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Overdue <strong>{item.days_late} days</strong></span></div>
         <p className="panel-subtitle">{item.why || item.decision.reason}</p>
+        <div className="fine-print">A collection review status organizes follow-up work; it does not settle or write off the invoice balance. Last saved {item.collection_review?.updated_at ? new Date(item.collection_review.updated_at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata" }) + " IST" : "not yet saved"}.</div>
         <div className="fine-print">Suggested review steps: {(item.suggested_review_steps || []).map(value => value.replaceAll("_", " ")).join(" · ")}</div>
         {(() => {
           const review = collectionDrafts[item.id] || { owner: item.collection_review?.owner || "", notes: item.collection_review?.notes || "", follow_up_date: item.collection_review?.follow_up_date || "", resolution_status: item.collection_review?.resolution_status || "open" };

@@ -21,9 +21,16 @@ def test_release_facts_and_walkthrough_follow_the_deployed_artifacts():
         and invoice["outstanding"] > 0
     ]
     assert fallback["as_of"] == as_of.isoformat()
+    assert fallback["snapshot_version"] == "late-payer-fallback-v2"
     assert fallback["invoice_count"] == len(records)
     assert fallback["open_count"] == len(open_invoices)
     assert sum(bucket["count"] for bucket in fallback["aging_buckets"].values()) == fallback["open_count"]
+    verdant = fallback["workflow_examples"]["verdant_outlier"]["invoice"]
+    assert (verdant["invoice_number"], verdant["client_name"], verdant["due_date"]) == (
+        "LP-16-045", "Verdant Market", "2026-07-09",
+    )
+    assert {"issue_date", "total", "paid", "outstanding", "payment_term_type", "reminder_dates"} <= verdant.keys()
+    assert fallback["workflow_examples"]["reply_triage"]["invoice"]["invoice_number"] == "LP-06-051"
 
     walkthrough = (ROOT / "walkthrough.md").read_text()
     assert "release artifact" in walkthrough.lower()

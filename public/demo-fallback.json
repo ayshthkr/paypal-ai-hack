@@ -1,4 +1,5 @@
 {
+  "snapshot_version": "late-payer-fallback-v2",
   "as_of": "2026-11-11",
   "generated_from": "ml.synthetic.generate_records \u00b7 seed 20261110",
   "invoice_count": 2129,
@@ -177,14 +178,27 @@
       "title": "Portfolio walkthrough example",
       "body": "Trace one open balance from the portfolio totals to its invoice due date and current status.",
       "invoice": {
+        "id": "demo-invoice-16-045",
         "invoice_number": "LP-16-045",
         "client_name": "Verdant Market",
         "currency": "USD",
         "outstanding": "4893.00",
+        "total": "4893.00",
+        "paid": "0.00",
+        "issue_date": "2026-07-09",
+        "payment_term_type": "DUE_ON_RECEIPT",
+        "partial_payment_allowed": false,
+        "partial_amount": "0.00",
+        "partial_at": null,
         "due_date": "2026-07-09",
         "status": "OVERDUE",
         "disputed": false,
-        "overdue_days": 125
+        "overdue_days": 125,
+        "reminder_count": 1,
+        "reminder_dates": [
+          "2026-07-12"
+        ],
+        "settled_at": null
       },
       "facts": [
         "Snapshot date: 2026-11-11",
@@ -195,14 +209,27 @@
       "title": "Verdant Market \u00b7 overdue outlier",
       "body": "This unpaid invoice is at least this many days overdue. Its age is a lower bound, not a forecast of when it will be paid.",
       "invoice": {
+        "id": "demo-invoice-16-045",
         "invoice_number": "LP-16-045",
         "client_name": "Verdant Market",
         "currency": "USD",
         "outstanding": "4893.00",
+        "total": "4893.00",
+        "paid": "0.00",
+        "issue_date": "2026-07-09",
+        "payment_term_type": "DUE_ON_RECEIPT",
+        "partial_payment_allowed": false,
+        "partial_amount": "0.00",
+        "partial_at": null,
         "due_date": "2026-07-09",
         "status": "OVERDUE",
         "disputed": false,
-        "overdue_days": 125
+        "overdue_days": 125,
+        "reminder_count": 1,
+        "reminder_dates": [
+          "2026-07-12"
+        ],
+        "settled_at": null
       },
       "facts": [
         "No settled payment date exists for this open balance."
@@ -212,14 +239,28 @@
       "title": "Action queue \u00b7 approval example",
       "body": "Check the balance and recorded reminder history, then compare the live queue recommendation and delivery preview before an operator approves. This offline example performs no action and sends nothing.",
       "invoice": {
+        "id": "demo-invoice-45-028",
         "invoice_number": "LP-45-028",
         "client_name": "Arc & Alder",
         "currency": "GBP",
         "outstanding": "2166.00",
+        "total": "2166.00",
+        "paid": "0.00",
+        "issue_date": "2026-11-10",
+        "payment_term_type": "DUE_ON_RECEIPT",
+        "partial_payment_allowed": false,
+        "partial_amount": "0.00",
+        "partial_at": null,
         "due_date": "2026-11-10",
         "status": "OVERDUE",
         "disputed": false,
-        "overdue_days": 1
+        "overdue_days": 1,
+        "reminder_count": 2,
+        "reminder_dates": [
+          "2026-11-11",
+          "2026-11-11"
+        ],
+        "settled_at": null
       },
       "facts": [
         "Recorded synthetic reminders: 2",
@@ -240,14 +281,27 @@
       "title": "Reply triage \u00b7 review example",
       "body": "Inspect the recorded dispute state, then show the preview, correction, and approval sequence using the illustrative message below. It is not a captured customer message; this offline stop does not create or approve a triage record.",
       "invoice": {
+        "id": "demo-invoice-06-051",
         "invoice_number": "LP-06-051",
         "client_name": "Cinder & Co",
         "currency": "GBP",
         "outstanding": "7539.00",
+        "total": "7539.00",
+        "paid": "0.00",
+        "issue_date": "2026-11-10",
+        "payment_term_type": "NET_30",
+        "partial_payment_allowed": false,
+        "partial_amount": "0.00",
+        "partial_at": null,
         "due_date": "2026-12-10",
         "status": "SENT",
         "disputed": true,
-        "overdue_days": 0
+        "overdue_days": 0,
+        "reminder_count": 1,
+        "reminder_dates": [
+          "2026-11-11"
+        ],
+        "settled_at": null
       },
       "facts": [
         "Illustrative reply: \u201cWe dispute this invoice; please pause reminders while we review it.\u201d",

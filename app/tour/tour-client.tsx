@@ -76,18 +76,12 @@ export default function TourClient() {
     let active = true;
     const load = async () => {
       setStoryError("");
-      let last: unknown = null;
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        try {
-          const result = await requestJson<{ items: DemoStory[] }>("/api/demo-stories", { signal: AbortSignal.timeout(30_000) });
-          if (active) setStories(result.items);
-          return;
-        } catch (cause) {
-          last = cause;
-          if (attempt < 5) await new Promise(resolve => window.setTimeout(resolve, 1_500 + attempt * 500));
-        }
+      try {
+        const result = await requestJson<{ items: DemoStory[] }>("/api/demo-stories");
+        if (active) setStories(result.items);
+      } catch (cause) {
+        if (active) setStoryError(cause instanceof Error ? cause.message : "Named stories are unavailable. Use the local fallback stops or retry.");
       }
-      if (active) setStoryError(last instanceof Error ? last.message : "Named stories are unavailable. Use the local fallback stops or retry.");
     };
     void load();
     return () => { active = false; };
@@ -103,7 +97,7 @@ export default function TourClient() {
   const openHref = `${destination.pathname}${destination.search}${anchor}`;
   return <>
     <div className="heading-row"><div><div className="eyebrow">Three-minute route · five stops</div><h1>Guided demo tour</h1><p className="subheading">Use these five screens to explain the receivables workflow, its forecast limits, and the human review step.</p></div></div>
-    {storyError && <div className="empty-inline" role="status">The API did not load the named story after retries. This stop still has a local fallback. <button className="btn" onClick={() => setRetry(value => value + 1)}>Retry stories</button></div>}
+    {storyError && <div className="empty-inline" role="status">Named story lookup failed. This stop still has a local fallback. <button className="btn" onClick={() => setRetry(value => value + 1)}>Retry named story</button></div>}
     <section className="panel guided-stop" aria-label={`Stop ${activeIndex + 1} of 5`}>
       <div className="eyebrow">Stop {activeIndex + 1} of 5 · about 35 seconds</div>
       <h2>{step.title}</h2>
@@ -111,7 +105,9 @@ export default function TourClient() {
       <p><strong>Say:</strong> “{step.read}”</p>
       <p className="fine-print">{step.detail}</p>
       {step.story && !story && !storyError && <div className="fine-print" role="status">Retrying the named synthetic story…</div>}
-      <Link className="btn primary" href={openHref}>Open {story?.title || step.title}</Link>
+      {step.story && !story && !storyError
+        ? <span className="btn" aria-disabled="true">Loading live destination…</span>
+        : <Link className="btn primary" href={openHref}>{story ? `Open live ${story.title}` : storyError && step.story ? `Open local fallback · ${step.title}` : `Open live ${step.title}`}</Link>}
       <nav className="tour-navigation" aria-label="Guided tour navigation">
         <button className="btn" disabled={activeIndex === 0} onClick={() => setStop(activeIndex - 1)}>← Previous stop</button>
         <div className="tour-progress">{steps.map((item, index) => <button key={item.title} className={index === activeIndex ? "active" : ""} aria-label={`Go to stop ${index + 1}: ${item.title}`} aria-current={index === activeIndex ? "step" : undefined} onClick={() => setStop(index)}>{index + 1}</button>)}</div>

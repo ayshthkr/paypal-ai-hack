@@ -5,11 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type Snapshot = {
-  as_of: string; generated_from: string; invoice_count: number; open_count: number;
+  snapshot_version: string; as_of: string; generated_from: string; invoice_count: number; open_count: number;
   overdue_count: number; disputed_count: number; currency_totals: Record<string, string>;
   aging_buckets: Record<string, { count: number; amounts: Record<string, string> }>;
   sample: { id: string; invoice_number: string; client_name: string; currency: string; outstanding: string; due_date: string; status: string; disputed: boolean }[];
-  workflow_examples: Record<string, { title: string; body: string; invoice?: { invoice_number: string; client_name: string; currency: string; outstanding: string; due_date: string; status: string; disputed: boolean; overdue_days: number } | null; facts: string[] }>;
+  workflow_examples: Record<string, { title: string; body: string; invoice?: { id: string; invoice_number: string; client_name: string; currency: string; total: string; paid: string; outstanding: string; issue_date: string; due_date: string; payment_term_type: string; partial_payment_allowed: boolean; partial_amount: string; partial_at: string | null; status: string; disputed: boolean; overdue_days: number; reminder_count: number; reminder_dates: string[]; settled_at: string | null } | null; facts: string[] }>;
 };
 
 const stops = [
@@ -23,6 +23,33 @@ const exampleKeys = ["portfolio", "verdant_outlier", "action_queue", "model_perf
 
 function format(currency: string, value: string | number) {
   return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function FallbackExample({ example, snapshotDate }: { example?: Snapshot["workflow_examples"][string]; snapshotDate: string }) {
+  if (!example) return null;
+  const invoice = example.invoice;
+  return <div className="drift-card" style={{ marginTop: 12 }}>
+    <strong>{example.title}</strong><p>{example.body}</p>
+    {invoice && <>
+      <div className="fine-print">{invoice.invoice_number} · {invoice.client_name} · {format(invoice.currency, invoice.outstanding)} outstanding · due {invoice.due_date} · {invoice.overdue_days} days overdue · {invoice.disputed ? "disputed" : invoice.status}</div>
+      <details className="fallback-invoice-detail">
+        <summary>Expand packaged invoice evidence</summary>
+        <div className="fallback-evidence-grid">
+          <span>Issue date<strong>{invoice.issue_date}</strong></span><span>Due date<strong>{invoice.due_date}</strong></span>
+          <span>Terms<strong>{invoice.payment_term_type.replaceAll("_", " ")}</strong></span>
+          <span>Total<strong>{format(invoice.currency, invoice.total)}</strong></span><span>Paid to date<strong>{format(invoice.currency, invoice.paid)}</strong></span>
+          <span>Outstanding<strong>{format(invoice.currency, invoice.outstanding)}</strong></span>
+          <span>Partial payments allowed<strong>{invoice.partial_payment_allowed ? "Yes" : "No"}</strong></span>
+          <span>Partial receipt<strong>{invoice.partial_at ? `${format(invoice.currency, invoice.partial_amount)} on ${invoice.partial_at.slice(0, 10)}` : "None recorded"}</strong></span>
+          <span>Reminder history<strong>{invoice.reminder_count} recorded</strong></span>
+          <span>Full settlement<strong>{invoice.settled_at?.slice(0, 10) || "Unsettled at snapshot"}</strong></span>
+        </div>
+        {invoice.reminder_dates.length > 0 && <div className="fine-print">Reminder dates: {invoice.reminder_dates.join(", ")} · descriptive history, not evidence that a reminder caused payment.</div>}
+        <div className="fine-print">Packaged read-only record from snapshot {snapshotDate}; live invoice timeline requires the API.</div>
+      </details>
+    </>}
+    {example.facts.length > 0 && <ul className="reasons">{example.facts.map(fact => <li key={fact}><span className="reason-mark">•</span>{fact}</li>)}</ul>}
+  </div>;
 }
 
 export default function OfflineDemoClient() {
@@ -45,16 +72,16 @@ export default function OfflineDemoClient() {
   };
   const current = stops[stop - 1];
   return <>
-    <div className="demo-banner"><strong>Read-only fallback demo</strong><span>This packaged snapshot stays available if the live API is slow or unavailable. It does not change shared demo data.</span></div>
+    <div className="demo-banner"><strong>Read-only fallback demo</strong><span>Packaged snapshot {snapshot?.snapshot_version || "late-payer-fallback-v2"} stays usable when the API is unavailable. The browser still needs to load the web app and its packaged files; airplane-mode availability is not guaranteed. This page cannot change shared demo data.</span></div>
     {error && <div className="error-box" role="alert">{error}</div>}
     {snapshot && <>
-      <section className="panel"><div className="eyebrow">Snapshot as of {snapshot.as_of}</div><h1>{snapshot.open_count} open invoices · {snapshot.overdue_count} past due · {snapshot.disputed_count} disputed</h1>
+      <section className="panel"><div className="eyebrow">Snapshot {snapshot.snapshot_version} · as of {snapshot.as_of}</div><h1>{snapshot.open_count} open invoices · {snapshot.overdue_count} past due · {snapshot.disputed_count} disputed</h1>
         <p className="subheading">Aging counts include all open balances. Totals remain separate by currency.</p>
         <div className="queue-metrics">{Object.entries(snapshot.currency_totals).map(([currency, amount]) => <span key={currency}>Open {currency} <strong>{format(currency, amount)}</strong></span>)}</div>
         <div className="aging-grid">{Object.entries(snapshot.aging_buckets).map(([key, bucket]) => <article className="aging-bucket" key={key}><span>{key.replaceAll("_", " ")}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => format(currency, amount)).join(" · ")}</small></article>)}</div>
       </section>
       <section className="panel guided-stop"><div className="eyebrow">Offline stop {stop} of 5</div><h2>{current[0]}</h2><p>{current[1]}</p>
-        {(() => { const example = snapshot.workflow_examples?.[exampleKeys[stop - 1]]; return example ? <div className="drift-card" style={{ marginTop: 12 }}><strong>{example.title}</strong><p>{example.body}</p>{example.invoice && <div className="fine-print">{example.invoice.invoice_number} · {example.invoice.client_name} · {format(example.invoice.currency, example.invoice.outstanding)} outstanding · due {example.invoice.due_date} · {example.invoice.overdue_days} days overdue · {example.invoice.disputed ? "disputed" : example.invoice.status}</div>}{example.facts.length > 0 && <ul className="reasons">{example.facts.map(fact => <li key={fact}><span className="reason-mark">•</span>{fact}</li>)}</ul>}</div> : null; })()}
+        <FallbackExample example={snapshot.workflow_examples?.[exampleKeys[stop - 1]]} snapshotDate={snapshot.as_of} />
         <nav className="tour-navigation" aria-label="Offline tour navigation"><button className="btn" disabled={stop === 1} onClick={() => selectStop(stop - 1)}>← Previous</button><div className="tour-progress">{stops.map((item, index) => <button key={item[0]} className={index + 1 === stop ? "active" : ""} onClick={() => selectStop(index + 1)} aria-label={`Offline stop ${index + 1}`}>{index + 1}</button>)}</div><button className="btn" disabled={stop === stops.length} onClick={() => selectStop(stop + 1)}>Next →</button></nav>
       </section>
       <section className="panel"><div className="panel-title">Sample open invoices</div><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Client</th><th>Balance</th><th>Due</th><th>Status</th></tr></thead><tbody>{snapshot.sample.map(row => <tr key={row.id}><td>{row.invoice_number}</td><td>{row.client_name}</td><td>{format(row.currency, row.outstanding)}</td><td>{row.due_date}</td><td>{row.disputed ? "Disputed · unforecastable" : row.status}</td></tr>)}</tbody></table></div><p className="fine-print">Generated from {snapshot.generated_from}. Forecasts and mutations require the live API.</p></section>

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app import main
 from app import security
 from app.config import Settings
-from app.models import AIAudit, Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
+from app.models import AIAudit, Client, CollectionReview, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session, session_claims
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
@@ -742,6 +742,48 @@ def test_opening_skipped_invoice_does_not_create_replacement_before_undo(api, mo
     assert undone.json()["state"] == "proposed"
 
 
+def test_collection_review_survives_reload_and_reopen_is_audited(api):
+    client, Session = api
+    with Session() as db:
+        owner = Client(id="collection-owner", display_name="Collection Client", source="demo", drift={})
+        invoice = _invoice("collection-persist-invoice", owner.id)
+        invoice.due_date = date.today() - timedelta(days=100)
+        db.add_all([owner, invoice])
+        db.commit()
+
+    saved = client.patch("/invoices/collection-persist-invoice/collection-review", json={
+        "owner": "A. Reviewer", "notes": "Customer requested a corrected statement.",
+        "follow_up_date": (date.today() + timedelta(days=3)).isoformat(),
+        "resolution_status": "resolved",
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["owner"] == "A. Reviewer"
+    with Session() as db:
+        persisted = db.get(CollectionReview, "collection-persist-invoice")
+        assert persisted is not None
+        assert persisted.notes == "Customer requested a corrected statement."
+        assert persisted.resolution_status == "resolved"
+
+    reopened_record = client.get("/invoices/collection-persist-invoice")
+    assert reopened_record.status_code == 200, reopened_record.text
+    timeline = reopened_record.json()["timeline"]
+    assert any("owner unassigned → A. Reviewer" in (event["detail"] or "") for event in timeline)
+    assert any("Customer requested a corrected statement." in (event["detail"] or "") for event in timeline)
+
+    reopened = client.patch("/invoices/collection-persist-invoice/collection-review", json={
+        "owner": "A. Reviewer", "notes": "Customer requested a corrected statement.",
+        "follow_up_date": (date.today() + timedelta(days=3)).isoformat(),
+        "resolution_status": "open",
+    })
+    assert reopened.status_code == 200
+    assert reopened.json()["resolution_status"] == "open"
+    with Session() as db:
+        review = db.get(CollectionReview, "collection-persist-invoice")
+        assert review is not None and review.resolution_status == "open"
+        transitions = db.query(AIAudit).filter_by(invoice_id="collection-persist-invoice", kind="collection_review").count()
+        assert transitions == 2
+
+
 def test_demo_time_travel_validates_sixty_day_window_and_updates_due_math(api):
     client, Session = api
     with Session() as db:
@@ -769,7 +811,9 @@ def test_client_what_if_changes_term_and_partial_payment_features(api, monkeypat
     def fake_forecast(db, invoice, today=None, persist=True, scenario=None):
         observed.append(scenario)
         return {"quantiles": {"p50": {"date": "2026-12-01", "days": 21}},
-                "probabilities": {"14d": 0.32}, "model": "test", "limited_history": True}
+                "coverage_interval": {"lower_date": "2026-11-21", "upper_date": "2026-12-11", "target_coverage": 0.8, "method": "test interval"},
+                "probabilities": {"14d": 0.32, "30d": 0.45, "60d": 0.7, "90d": 0.85},
+                "model": "test", "limited_history": True}
     monkeypatch.setattr(main, "forecast_invoice", fake_forecast)
     with Session() as db:
         owner = Client(id="what-if-owner", display_name="What If Client", source="demo", drift={})

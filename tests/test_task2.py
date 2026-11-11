@@ -197,7 +197,10 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert client.get('/invoices?statuses=PAID').json()['count'] == 0
     assert client.get(f'/invoices?due_from={today.isoformat()}').json()['count'] == 16
     rows = list(csv.reader(io.StringIO(client.get('/exports/invoices.csv').text)))
-    assert len(rows) == 32 and rows[0][-3:] == ['p10','p50','p90']
+    assert len(rows) == 36
+    assert rows[0] == ['Snapshot as of', page['as_of']]
+    assert rows[1][0] == 'Currency scope' and rows[2][0] == 'Filters' and rows[3] == []
+    assert rows[4][-3:] == ['p10','p50','p90']
     first = client.get('/clients')
     assert first.headers['cache-control'] == 'private, max-age=30, stale-while-revalidate=120'
     assert first.headers['x-content-type-options'] == 'nosniff'
@@ -216,7 +219,7 @@ def test_pagination_filters_export_and_cache_contracts(api):
     assert all_page['currency_totals']['USD'] == '3000.00'
     assert client.get('/invoices?view=open').json()['count'] == 30
     paid_export = list(csv.reader(io.StringIO(client.get('/exports/invoices.csv?view=paid').text)))
-    assert paid_export[1][-3:] == ['', '', '']
+    assert paid_export[5][-3:] == ['', '', '']
 
 
 def test_seeded_read_budgets_snapshot_restore_and_no_scoring(api, monkeypatch, request):

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { clearReads } from "../lib/api";
+import { API_WRITE_TIMEOUT_MS, clearReads } from "../lib/api";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -15,7 +15,7 @@ export default function LoginPage() {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setError(""); setBusy(true);
     try {
-      const response = await fetch("/api/auth/login", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+      const response = await fetch("/api/auth/login", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(API_WRITE_TIMEOUT_MS), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "Login failed.");
       clearReads(true);

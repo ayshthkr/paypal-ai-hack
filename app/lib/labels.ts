@@ -16,6 +16,7 @@ export function decisionLabel(action: string, status?: string, disputed = false)
 
 export function statusLabel(status: string, disputed = false): string {
   if (disputed) return "Disputed";
+  if (status === "PARTIALLY_PAID") return "Partially paid";
   return status.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, character => character.toUpperCase());
 }
 

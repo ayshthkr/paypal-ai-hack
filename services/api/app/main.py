@@ -568,8 +568,8 @@ def _client_history_facts(db: Session, client_id: str) -> dict:
     }
 
 
-def _client_stories(records: list[dict], as_of: date, invoice_numbers: dict[str, str]) -> list[str]:
-    stories: list[str] = []
+def _client_stories(records: list[dict], as_of: date, invoice_numbers: dict[str, str]) -> list[dict]:
+    stories: list[dict] = []
     cutoff = as_of - timedelta(days=180)
     older_terms = Counter(row.get("payment_term_type") for row in records
                           if row.get("issue_date") and row["issue_date"] < cutoff and row.get("payment_term_type"))
@@ -584,7 +584,9 @@ def _client_stories(records: list[dict], as_of: date, invoice_numbers: dict[str,
                                  and row.get("payment_term_type") == current)
             previous_label = previous.replace("_", " ").title()
             current_label = current.replace("_", " ").title()
-            stories.append(f"Payment terms shifted from {previous_label} to {current_label} for invoices issued from {effective_date.isoformat()}.")
+            representative = next(row for row in records if row.get("issue_date") and row["issue_date"] >= cutoff
+                                  and row.get("payment_term_type") == current)
+            stories.append({"key": "terms_shift", "text": f"Payment terms shifted from {previous_label} to {current_label} for invoices issued from {effective_date.isoformat()}; this is a historical association, not a causal effect.", "invoice_id": representative["id"], "invoice_number": invoice_numbers.get(representative["id"], "invoice")})
 
     for row in records:
         if not row.get("settled_at"):
@@ -594,12 +596,12 @@ def _client_stories(records: list[dict], as_of: date, invoice_numbers: dict[str,
         firm_sent = max((sent for sent in firm_events if sent and sent < row["settled_at"]), default=None)
         if firm_sent:
             days_after = (row["settled_at"] - firm_sent).days
-            stories.append(f"{invoice_numbers.get(row['id'], 'An invoice')} settled {days_after} days after its recorded firm reminder.")
+            stories.append({"key": "firm_reminder", "text": f"{invoice_numbers.get(row['id'], 'An invoice')} settled {days_after} days after its recorded firm reminder; sequence does not establish causality.", "invoice_id": row["id"], "invoice_number": invoice_numbers.get(row["id"], "Invoice")})
             break
 
     for row in records:
         if row.get("disputed") and Decimal(str(row.get("outstanding", 0))) > 0:
-            stories.append(f"{invoice_numbers.get(row['id'], 'An open invoice')} has an active dispute; reminders are paused while it is reviewed.")
+            stories.append({"key": "dispute", "text": f"{invoice_numbers.get(row['id'], 'An open invoice')} has an active dispute; reminders are paused while it is reviewed.", "invoice_id": row["id"], "invoice_number": invoice_numbers.get(row["id"], "Invoice")})
             break
     return stories[:3]
 
@@ -845,6 +847,38 @@ def _invoice_timeline(db: Session, invoice: Invoice) -> list[dict]:
             event_type = event.event_type.upper()
             label = "Sent by PayPal" if "SENT" in event_type else event.event_type.replace("INVOICING.INVOICE.", "").replace("_", " ").title()
             add(label, event.occurred_at or event.received_at)
+    audits = list(db.scalars(select(AIAudit).where(
+        AIAudit.invoice_id == invoice.id,
+        AIAudit.kind.in_(["draft_edit", "reply_triage", "collection_review", "action_transition"]),
+    ).order_by(AIAudit.created_at.asc())).all())
+    for audit in audits:
+        actor = audit.facts.get("actor") or "system"
+        channel = audit.facts.get("channel") or "web"
+        if audit.kind == "draft_edit":
+            before_text = audit.facts.get("before_text", "")
+            after_text = audit.output.get("text", "")
+            detail = f"Internal note edited by {actor} via {channel}; saved text changed from {before_text!r} to {after_text!r}"
+            add("Internal collection note changed", audit.created_at, detail)
+        elif audit.kind == "reply_triage":
+            state = audit.output.get("state", "preview")
+            classification = audit.output.get("classification", "unknown").replace("_", " ")
+            promised = audit.output.get("promised_payment_date")
+            detail = f"{state} · {classification}" + (f" · promised {promised}" if promised else "") + f" · actor {actor} · channel {channel}"
+            add("Client reply reviewed", audit.created_at, detail)
+        elif audit.kind == "collection_review":
+            before = audit.facts.get("before", {})
+            after = audit.output.get("after", {})
+            detail = (f"{before.get('resolution_status', 'open')} → {after.get('resolution_status', 'open')} · "
+                      f"owner {before.get('owner', 'unassigned') or 'unassigned'} → {after.get('owner', 'unassigned') or 'unassigned'} · "
+                      f"follow-up {after.get('follow_up_date') or 'none'} · actor {actor} · channel {channel} · "
+                      f"notes changed: {before.get('notes', '')!r} → {after.get('notes', '')!r}")
+            add("Collections review updated", audit.created_at, detail)
+        else:
+            before_state = audit.facts.get("before_state", "unknown")
+            after_state = audit.output.get("state", "unknown")
+            action = audit.output.get("action", "recommendation")
+            add("Action state changed", audit.created_at,
+                f"{action} · {before_state} → {after_state} · actor {actor} · channel {channel}")
     events.sort(key=lambda item: (item["at"], item["kind"]))
     return events
 
@@ -992,6 +1026,7 @@ def _invoice_dict(
             "promised_payment_date": row.promised_payment_date.isoformat() if row.promised_payment_date else None,
             "classifier": row.classifier, "state": row.state,
             "created_at": row.created_at.isoformat(),
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
         } for row in triages]
     if include_detail and include_timeline:
         summary["outcome"] = _paid_outcome(db, invoice)
@@ -1638,6 +1673,7 @@ def invoices(
         )[:5]
         selected = set(top_clients)
         scenario_cash: dict[tuple[str, str], dict] = {}
+        scenario_baseline: dict[str, Decimal] = {}
         scenario_invoice_count = 0
         for row in late_rows:
             if row.client_id not in selected:
@@ -1650,16 +1686,37 @@ def invoices(
             assumed_date = min(today + timedelta(days=13), max(today, predicted))
             week_start = assumed_date - timedelta(days=assumed_date.weekday())
             key = (week_start.isoformat(), row.currency)
-            entry = scenario_cash.setdefault(key, {"week_start": key[0], "currency": row.currency, "amount": Decimal("0"), "invoice_count": 0})
+            entry = scenario_cash.setdefault(key, {
+                "week_start": key[0], "currency": row.currency, "amount": Decimal("0"),
+                "invoice_count": 0, "client_contributions": {},
+            })
             entry["amount"] += Decimal(row.outstanding)
+            p14 = Decimal(str((forecast.get("probabilities") or {}).get("14d", 0)))
+            scenario_baseline[row.currency] = scenario_baseline.get(row.currency, Decimal("0")) + Decimal(row.outstanding) * p14
             entry["invoice_count"] += 1
+            client_contribution = entry["client_contributions"].setdefault(row.client_id, {
+                "client_id": row.client_id, "client_name": row.client.display_name,
+                "invoice_count": 0, "assumed_gross": Decimal("0"),
+            })
+            client_contribution["invoice_count"] += 1
+            client_contribution["assumed_gross"] += Decimal(row.outstanding)
         top_late_scenario = {
             "assumption": "All currently overdue invoices for the five clients with the most late invoices settle within the next 14 days; dates are illustrative, not a prediction or payment promise.",
+            "selection_rule": "Rank clients by count of currently overdue open invoices (highest first); ties are ordered by client name A–Z.",
             "client_count": len(top_clients),
+            "baseline_by_currency": [{"currency": currency, "amount": str(amount)}
+                                     for currency, amount in sorted(scenario_baseline.items())],
             "clients": [{"id": client_id, "name": clients_by_id[client_id].display_name,
                          "late_invoice_count": late_client_counts[client_id]} for client_id in top_clients],
             "invoice_count": scenario_invoice_count,
-            "cash_by_week": [{**entry, "amount": str(entry["amount"])} for key, entry in sorted(scenario_cash.items())],
+            "cash_by_week": [{
+                **entry,
+                "amount": str(entry["amount"]),
+                "client_contributions": [{
+                    **client,
+                    "assumed_gross": str(client["assumed_gross"]),
+                } for client in sorted(entry["client_contributions"].values(), key=lambda item: item["client_name"].casefold())],
+            } for key, entry in sorted(scenario_cash.items())],
         }
         return aging, expected_cash, cash_horizon, top_late_scenario
 
@@ -1680,7 +1737,7 @@ def invoices(
         slim["drift"] = {"signal": item["drift"].get("signal"), "signal_type":item["drift"].get("signal_type")}
         slim["decision"] = {key: item["decision"].get(key) for key in ("action", "expected_cash_gain", "expected_cash_gain_currency", "daily_rank")}
         forecast = item["forecast"]
-        slim["forecast"] = {key: forecast.get(key) for key in ("quantiles", "model", "limited_history", "display_label")} if forecast else None
+        slim["forecast"] = {key: forecast.get(key) for key in ("quantiles", "model", "limited_history", "display_label", "scored_at")} if forecast else None
         if forecast:
             slim["forecast"]["probabilities"] = {"14d": forecast.get("probabilities", {}).get("14d")}
         slim_items.append(slim)
@@ -1711,6 +1768,7 @@ def invoices(
                                   for client in clients_in_scope if client.id in drifting_ids],
                                  key=lambda row: -row["drift"].get("severity_score", 0))[:5],
         "as_of": _today(db, public_source).isoformat(), "as_of_max": as_of_max.isoformat(),
+        "model_timestamp": max((str(item["forecast"]["scored_at"]) for item in page_items if item.get("forecast") and item["forecast"].get("scored_at")), default=None),
     }
 
 
@@ -1765,6 +1823,7 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
             queue_item["client_email"] = item.get("client_email") if user and invoice.source == "paypal" else None
             items.append(queue_item)
     collections_review = []
+    collections_closed = []
     invoice_ids = [invoice.id for invoice in rows]
     reviews_by_invoice = {
         review.invoice_id: review for review in db.scalars(
@@ -1776,15 +1835,13 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
         if not _payable(invoice) or days_late < 90:
             continue
         review = reviews_by_invoice.get(invoice.id)
-        if review and review.resolution_status in {"resolved", "written_off"}:
-            continue
         summary = _invoice_dict(
             db, invoice, include_detail=False, include_timeline=False,
             forecast_cache=forecast_cache, create_recommendation=False,
         )
         if summary["decision"]["action"] != "review_for_writeoff_or_collections":
             continue
-        collections_review.append({
+        review_item = {
             "id": invoice.id, "invoice_number": invoice.invoice_number,
             "client_name": invoice.client.display_name, "client_id": invoice.client_id,
             "source": invoice.source, "currency": invoice.currency,
@@ -1798,25 +1855,46 @@ def action_queue(request: Request, db: Session = Depends(get_db)) -> dict:
                 "notes": review.notes if review else "",
                 "follow_up_date": review.follow_up_date.isoformat() if review and review.follow_up_date else None,
                 "resolution_status": review.resolution_status if review else "open",
+                "updated_at": review.updated_at.isoformat() if review else None,
             },
-        })
+        }
+        if review and review.resolution_status in {"resolved", "written_off"}:
+            collections_closed.append(review_item)
+        else:
+            collections_review.append(review_item)
     collections_review.sort(key=lambda row: (row["currency"], -row["days_late"], row["due_date"], row["invoice_number"]))
+    collections_closed.sort(key=lambda row: ((row["collection_review"].get("updated_at") or ""), row["invoice_number"]), reverse=True)
     collections_totals: dict[str, Decimal] = {}
     for row in collections_review:
         collections_totals[row["currency"]] = collections_totals.get(row["currency"], Decimal("0")) + Decimal(row["outstanding"])
     db.commit()
-    skipped = list(db.scalars(select(Recommendation).join(Invoice).where(
+    skipped = list(db.scalars(select(Recommendation).options(
+        joinedload(Recommendation.invoice).joinedload(Invoice.client),
+    ).join(Invoice).where(
         Recommendation.state == "skipped", Invoice.source == scope if scope else text("1=1"),
         or_(*[and_(Invoice.source == source, Recommendation.policy_date == _today(db, source)) for source in ([scope] if scope else ["demo", "paypal"])]),
     )).all())
+    replacement_by_invoice = {}
+    if skipped:
+        replacements = db.scalars(select(Recommendation).where(
+            Recommendation.invoice_id.in_([row.invoice_id for row in skipped]),
+            Recommendation.state.in_(["proposed", "sending", "sent", "applied"]),
+        ).order_by(Recommendation.created_at.desc())).all()
+        for replacement in replacements:
+            replacement_by_invoice.setdefault(replacement.invoice_id, replacement)
     metric_rows = list(db.scalars(select(AIAudit).where(AIAudit.kind == "review_time").order_by(AIAudit.created_at.desc())).all())
     measured = [int(row.output["review_seconds"]) for row in metric_rows
                 if row.facts.get("source") == (scope or "paypal") and row.output.get("review_seconds")][:200]
     return {"items": items, "count": len(items), "pending_count": len(items), "skipped_count": len(skipped),
-            "skipped": [{"id": row.id, "invoice_id": row.invoice_id} for row in skipped], "daily_cap": DAILY_SUGGESTION_CAP,
+            "skipped": [{"id": row.id, "invoice_id": row.invoice_id,
+                         "invoice_number": row.invoice.invoice_number,
+                         "client_name": row.invoice.client.display_name,
+                         "replacement_state": replacement_by_invoice[row.invoice_id].state if row.invoice_id in replacement_by_invoice else None,
+                         "replacement_id": replacement_by_invoice[row.invoice_id].id if row.invoice_id in replacement_by_invoice else None} for row in skipped], "daily_cap": DAILY_SUGGESTION_CAP,
             "review_time": {"completed_count": len(measured), "median_seconds": statistics.median(measured) if measured else None,
                             "sample_window": "latest 200 completed queue actions"},
-            "collections_review": collections_review, "collections_totals": {key: str(value) for key, value in sorted(collections_totals.items())},
+            "collections_review": collections_review, "collections_closed": collections_closed,
+            "collections_totals": {key: str(value) for key, value in sorted(collections_totals.items())},
             "as_of": _today(db, scope).isoformat() if scope else _today(db).isoformat(),
             "synthetic_demo": _is_demo_source(scope)}
 
@@ -1874,11 +1952,26 @@ def triage_invoice_reply(invoice_id: str, payload: ReplyInput, request: Request,
         raise HTTPException(status_code=401, detail="Operator login required to record PayPal client replies.")
     classification, classifier = classify_reply(reply)
     promised_date = extract_promised_date(reply, _today(db, invoice.source)) if classification == "promise_to_pay" else None
+    reviewed_at = datetime.now(timezone.utc)
+    previous_pending = db.scalars(select(ReplyTriage).where(
+        ReplyTriage.invoice_id == invoice.id, ReplyTriage.state == "pending",
+    )).all()
+    for previous in previous_pending:
+        previous.state = "superseded"
+        previous.reviewed_at = reviewed_at
+        db.add(AIAudit(kind="reply_triage", invoice_id=invoice.id,
+                       facts={"actor": operator or "synthetic demo operator", "channel": "operator web UI", "reply_text": previous.reply_text},
+                       output={"state": "superseded", "classification": previous.classification,
+                               "promised_payment_date": previous.promised_payment_date.isoformat() if previous.promised_payment_date else None}))
     triage = ReplyTriage(
         invoice_id=invoice.id, reply_text=reply, classification=classification,
         promised_payment_date=promised_date, classifier=classifier, state="pending",
     )
     db.add(triage)
+    db.add(AIAudit(kind="reply_triage", invoice_id=invoice.id,
+                   facts={"actor": operator or "synthetic demo operator", "channel": "operator web UI", "reply_text": reply},
+                   output={"state": "pending", "classification": classification,
+                           "promised_payment_date": promised_date.isoformat() if promised_date else None}))
     db.commit()
     db.refresh(triage)
     return {
@@ -1908,6 +2001,10 @@ def apply_reply_triage(invoice_id: str, triage_id: str, payload: ReplyReviewInpu
         if "promised_payment_date" in payload.model_fields_set
         else triage.promised_payment_date
     )
+    if payload.classification == "promise_to_pay" and promised_date is None:
+        raise HTTPException(status_code=422, detail="Correct the promised payment date before approving this reply.")
+    if payload.classification == "promise_to_pay" and promised_date < _today(db, invoice.source):
+        raise HTTPException(status_code=422, detail="The promised payment date is in the past. Correct it before approving.")
     triage.classification = payload.classification
     triage.promised_payment_date = promised_date if payload.classification == "promise_to_pay" else None
     triage.state = "applied"
@@ -1919,6 +2016,10 @@ def apply_reply_triage(invoice_id: str, triage_id: str, payload: ReplyReviewInpu
     elif payload.classification == "promise_to_pay" and invoice.promised_payment_date != promised_date:
         invoice.promised_payment_date = promised_date
         invoice.material_version += 1
+    db.add(AIAudit(kind="reply_triage", invoice_id=invoice.id,
+                   facts={"actor": session_user(request, db=db) or "synthetic demo operator", "channel": "operator web UI", "reply_text": triage.reply_text},
+                   output={"state": "applied", "classification": triage.classification,
+                           "promised_payment_date": triage.promised_payment_date.isoformat() if triage.promised_payment_date else None}))
     db.commit()
     return {"id": triage.id, "state": triage.state, "classification": triage.classification,
             "promised_payment_date": triage.promised_payment_date.isoformat() if triage.promised_payment_date else None,
@@ -1953,6 +2054,10 @@ def dismiss_reply_triage(invoice_id: str, triage_id: str, request: Request, db: 
         raise HTTPException(status_code=409, detail="This reply preview has already been reviewed.")
     triage.state = "dismissed"
     triage.reviewed_at = datetime.now(timezone.utc)
+    db.add(AIAudit(kind="reply_triage", invoice_id=invoice.id,
+                   facts={"actor": session_user(request, db=db) or "synthetic demo operator", "channel": "operator web UI", "reply_text": triage.reply_text},
+                   output={"state": "dismissed", "classification": triage.classification,
+                           "promised_payment_date": triage.promised_payment_date.isoformat() if triage.promised_payment_date else None}))
     db.commit()
     return {"id": triage.id, "state": triage.state, "note": "Reply preview dismissed without changing invoice state."}
 
@@ -1978,11 +2083,20 @@ def update_collection_review(invoice_id: str, payload: CollectionReviewInput, re
     if review is None:
         review = CollectionReview(invoice_id=invoice.id)
         db.add(review)
+    before = {"owner": review.owner, "notes": review.notes,
+              "follow_up_date": review.follow_up_date.isoformat() if review.follow_up_date else None,
+              "resolution_status": review.resolution_status}
     review.owner = payload.owner.strip()
     review.notes = payload.notes.strip()
     review.follow_up_date = payload.follow_up_date
     review.resolution_status = payload.resolution_status
     review.updated_at = datetime.now(timezone.utc)
+    actor = session_user(request, db=db) or "synthetic demo operator"
+    db.add(AIAudit(kind="collection_review", invoice_id=invoice.id,
+                   facts={"actor": actor, "channel": "operator web UI", "before": before},
+                   output={"after": {"owner": review.owner, "notes": review.notes,
+                                     "follow_up_date": review.follow_up_date.isoformat() if review.follow_up_date else None,
+                                     "resolution_status": review.resolution_status}}))
     db.commit()
     return {"invoice_id": invoice.id, "owner": review.owner, "notes": review.notes,
             "follow_up_date": review.follow_up_date.isoformat() if review.follow_up_date else None,
@@ -2113,7 +2227,9 @@ def client_terms_what_if(client_id: str, payload: WhatIfInput, request: Request,
         }
         forecast = forecast_invoice(db, invoice, today=as_of, persist=False, scenario=scenario)
         return {"payment_term_type": term, "partial_payment_allowed": partial_allowed,
-                "p50": forecast["quantiles"]["p50"], "probabilities": forecast["probabilities"],
+                "issue_date": scenario["issue_date"].isoformat(), "due_date": scenario["due_date"].isoformat(),
+                "p50": forecast["quantiles"]["p50"], "quantiles": forecast["quantiles"],
+                "coverage_interval": forecast["coverage_interval"], "probabilities": forecast["probabilities"],
                 "model": forecast["model"], "limited_history": forecast["limited_history"]}
 
     baseline = score("NET_30", False)
@@ -2121,6 +2237,7 @@ def client_terms_what_if(client_id: str, payload: WhatIfInput, request: Request,
     partial_scenario = score(payload.payment_term_type, True)
     return {"as_of": as_of.isoformat(), "client_id": client.id, "client_name": client.display_name,
             "currency": currency, "representative_amount": str(Decimal(str(amount)).quantize(Decimal("0.01"))),
+            "representative_issue_date": as_of.isoformat(), "baseline_term": "NET_30",
             "baseline": baseline, "with_terms": term_scenario, "with_partial_payment": partial_scenario}
 
 
@@ -2220,6 +2337,7 @@ def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
     forecast_cache: dict[str, dict] = {}
     totals: dict[str, Decimal] = {}
     invoice_counts: dict[str, int] = {}
+    invoice_ids_by_currency: dict[str, list[str]] = {}
     candidates = []
     today = _today(db, public_source if not user else None)
     week_end = today + timedelta(days=6 - today.weekday())
@@ -2237,6 +2355,7 @@ def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
         if weekly_probability > 0:
             totals[row.currency] = totals.get(row.currency, Decimal("0")) + Decimal(item["outstanding"]) * weekly_probability
             invoice_counts[row.currency] = invoice_counts.get(row.currency, 0) + 1
+            invoice_ids_by_currency.setdefault(row.currency, []).append(row.id)
         if item["decision"]["action"] in {"friendly", "firm", "offer_partial_payment"}:
             candidates.append({
                 "invoice_id": row.id, "invoice_number": row.invoice_number, "client_id": row.client_id,
@@ -2255,7 +2374,8 @@ def morning_brief(request: Request, db: Session = Depends(get_db)) -> dict:
     return {
         "as_of": today.isoformat(), "week_end": week_end.isoformat(),
         "expected_cash_this_week": [
-            {"currency": currency, "amount": str(amount), "invoice_count": invoice_counts[currency]}
+            {"currency": currency, "amount": str(amount), "invoice_count": invoice_counts[currency],
+             "invoice_ids": invoice_ids_by_currency.get(currency, [])}
             for currency, amount in sorted(totals.items())
         ],
         "top_candidates": candidates[:3],
@@ -2274,6 +2394,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
                             "status": row.status, "currency":row.currency, "outstanding":str(row.outstanding),
                             "due_date":row.due_date.isoformat()} for row in rows]}
     def grounded(value):
+        value["as_of"] = facts["as_of"]
         value["grounded_in"] = f"{len(rows)} scoped invoice facts as of {facts['as_of']}; currencies are not converted"
         db.add(AIAudit(kind="answer", facts={**facts, "question":question, "result_evidence":value.get("data")}, output=value))
         db.commit()
@@ -2288,15 +2409,19 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
         balances: dict[str, Decimal] = {}
         counts: dict[str, int] = {}
         names: dict[str, str] = {}
+        invoice_ids: dict[str, list[str]] = {}
         for row in rows:
             if row.currency == currency and _payable(row):
                 balances[row.client_id] = balances.get(row.client_id, Decimal("0")) + row.outstanding
                 counts[row.client_id] = counts.get(row.client_id, 0) + 1
                 names[row.client_id] = row.client.display_name
+                invoice_ids.setdefault(row.client_id, []).append(row.id)
         winner = max(balances, key=balances.get) if balances else None
         data = None if winner is None else {
             "client_id": winner, "client_name": names[winner], "currency": currency,
             "outstanding": str(balances[winner]), "open_invoice_count": counts[winner],
+            "invoices": [{"id": row.id, "invoice_number": row.invoice_number}
+                         for row in rows if row.id in set(invoice_ids[winner])],
         }
         answer = f"{data['client_name']} has the largest open {currency} balance: {currency} {Decimal(data['outstanding']):,.2f} across {data['open_invoice_count']} invoices." if data else f"There are no open {currency} balances."
         return grounded({"intent": "largest_client_balance", "answer": answer, "data": data})
@@ -2309,7 +2434,9 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
             if signal.get("signal_type") in {"paying_later", "later_than_usual", "gone_quiet"}:
                 signals.append({"client_id": client.id, "client_name": client.display_name,
                                 "signal_type": signal["signal_type"], "message": signal["message"],
-                                "severity_score": signal.get("severity_score", 0)})
+                                "severity_score": signal.get("severity_score", 0),
+                                "invoices": [{"id": row.id, "invoice_number": row.invoice_number}
+                                             for row in rows if row.client_id == client.id and _payable(row)]})
         signals.sort(key=lambda item: (-float(item["severity_score"]), item["client_name"].casefold()))
         names = ", ".join(item["client_name"] for item in signals[:5])
         answer = f"Clients with timing signals: {names}." if names else "No client has a current delay or cadence signal."
@@ -2318,6 +2445,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
     if re.search(r"\b(cash|payments?|settlements?)\b", lowered) and re.search(r"\b(this week|next 7 days)\b", lowered):
         totals: dict[str, Decimal] = {}
         counts: dict[str, int] = {}
+        invoice_ids_by_currency: dict[str, list[str]] = {}
         for row in rows:
             if not _payable(row):
                 continue
@@ -2335,7 +2463,11 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
             if probability > 0:
                 totals[row.currency] = totals.get(row.currency, Decimal("0")) + row.outstanding * probability
                 counts[row.currency] = counts.get(row.currency, 0) + 1
-        data = [{"currency": key, "amount": str(value), "invoice_count": counts[key]} for key, value in sorted(totals.items())]
+                invoice_ids_by_currency.setdefault(row.currency, []).append(row.id)
+        data = [{"currency": key, "amount": str(value), "invoice_count": counts[key],
+                 "invoices": [{"id": row.id, "invoice_number": row.invoice_number}
+                              for row in rows if row.id in set(invoice_ids_by_currency.get(key, []))]}
+                for key, value in sorted(totals.items())]
         window = "this calendar week" if "this week" in lowered else "the next 7 days"
         answer = f"Probability-weighted expected cash for {window}: " + (", ".join(f"{item['currency']} {Decimal(item['amount']):,.2f}" for item in data) if data else "none.")
         return grounded({"intent": "expected_cash_this_week", "answer": answer, "data": data})
@@ -2344,7 +2476,7 @@ def ask_receivables(payload: AskInput, request: Request, db: Session = Depends(g
         overdue = [row for row in rows if _payable(row) and row.due_date < _today(db, row.source) and (not currency or row.currency == currency)]
         overdue.sort(key=lambda row: (-row.outstanding, row.due_date))
         data = [{"invoice_id": row.id, "invoice_number": row.invoice_number, "client_name": row.client.display_name,
-                 "currency": row.currency, "outstanding": str(row.outstanding), "due_date": row.due_date.isoformat()}
+                 "client_id": row.client_id, "currency": row.currency, "outstanding": str(row.outstanding), "due_date": row.due_date.isoformat()}
                 for row in overdue[:5]]
         answer = f"There are {len(overdue)} overdue open invoices" + (f" in {currency}" if currency else "") + "."
         return grounded({"intent": "overdue_invoices", "answer": answer, "data": data})
@@ -2371,6 +2503,7 @@ def sync_status(request: Request, db: Session = Depends(get_db)) -> dict:
     webhook_failures = db.scalar(select(func.count(InvoiceEvent.id)).where(
         InvoiceEvent.verified.is_(True), InvoiceEvent.processing_status.in_(["retry", "verification_retry"]),
     )) or 0
+    recent_webhooks = list(db.scalars(select(InvoiceEvent).order_by(InvoiceEvent.received_at.desc()).limit(8)).all())
     return {
         "last_run": ({
             "started_at": latest.started_at.isoformat(), "completed_at": latest.completed_at.isoformat() if latest.completed_at else None,
@@ -2379,6 +2512,10 @@ def sync_status(request: Request, db: Session = Depends(get_db)) -> dict:
             "errors": (latest.errors or [])[:5],
         } if latest else None),
         "webhook_failures": int(webhook_failures),
+        "webhook_events": [{"event_type": row.event_type, "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+                            "received_at": row.received_at.isoformat(), "verified": row.verified,
+                            "processing_status": row.processing_status, "failure_reason": row.failure_reason,
+                            "invoice_id": row.invoice_id} for row in recent_webhooks],
     }
 
 
@@ -2595,8 +2732,14 @@ def skip_recommendation(recommendation_id: str, request: Request, db: Session = 
     _authorize_invoice(request, invoice, db)
     if recommendation.state != "proposed":
         raise HTTPException(status_code=409, detail=f"Recommendation is already {recommendation.state}.")
+    before_state = recommendation.state
     recommendation.state = "skipped"
     recommendation.policy_date = recommendation.policy_date or _today(db, invoice.source)
+    db.add(AIAudit(kind="action_transition", invoice_id=invoice.id,
+                   facts={"actor": session_user(request, db=db) or "synthetic demo operator",
+                          "channel": "operator web UI", "before_state": before_state},
+                   output={"state": "skipped", "action": recommendation.action,
+                           "recommendation_id": recommendation.id}))
     _update_policy_outcomes(db, invoice.id, {"status": "skipped", "action": recommendation.action,
                                             "recorded_at": datetime.now(timezone.utc).isoformat()})
     db.commit()
@@ -2886,6 +3029,19 @@ def export_invoices(request: Request, q: str | None = None, view: str = "open", 
     def rows():
         buffer = io.StringIO()
         writer = csv.writer(buffer)
+        filters = {
+            "search": q or "all", "view": view, "client_id": client_id or "all",
+            "statuses": statuses or "all", "due_from": due_from.isoformat() if due_from else "all",
+            "due_to": due_to.isoformat() if due_to else "all", "age_bucket": age_bucket or "all",
+            "settlement_week": predicted_week.isoformat() if predicted_week else "all",
+            "action_only": action_only, "drifting_only": drifting_only,
+        }
+        writer.writerow(["Snapshot as of", result["as_of"]])
+        writer.writerow(["Currency scope", "All source currencies; values are not converted"])
+        filters["sort"] = sort
+        filters["direction"] = direction
+        writer.writerow(["Filters", json.dumps(filters, sort_keys=True, ensure_ascii=False)])
+        writer.writerow([])
         writer.writerow(["Invoice", "Client", "Status", "Due", "Currency", "Outstanding", "p10", "p50", "p90"])
         yield buffer.getvalue()
         for item in result["items"]:
@@ -2909,7 +3065,11 @@ def save_draft(recommendation_id: str, payload: SendInput, request: Request, db:
     _authorize_invoice(request, invoice, db)
     if row.state not in {"proposed", "failed"} or row.invoice_version != invoice.material_version:
         raise HTTPException(409, "Recommendation is no longer editable.")
+    before_text = row.edited_text
     row.edited_text = payload.text
+    db.add(AIAudit(kind="draft_edit", invoice_id=invoice.id,
+                   facts={"actor": session_user(request, db=db) or "synthetic demo operator", "channel": "operator web UI", "before_text": before_text},
+                   output={"text": payload.text, "recommendation_id": row.id}))
     db.commit()
     return {"saved": True}
 
@@ -2929,6 +3089,11 @@ def undo_skip(recommendation_id: str, request: Request, db: Session = Depends(ge
         raise HTTPException(409, "A replacement action already exists; review the invoice.")
     row.state = "proposed"
     row.policy_date = _today(db, invoice.source)
+    db.add(AIAudit(kind="action_transition", invoice_id=invoice.id,
+                   facts={"actor": session_user(request, db=db) or "synthetic demo operator",
+                          "channel": "operator web UI", "before_state": "skipped"},
+                   output={"state": "proposed", "action": row.action,
+                           "recommendation_id": row.id}))
     skipped_logs = db.scalars(select(PolicyDecisionLog).where(PolicyDecisionLog.invoice_id == invoice.id,
         PolicyDecisionLog.decision_date == row.policy_date, PolicyDecisionLog.outcome["status"].as_string() == "skipped")).all()
     for entry in skipped_logs:

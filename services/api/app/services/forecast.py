@@ -287,7 +287,9 @@ def forecast_invoice(
     if existing:
         curve = existing.curve
         quantiles = existing.quantiles
-        probabilities = {key: value for key, value in existing.probabilities.items() if key in {"7d", "14d", "30d"}}
+        probabilities = {key: value for key, value in existing.probabilities.items() if key in {"7d", "14d", "30d", "60d", "90d"}}
+        for day in (60, 90):
+            probabilities.setdefault(f"{day}d", round(1.0 - float(curve[day]), 6))
         reasons = existing.reasons
         model_label = existing.model_label
         history_count = existing.history_count
@@ -352,7 +354,7 @@ def forecast_invoice(
             "p50": _quantile(curve, 0.5, today),
             "p90": _quantile(curve, 0.1, today),
         }
-        probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30)}
+        probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30, 60, 90)}
         quantiles = _consistent_quantiles(quantiles, probabilities, today)
         scored_at = datetime.now(timezone.utc)
         if persist:

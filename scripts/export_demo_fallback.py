@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -10,7 +11,11 @@ from ml.synthetic import generate_records, resolve_as_of
 
 
 def export(path: Path = Path("public/demo-fallback.json")) -> dict:
-    today = resolve_as_of()
+    evaluation_path = Path("artifacts/eval.json")
+    metadata_path = Path("artifacts/model_metadata.json")
+    evaluation = json.loads(evaluation_path.read_text()) if evaluation_path.exists() else {}
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    today = date.fromisoformat(evaluation["as_of_date"]) if evaluation.get("as_of_date") else resolve_as_of()
     records = generate_records(observation_cutoff=today)
     open_rows = [
         row for row in records
@@ -36,11 +41,19 @@ def export(path: Path = Path("public/demo-fallback.json")) -> dict:
 
     def invoice_context(row: dict) -> dict:
         return {
-            "invoice_number": row["number"], "client_name": row["client_name"],
+            "id": row["id"], "invoice_number": row["number"], "client_name": row["client_name"],
             "currency": row["currency"], "outstanding": format(Decimal(row["outstanding"]), ".2f"),
+            "total": format(Decimal(row["total"]), ".2f"), "paid": format(Decimal(row["paid"]), ".2f"),
+            "issue_date": row["issue_date"].isoformat(), "payment_term_type": row["payment_term_type"],
+            "partial_payment_allowed": bool(row["partial_payment_allowed"]),
+            "partial_amount": format(Decimal(row["partial_amount"] or "0"), ".2f"),
+            "partial_at": row["partial_at"].isoformat() if row["partial_at"] else None,
             "due_date": row["due_date"].isoformat(), "status": row["status"],
             "disputed": bool(row["disputed"]),
             "overdue_days": max(0, (today - row["due_date"]).days),
+            "reminder_count": len(row["reminder_events"] or []),
+            "reminder_dates": [str(event["sent_at"])[:10] for event in (row["reminder_events"] or [])],
+            "settled_at": row["settled_at"].isoformat() if row["settled_at"] else None,
         }
 
     overdue_row = min(
@@ -56,10 +69,6 @@ def export(path: Path = Path("public/demo-fallback.json")) -> dict:
         key=lambda row: (len(row["reminder_events"]), row["due_date"]), default=None,
     )
     dispute_row = next((row for row in open_rows if row["disputed"]), None)
-    evaluation_path = Path("artifacts/eval.json")
-    metadata_path = Path("artifacts/model_metadata.json")
-    evaluation = json.loads(evaluation_path.read_text()) if evaluation_path.exists() else {}
-    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     backtest = evaluation.get("backtest", {})
     workflow_examples = {
         "portfolio": {
@@ -101,6 +110,7 @@ def export(path: Path = Path("public/demo-fallback.json")) -> dict:
         },
     }
     payload = {
+        "snapshot_version": "late-payer-fallback-v2",
         "as_of": today.isoformat(),
         "generated_from": "ml.synthetic.generate_records · seed 20261110",
         "invoice_count": len(records),

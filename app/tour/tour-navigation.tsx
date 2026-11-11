@@ -43,7 +43,7 @@ export default function TourNavigation() {
     notifyTourChange();
   }, [explicitlyActive, routeStop, searchKey, stop]);
 
-  if (!active) return null;
+  if (!active || isTourPage) return null;
   const previous = Math.max(1, stop - 1);
   const next = Math.min(stops.length, stop + 1);
   return <div className="tour-return-bar" role="region" aria-label="Guided tour navigation">
