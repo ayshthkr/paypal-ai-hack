@@ -167,6 +167,49 @@ test("queue recovers from a controlled cold-start read failure", async ({ page }
   await expect(page.getByRole("button", { name: "Refresh queue" })).toBeEnabled();
 });
 
+test("reply approval timeout stays blocked until Check status reconciles the pending preview", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/actions");
+  const invoiceHref = await page.locator("#action-approval a[href^='/invoices/']").first().getAttribute("href");
+  expect(invoiceHref).toBeTruthy();
+  const invoiceId = new URL(invoiceHref!, "http://localhost").pathname.split("/").pop()!;
+  const triageId = "reply-timeout-ui-regression";
+  let statusChecks = 0;
+  await page.route(url => url.pathname.endsWith(`/api/invoices/${invoiceId}/reply`), route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: triageId, reply_text: "We will pay Friday.", classification: "promise_to_pay", classifier: "rules", promised_payment_date: "2026-11-13", state: "pending", reminders_paused: false, note: "Preview only." }),
+  }));
+  await page.route(url => url.pathname.endsWith(`/api/invoices/${invoiceId}/reply-triage/${triageId}/apply`), route => route.abort("timedout"));
+  await page.route(`**/api/invoices/${invoiceId}/reply-triage/${triageId}`, async route => {
+    if (route.request().method() !== "GET") { await route.continue(); return; }
+    statusChecks += 1;
+    if (statusChecks === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Controlled status read interruption." }) });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ id: triageId, state: "pending", classification: "promise_to_pay", promised_payment_date: "2026-11-13", disputed: false, invoice_promised_payment_date: null, reviewed_at: null }),
+    });
+  });
+
+  await page.goto(invoiceHref!);
+  const reply = page.getByRole("textbox", { name: "Paste client reply" });
+  await reply.fill("We will pay Friday.");
+  await page.getByRole("button", { name: "Classify reply" }).click();
+  await expect(page.locator(".reply-review")).toBeVisible();
+  const approve = page.getByRole("button", { name: "Approve classification" });
+  await approve.click();
+  await expect(page.getByText(/Use Check status before approving again/)).toBeVisible();
+  await expect(approve).toBeDisabled();
+  await page.getByRole("button", { name: "Check status" }).click();
+  await expect(page.getByText(/Status check confirms this preview is still pending/)).toBeVisible();
+  await expect(approve).toBeEnabled();
+  expect(statusChecks).toBe(2);
+});
+
 test("guided tour exposes five stops and sends a failed live story to the packaged fallback", async ({ page }) => {
   await page.route("**/api/demo/session", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/demo-stories", route => route.fulfill({

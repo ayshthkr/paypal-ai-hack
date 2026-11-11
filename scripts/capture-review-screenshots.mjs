@@ -178,9 +178,11 @@ try {
   });
 
   await optional("packaged-fallback", async () => {
+    await page.evaluate(() => sessionStorage.removeItem("latepayer-tour-stop"));
     await navigate("/offline-demo");
     await save("08-fallback/01-versioned-read-only-fallback.jpg");
     await optional("fallback-invoice-evidence", async () => {
+      await page.evaluate(() => sessionStorage.setItem("latepayer-tour-stop", "5"));
       await navigate("/offline-demo?stop=5");
       await save("08-fallback/02-reply-triage-example.jpg");
       await page.locator(".fallback-invoice-detail summary").click();

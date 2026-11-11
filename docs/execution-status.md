@@ -1,6 +1,15 @@
 # Execution status
 
-## Current application release — commit `3aa93cb`, 2026-11-11
+## Current application release — commit `eb0b407`, 2026-11-12
+
+- The complete reviewer-fix implementation is deployed on Render. It covers the forecast-to-action workflow, collections and reply recovery, stable simulated-payment retries, directly accessible packaged fallback, consistent scope and coverage definitions, scenario comparisons, reviewer explanations, and operator sign-out.
+- Final follow-up fixes make cash-week cards open the actual probability-mass contributors with amounts, align the first-visit ready-action count with the queue, label filtered and portfolio-wide metrics, and display survival dates/table without chart overlap.
+- `make check` passed: Ruff, 96 Python tests, ESLint, TypeScript, and Next.js production build. Seven hosted browser regressions passed for cash contributor reconciliation, queue counts, empty-search scope, retry recovery, reply approval timeout status reconciliation, tour/fallback navigation, and collections save/reload.
+- Hosted web routes `/`, `/actions`, `/collections`, `/tour`, `/offline-demo`, `/performance`, `/operator`, and `/login` returned HTTP 200. API `/health`, `/healthz`, `/action-queue`, `/demo-stories`, and `/evaluation` returned HTTP 200. The measured portfolio and action-queue proxy reads took 19.95s and 14.10s. The controlled retry test injects one 503 and confirms the retry; it does not simulate Render sleeping.
+- Thirty-four ordered screenshots captured the deployed app in `artifacts/screenshots/review-2026-11-12/`, including the dashboard, morning brief, Ask, cash contributors, queue, invoice chart/reply review, collections, client scenario, performance disclosures, five tour stops, fallback, login, and narrow responsive layout.
+- PayPal remained Sandbox-only and allowlisted. No reminder or PayPal record was changed during this implementation and capture pass.
+
+## Previous application release — commit `3aa93cb`, 2026-11-11
 
 - `make check` passes: Ruff, 91 Python tests, ESLint, TypeScript, and the Next.js production build. Two upstream Starlette/AnyIO deprecation warnings are emitted by the test client.
 - The generated artifact selects Cox PH (`cox-ph-v7-seed-20261110-asof-2026-11-11`) by validation IPCW integrated Brier across LightGBM, Kaplan–Meier, and Cox. The model card records candidate metrics; `deployed_forecast_evaluation` replays the complete conditional scoring path, including its history tail blend, validation calibration, and overdue recovery adjustment. Current held-out results and sample sizes are in `artifacts/eval.json` and `docs/v1-acceptance.md`.
