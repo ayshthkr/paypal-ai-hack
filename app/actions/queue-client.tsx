@@ -157,6 +157,7 @@ export default function ActionQueue() {
       if (!recommendation) return null;
       const busy = busyId === recommendation.id;
       const partial = recommendation.action === "offer_partial_payment";
+      const synthetic = item.source.startsWith("demo");
       return <article className="queue-card" key={recommendation.id}
         onPointerDownCapture={() => { if (!reviewStartedAt.current.has(recommendation.id)) reviewStartedAt.current.set(recommendation.id, reviewClockNow()); }}
         onFocusCapture={() => { if (!reviewStartedAt.current.has(recommendation.id)) reviewStartedAt.current.set(recommendation.id, reviewClockNow()); }}>
@@ -164,8 +165,8 @@ export default function ActionQueue() {
         <div className="queue-metrics"><span>Balance <strong>{money(item.currency, item.outstanding)}</strong></span><span>Due <strong>{new Date(`${item.due_date}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" })}</strong></span><span>Assumed 14-day uplift <strong>{money(item.currency, item.decision.expected_cash_gain)}</strong></span></div>
         <p className="panel-subtitle">{item.why || item.decision.reason}</p>
         {item.reminder_outcomes?.length ? <div className="fine-print">Next-week outcome: {item.reminder_outcomes.map(outcome => `${outcome.tone} · ${outcome.status === "checking" ? `checking through ${outcome.window_ends}` : outcome.status}${outcome.amount_paid !== "0.00" ? ` (${money(outcome.currency, outcome.amount_paid)})` : ""}`).join(" · ")}</div> : null}
-        {partial ? <div className="delivery-note">Approval will enable partial payments on this invoice; it does not send a reminder email.</div> : <label className="field-label">Internal reminder note · recipient receives PayPal&apos;s native message<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label>}
-        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? "Approve partial payments" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
+        {partial ? <div className="delivery-note">{synthetic ? "Approval simulates enabling partial payments in the synthetic demo; no PayPal change or email occurs." : "Approval enables partial payments on this PayPal Sandbox invoice; PayPal may notify the recipient."}</div> : <label className="field-label">{synthetic ? "Simulated reminder note · no email is sent" : "Internal reminder note · recipient receives PayPal&apos;s native message"}<textarea value={drafts[recommendation.id] || ""} onChange={event => editDraft(recommendation.id, event.target.value)}/></label>}
+        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Approve partial payments" : synthetic ? "Approve & simulate" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
       </article>;
     })}</div>}
     {data?.collections_review?.length ? <section className="collections-lane" aria-labelledby="collections-review-title">
