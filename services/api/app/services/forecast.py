@@ -22,7 +22,7 @@ from ml.survival_metrics import predict_cox_survival
 
 HORIZON = 180
 DISPLAY_CURVE_POINTS = 60
-FORECAST_REVISION = "curve-quantiles-v8"
+FORECAST_REVISION = "curve-quantiles-v9-weekly-cash"
 
 
 def _display_curve(curve: list[float]) -> list[float]:

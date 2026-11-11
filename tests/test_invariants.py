@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app import main
 from app import security
 from app.config import Settings
-from app.models import AIAudit, Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, Recommendation, ReplyTriage
+from app.models import AIAudit, Client, DemoState, Invoice, InvoiceEvent, OperatorSession, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
 from app.security import COOKIE_NAME, create_session, session_claims
 from app.services.drift import backtest_drift, client_drift, theil_sen_slope
 from app.services.paypal import PayPalAdapter, PayPalError, normalize_invoice, payment_records
@@ -52,6 +52,36 @@ def _set_operator_cookie(client, Session, settings=None, now=None):
         db.commit()
     client.cookies.set(COOKIE_NAME, token)
     return token
+
+
+def test_forecast_summary_projection_preserves_weekly_cash_mass(api, monkeypatch):
+    from app.services import forecast, projections
+
+    _, Session = api
+    as_of = date(2026, 11, 11)
+    weekly = [{"week_start": "2026-11-09", "probability": 0.24}]
+    payload = {
+        "quantiles": {}, "probabilities": {}, "probability_by_due": 0.0,
+        "weekly_settlement_probabilities": weekly, "model": "test", "model_version": "test-v1",
+        "limited_history": True, "inference_revision": forecast.FORECAST_REVISION,
+        "artifact_revision": "test-artifact",
+    }
+    monkeypatch.setattr(main, "_prepare_portfolio_context", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_activity_for_source", lambda *args, **kwargs: {})
+    monkeypatch.setattr(main, "_drift_for", lambda *args, **kwargs: {})
+    monkeypatch.setattr(main, "_today", lambda *args, **kwargs: as_of)
+    monkeypatch.setattr(forecast, "forecast_invoice", lambda *args, **kwargs: payload)
+
+    with Session() as db:
+        owner = Client(id="weekly-summary-owner", display_name="Weekly Summary", source="demo", drift={})
+        invoice = _invoice("weekly-summary-invoice", owner.id)
+        db.add_all([owner, invoice])
+        db.flush()
+        projections.refresh(db, {owner.id}, as_of=as_of)
+
+        summary = db.get(ReadModel, (f"forecast_summary:{invoice.id}", as_of))
+        assert summary is not None
+        assert summary.payload["weekly_settlement_probabilities"] == weekly
 
 
 def test_feature_history_is_cut_off_at_scoring_date_and_ignores_later_settlement():
