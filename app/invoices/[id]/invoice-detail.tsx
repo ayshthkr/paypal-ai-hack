@@ -176,7 +176,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const generateDraft = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await requestJson<{ recommendation: NonNullable<Recommendation>; note: string; provider: string; model: string | null; grounded_in: string }>(`/api/invoices/${encodeURIComponent(id)}/draft`, { method: "POST" });
+      const result = await requestJson<{ recommendation: NonNullable<Recommendation>; note: string; provider: string; model: string | null; grounded_in: string }>(`/api/invoices/${encodeURIComponent(id)}/draft`, { method: "POST", signal: AbortSignal.timeout(30_000) });
       setData(current => current ? { ...current, recommendation: result.recommendation } : current);
       setDraft(result.recommendation.edited_text);
       sessionStorage.setItem(`latepayer-draft:${result.recommendation.id}`, result.recommendation.edited_text);
