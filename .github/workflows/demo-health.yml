@@ -3,7 +3,8 @@ on:
   workflow_dispatch:
   schedule:
     # Render's free services can spin down after 15 minutes without a request.
-    - cron: '*/5 * * * *'
+    # Offset runs from minute 0 to avoid GitHub's busiest schedule boundary.
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
 permissions: {}
 concurrency:
   group: demo-health
