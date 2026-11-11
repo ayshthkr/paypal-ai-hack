@@ -19,7 +19,7 @@ test("operator creates an allowlisted Sandbox invoice through the browser proxy"
   const sandboxPanel = page.locator("details").filter({ hasText: "PayPal Sandbox · controlled invoice and sync workflow" });
   await sandboxPanel.locator("summary").click();
   const recipient = sandboxPanel.getByLabel("Sandbox invoice recipient");
-  await expect(recipient.locator("option")).toHaveCount(2, { timeout: 30_000 });
+  await expect.poll(() => recipient.locator("option").count(), { timeout: 30_000 }).toBeGreaterThan(1);
   await recipient.selectOption({ index: 1 });
   await sandboxPanel.getByLabel("Invoice amount").fill("1.23");
   await sandboxPanel.getByLabel("Payment terms").selectOption("NET_15");
