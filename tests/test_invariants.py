@@ -850,6 +850,32 @@ def test_ai_draft_rejects_unverified_numbers_and_composes_transaction_facts(monk
     assert "EUR 125.00" in draft and "LP-204" in draft and "2026-11-10" in draft
 
 
+def test_gemini_38_request_uses_supported_generation_config(monkeypatch):
+    calls = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": '{"body":"Please review the invoice when convenient."}'}]}}]}
+
+    def post(url, **kwargs):
+        calls.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(ai_service, "get_settings", lambda: SimpleNamespace(gemini_api_key="test-key"))
+    monkeypatch.setattr(ai_service.httpx, "post", post)
+
+    result = ai_service._gemini_json_request("Use only the provided facts.")
+
+    assert result == {"body": "Please review the invoice when convenient."}
+    assert calls["url"].endswith("/models/gemini-3.8-flash:generateContent")
+    assert calls["headers"] == {"x-goog-api-key": "test-key"}
+    assert "temperature" not in calls["json"]["generationConfig"]
+    assert calls["json"]["generationConfig"]["responseMimeType"] == "application/json"
+
+
 def test_reply_classifier_extracts_promise_dates_and_flags_disputes(monkeypatch):
     monkeypatch.setattr(ai_service, "_gemini_json", lambda _: None)
     today = date(2026, 11, 10)
