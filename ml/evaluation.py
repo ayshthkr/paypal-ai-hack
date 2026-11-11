@@ -2,6 +2,7 @@
 import math
 from collections import defaultdict
 import numpy as np
+from scipy.stats import ks_2samp
 from ml.survival_metrics import uno_concordance
 
 
@@ -56,13 +57,13 @@ def calibrated_band(curve, correction):
     return lo, median, hi
 
 
-def grouped_errors(rows, key):
+def grouped_errors(rows, key, coverage_key="within_p10_p90"):
     groups = defaultdict(list)
     for row in rows:
         groups[row[key]].append(row)
     return [{"group": group, "count":len(values),
              "median_absolute_error_days": float(np.median([r["absolute_error_days"] for r in values if r["absolute_error_days"] is not None])) if any(r["absolute_error_days"] is not None for r in values) else None,
-             "coverage": sum(r["within_p10_p90"] for r in values)/len(values)} for group, values in sorted(groups.items())]
+             "coverage": sum(bool(r.get(coverage_key)) for r in values)/len(values)} for group, values in sorted(groups.items())]
 
 
 def client_bootstrap(subjects, curves_by_model, censor_g, seed=20261110, repeats=100):
@@ -80,3 +81,99 @@ def client_bootstrap(subjects, curves_by_model, censor_g, seed=20261110, repeats
             if score is not None:
                 samples[name].append(score)
     return {name: {"lower":float(np.quantile(values,.025)), "upper":float(np.quantile(values,.975)), "replicates":len(values), "unit":"client"} for name, values in samples.items() if values}
+
+
+def horizon_calibration(subjects, predictions, censor_survival, horizon: int, bins: int = 10) -> dict:
+    """IPCW calibration for P(payment by horizon), retaining known censored outcomes."""
+    observations = []
+    excluded = 0
+    censored_known_negative = 0
+    for invoice, duration, event in subjects:
+        curve = predictions.get(invoice["id"])
+        if not curve or len(curve) <= horizon:
+            continue
+        if event and duration <= horizon:
+            label = 1.0
+            index = max(0, duration - 1)
+        elif duration >= horizon:
+            label = 0.0
+            index = horizon
+            censored_known_negative += int(event == 0)
+        else:
+            excluded += 1
+            continue
+        g = max(1e-6, censor_survival[min(index, len(censor_survival) - 1)])
+        observations.append((1.0 - float(curve[horizon]), label, 1.0 / g))
+
+    ordered = sorted(observations, key=lambda item: item[0])
+    groups = np.array_split(np.asarray(ordered, dtype=float), min(bins, len(ordered))) if ordered else []
+    deciles = []
+    for index, group in enumerate(groups, start=1):
+        if not len(group):
+            continue
+        weights = group[:, 2]
+        deciles.append({
+            "bin": index,
+            "count": int(len(group)),
+            "mean_predicted": float(np.average(group[:, 0], weights=weights)),
+            "ipcw_observed": float(np.average(group[:, 1], weights=weights)),
+            "effective_weight": float(weights.sum()),
+        })
+    return {
+        "horizon_days": horizon,
+        "count": len(observations),
+        "censored_known_negative_count": censored_known_negative,
+        "censored_before_horizon_excluded": excluded,
+        "method": "inverse probability of censoring weighted; events by horizon and invoices observed through horizon",
+        "deciles": deciles,
+    }
+
+
+def residual_drift(calibration_subjects, calibration_curves, test_subjects, test_curves) -> dict:
+    """Compare paid-invoice signed P50 residuals across calibration and test periods."""
+    def residuals(subjects, curves):
+        values = []
+        for invoice, duration, event in subjects:
+            if not event:
+                continue
+            curve = curves.get(invoice["id"])
+            if not curve:
+                continue
+            median_day = quantile_day(curve, 0.5)
+            if median_day is not None:
+                values.append(float(duration - median_day))
+        return values
+
+    calibration = residuals(calibration_subjects, calibration_curves)
+    test = residuals(test_subjects, test_curves)
+    if len(calibration) < 2 or len(test) < 2:
+        return {
+            "method": "two-sample Kolmogorov–Smirnov test on signed paid-invoice P50 residuals",
+            "calibration_count": len(calibration), "test_count": len(test),
+            "statistic": None, "p_value": None, "drift_detected_at_0_05": None,
+            "caveat": "Insufficient paid invoices for a distribution comparison.",
+        }
+    result = ks_2samp(calibration, test, alternative="two-sided", method="auto")
+    return {
+        "method": "two-sample Kolmogorov–Smirnov test on signed paid-invoice P50 residuals",
+        "calibration_count": len(calibration), "test_count": len(test),
+        "calibration_median_residual_days": float(np.median(calibration)),
+        "test_median_residual_days": float(np.median(test)),
+        "statistic": float(result.statistic), "p_value": float(result.pvalue),
+        "drift_detected_at_0_05": bool(result.pvalue < 0.05),
+        "caveat": "Paid-only residual diagnostic; it is a drift check, not a censoring-adjusted calibration guarantee.",
+    }
+
+
+def coverage_by_issue_month(rows) -> list[dict]:
+    grouped = defaultdict(list)
+    for row in rows:
+        if row.get("issue_date"):
+            grouped[str(row["issue_date"])[:7]].append(row)
+    return [
+        {
+            "month": month, "count": len(values),
+            "coverage": sum(bool(row.get("within_interval")) for row in values) / len(values),
+        }
+        for month, values in sorted(grouped.items())
+    ]

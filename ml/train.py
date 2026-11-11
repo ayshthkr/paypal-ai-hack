@@ -13,7 +13,10 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.inspection import permutation_importance
 
 from ml.policy_simulation import replay
-from ml.evaluation import fit_conformal, calibrated_band, correction_for_currency, grouped_errors, client_bootstrap
+from ml.evaluation import (
+    fit_conformal, calibrated_band, correction_for_currency, grouped_errors, client_bootstrap,
+    horizon_calibration, residual_drift, coverage_by_issue_month,
+)
 from ml.features import (
     FEATURES, FEATURE_SCHEMA_VERSION, GLOBAL_AMOUNT_MEDIAN_PRIOR, GLOBAL_DELAY_PRIOR_DAYS,
     GLOBAL_LATE_RATE_PRIOR, HISTORY_PRIOR_STRENGTH, features,
@@ -110,9 +113,13 @@ def _censor_survival(subjects: list[tuple[dict, int, int]]) -> list[float]:
     return result
 
 
-def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_fallback: list[float], issue_origin: bool = True) -> list[float]:
+def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_fallback: list[float],
+                    issue_origin: bool = True, feature_names: list[str] | None = None,
+                    records_by_client: dict[str, list[dict]] | None = None) -> list[float]:
     origin = invoice["issue_date"]
-    client_records = [row for row in records if row["client_id"] == invoice["client_id"]]
+    client_records = (records_by_client or {}).get(invoice["client_id"])
+    if client_records is None:
+        client_records = [row for row in records if row["client_id"] == invoice["client_id"]]
     history = [row for row in client_records if row["settled_at"] and row["settled_at"] <= origin]
     # Freeze the knowledge state at the forecast origin; only age and calendar features advance.
     exposure = []
@@ -138,11 +145,13 @@ def predict_hazards(model: Booster, records: list[dict], invoice: dict, hazards_
     for day_number in range(1, HORIZON + 1):
         as_of = origin + timedelta(days=day_number - 1)
         matrix.append(_row_features(records, invoice, as_of, history, exposure, client_records))
+    names = feature_names or FEATURES
     raw = np.asarray(matrix, dtype=np.float32)
+    indices = [FEATURES.index(name) for name in names]
     if model is None:
         hazards = hazards_fallback.copy()
     else:
-        hazards = np.asarray(model.predict(raw, num_threads=1), dtype=float).tolist()
+        hazards = np.asarray(model.predict(raw[:, indices], num_threads=1), dtype=float).tolist()
     return [min(1.0, max(0.0, float(hazard))) for hazard in hazards]
 
 
@@ -235,6 +244,56 @@ def _model_metrics(subjects, predictions, censor_g, horizons) -> dict:
     }
 
 
+def _new_hazard_model() -> LGBMClassifier:
+    return LGBMClassifier(
+        objective="binary", n_estimators=180, learning_rate=0.045, num_leaves=15,
+        max_depth=-1, min_child_samples=24, reg_lambda=2.0, colsample_bytree=0.9,
+        subsample=0.9, random_state=SEED, n_jobs=2, verbosity=-1,
+    )
+
+
+def _ablation_metrics(records, X_train, y_train, train_subjects, test_subjects,
+                      test_censor_g, test_horizons, test_predictions) -> list[dict]:
+    """Retrain reduced feature sets while keeping invoice-level time splits fixed."""
+    definitions = {
+        "without_weekday": {
+            "features": FEATURES,
+            "note": "Weekday is already absent from the deployed v6 schema; this equals the full LightGBM feature set.",
+            "reuse_full": True,
+        },
+        "without_reminder_features": {
+            "features": [name for name in FEATURES if name not in {"reminder_count", "days_since_last_reminder"}],
+            "note": "Retrained after removing reminder count and recency.",
+        },
+        "client_history_only": {
+            "features": [
+                "history_count", "history_late_rate", "recent_delay_days", "delay_std_days",
+                "history_missing", "prior_paid_invoice_count",
+            ],
+            "note": "Retrained using only prior settled-client history features.",
+        },
+    }
+    output = []
+    fallback = km_hazards(train_subjects)
+    for name, definition in definitions.items():
+        feature_names = definition["features"]
+        if definition.get("reuse_full"):
+            metrics = _model_metrics(test_subjects, test_predictions, test_censor_g, test_horizons)
+        else:
+            indices = [FEATURES.index(feature) for feature in feature_names]
+            model = _new_hazard_model()
+            model.fit(X_train[:, indices], y_train, feature_name=feature_names, callbacks=[])
+            predictions = {}
+            for invoice, _, _ in test_subjects:
+                hazards = predict_hazards(
+                    model.booster_, records, invoice, fallback, feature_names=feature_names,
+                )
+                predictions[invoice["id"]] = _survival_from_hazards(hazards)
+            metrics = _model_metrics(test_subjects, predictions, test_censor_g, test_horizons)
+        output.append({"variant": name, "feature_count": len(feature_names), "note": definition["note"], **metrics})
+    return output
+
+
 def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str | None = None) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     history_cutoff = resolve_as_of(observation_cutoff)
@@ -245,14 +304,14 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     test_lo = history_cutoff - timedelta(days=180)
     test_hi = history_cutoff
     records = generate_records(observation_cutoff=history_cutoff)
+    deployment_issue_dates = [
+        row["issue_date"] for row in records
+        if not row["cancelled"] and row["issue_date"] <= history_cutoff
+    ]
     X_train, y_train, train_subjects = make_risk_rows(records, train_cutoff, lambda row: row["issue_date"] <= train_cutoff)
     if len(X_train) == 0 or y_train.sum() == 0:
         raise RuntimeError("Synthetic training split produced no full settlements; refusing to save a nominal model.")
-    model = LGBMClassifier(
-        objective="binary", n_estimators=180, learning_rate=0.045, num_leaves=15,
-        max_depth=-1, min_child_samples=24, reg_lambda=2.0, colsample_bytree=0.9,
-        subsample=0.9, random_state=SEED, n_jobs=2, verbosity=-1,
-    )
+    model = _new_hazard_model()
     model.fit(X_train, y_train, feature_name=FEATURES, callbacks=[])
     booster = model.booster_
     booster.save_model(str(output_dir / "payment_hazard.txt"))
@@ -294,9 +353,15 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "kaplan_meier": _model_metrics(test_subjects, km_test_predictions, test_censor_g, test_horizons),
         "cox": _model_metrics(test_subjects, cox_test_predictions, test_censor_g, test_horizons),
     }
+    active_val_predictions = val_predictions if active_model == "lightgbm" else km_val_predictions
+    active_test_predictions = test_predictions if active_model == "lightgbm" else km_test_predictions
+    ablation_metrics = _ablation_metrics(
+        records, X_train, y_train, train_subjects, test_subjects,
+        test_censor_g, test_horizons, test_predictions,
+    )
 
     # Fit an optional isotonic mapping on the validation fold for the 14-day output.
-    val_calibration = _calibration_rows(val_subjects, val_predictions)
+    val_calibration = _calibration_rows(val_subjects, active_val_predictions)
     calibrator = None
     raw_val_brier = calibrated_val_brier = None
     if len(val_calibration) >= 30 and len({round(predicted, 4) for predicted, _ in val_calibration}) >= 5:
@@ -311,7 +376,8 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
             calibrator = candidate
     calibration_deciles = _calibration_deciles(val_calibration, calibrator)
     calibration_artifact = {
-        "applied": calibrator is not None, "target": "P(full settlement within 14 days)",
+        "applied": calibrator is not None, "model": active_model,
+        "target": "P(full settlement within 14 days)",
         "method": "isotonic regression on validation invoices" if calibrator else "identity",
         "thresholds_x": [float(value) for value in calibrator.X_thresholds_] if calibrator else [0.0, 1.0],
         "thresholds_y": [float(value) for value in calibrator.y_thresholds_] if calibrator else [0.0, 1.0],
@@ -319,7 +385,11 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "validation_cohort": [validation_lo.isoformat(), validation_hi.isoformat()],
     }
     (output_dir / "calibration.json").write_text(json.dumps(calibration_artifact, indent=2))
-    test_calibration = _calibration_rows(test_subjects, test_predictions)
+    test_calibration = _calibration_rows(test_subjects, active_test_predictions)
+    calibration_30d = horizon_calibration(test_subjects, active_test_predictions, test_censor_g, 30)
+    test_residual_drift = residual_drift(
+        val_subjects, active_val_predictions, test_subjects, active_test_predictions,
+    )
     test_p14_raw = [value for value, _ in test_calibration]
     test_p14_labels = [label for _, label in test_calibration]
     test_p14_calibrated = calibrator.predict(test_p14_raw).tolist() if calibrator and test_p14_raw else test_p14_raw
@@ -329,7 +399,32 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "deciles": _calibration_deciles(test_calibration, calibrator),
     }
 
-    conformal = fit_conformal(val_subjects, val_predictions)
+    validation_months = sorted({row["issue_date"].strftime("%Y-%m") for row, _, _ in val_subjects})
+    recent_months = set(validation_months[-3:])
+    recent_val_subjects = [
+        subject for subject in val_subjects
+        if subject[0]["issue_date"].strftime("%Y-%m") in recent_months
+    ]
+    earlier_val_subjects = [
+        subject for subject in val_subjects
+        if subject[0]["issue_date"].strftime("%Y-%m") not in recent_months
+    ]
+    within_validation_drift = residual_drift(
+        earlier_val_subjects, active_val_predictions, recent_val_subjects, active_val_predictions,
+    )
+    use_recent_calibration = bool(
+        within_validation_drift.get("drift_detected_at_0_05")
+        and sum(event for _, _, event in recent_val_subjects) >= 20
+    )
+    calibration_subjects = recent_val_subjects if use_recent_calibration else val_subjects
+    conformal = fit_conformal(calibration_subjects, active_val_predictions)
+    conformal["selection"] = {
+        "window": "most recent three issue months" if use_recent_calibration else "full validation window",
+        "recent_months": sorted(recent_months),
+        "recent_paid_count": int(sum(event for _, _, event in recent_val_subjects)),
+        "validation_residual_drift": within_validation_drift,
+        "rule": "Use the recent window only when earlier-versus-recent validation residual KS p < 0.05 and the recent window has at least 20 paid invoices; never select a window using test outcomes.",
+    }
     calibration_artifact["interval_calibration"] = conformal
     (output_dir / "calibration.json").write_text(json.dumps(calibration_artifact, indent=2))
 
@@ -341,25 +436,36 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     for invoice, duration, event in test_subjects:
         if not event:
             continue
-        curve = test_predictions[invoice["id"]]
-        p10, p50, p90 = calibrated_band(curve, correction_for_currency(conformal, invoice["currency"]))
+        curve = active_test_predictions[invoice["id"]]
+        raw_p10 = next((day for day, value in enumerate(curve) if day > 0 and value <= 0.9), None)
+        p50 = next((day for day, value in enumerate(curve) if day > 0 and value <= 0.5), None)
+        raw_p90 = next((day for day, value in enumerate(curve) if day > 0 and value <= 0.1), None)
+        interval_lo, _, interval_hi = calibrated_band(
+            curve, correction_for_currency(conformal, invoice["currency"]),
+        )
         actual = invoice["issue_date"] + timedelta(days=duration)
         predicted = invoice["issue_date"] + timedelta(days=p50) if p50 is not None else None
         error = abs(p50 - duration) if p50 is not None else None
         if error is not None:
             p50_errors.append(error)
-        if p10 is not None and p90 is not None:
+        if interval_lo is not None and interval_hi is not None:
             eligible_for_coverage += 1
-            covered += int(p10 <= duration <= p90)
+            covered += int(interval_lo <= duration <= interval_hi)
         backtest_rows.append({
             "client_id": invoice["client_id"], "currency": invoice["currency"],
             "invoice_id": invoice["id"], "issue_date": invoice["issue_date"].isoformat(),
             "predicted_p50_date": predicted.isoformat() if predicted else None,
-            "actual_paid_date": actual.isoformat(), "p10_date": (invoice["issue_date"] + timedelta(days=p10)).isoformat() if p10 else None,
-            "p90_date": (invoice["issue_date"] + timedelta(days=p90)).isoformat() if p90 else None,
-            "absolute_error_days": error, "within_p10_p90": bool(p10 is not None and p90 is not None and p10 <= duration <= p90),
+            "actual_paid_date": actual.isoformat(),
+            "p10_date": (invoice["issue_date"] + timedelta(days=raw_p10)).isoformat() if raw_p10 else None,
+            "p90_date": (invoice["issue_date"] + timedelta(days=raw_p90)).isoformat() if raw_p90 else None,
+            "coverage_interval_lower_date": (invoice["issue_date"] + timedelta(days=interval_lo)).isoformat() if interval_lo else None,
+            "coverage_interval_upper_date": (invoice["issue_date"] + timedelta(days=interval_hi)).isoformat() if interval_hi else None,
+            "absolute_error_days": error,
+            "within_interval": bool(interval_lo is not None and interval_hi is not None and interval_lo <= duration <= interval_hi),
+            "within_p10_p90": bool(raw_p10 is not None and raw_p90 is not None and raw_p10 <= duration <= raw_p90),
         })
     coverage = covered / eligible_for_coverage if eligible_for_coverage else None
+    monthly_coverage = coverage_by_issue_month(backtest_rows)
 
     # Decile plot uses held-out 14-day probabilities and the validation-trained mapping.
     fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=150)
@@ -375,7 +481,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     fig.savefig(output_dir / "calibration.png")
     plt.close(fig)
 
-    model_version = f"lgbm-hazard-v5-seed-{SEED}-asof-{history_cutoff.isoformat()}"
+    model_version = f"lgbm-hazard-v6-seed-{SEED}-asof-{history_cutoff.isoformat()}"
     if len(X_validation) and len(y_validation):
         permutation = permutation_importance(
             model, X_validation, y_validation, scoring="neg_log_loss", n_repeats=3,
@@ -397,7 +503,11 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
     shap_summary = sorted([{"feature": name, "mean_absolute_shap": float(np.abs(shap_values[:, index]).mean())}
                            for index, name in enumerate(FEATURES)] if len(shap_rows) else [], key=lambda row: -row["mean_absolute_shap"])
     (output_dir / "shap_summary.json").write_text(json.dumps({"count": len(shap_rows), "method": "TreeSHAP contributions on validation risk rows", "features": shap_summary}, indent=2))
-    confidence_intervals = client_bootstrap(test_subjects, {"lightgbm": test_predictions, "cox": cox_test_predictions}, test_censor_g)
+    confidence_intervals = client_bootstrap(
+        test_subjects,
+        {"lightgbm": test_predictions, "kaplan_meier": km_test_predictions, "cox": cox_test_predictions},
+        test_censor_g,
+    )
     age_errors = []
     for row, duration, event in test_subjects:
         if not event:
@@ -406,7 +516,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         for label, age in [("not_due", max(0, terms-1)), ("1–30", terms+1), ("31–89", terms+31), ("90+", terms+90)]:
             if age >= duration or age >= HORIZON:
                 continue
-            curve = test_predictions[row["id"]]
+            curve = active_test_predictions[row["id"]]
             denominator = max(1e-12, curve[age])
             conditional = [min(1, value/denominator) for value in curve[age:]]
             conditional += [conditional[-1]] * (HORIZON+1-len(conditional))
@@ -430,6 +540,42 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
                            "amount_median": GLOBAL_AMOUNT_MEDIAN_PRIOR, "history_prior_strength": HISTORY_PRIOR_STRENGTH},
         "generation_parameters": {"client_profiles": ["prompt", "due_date", "chronic_late", "deteriorating", "erratic"], "invoice_count": len(records), "clients": len({row["client_id"] for row in records}), "horizon_days": HORIZON},
     }
+    active_test_metrics = test_metrics[active_model]
+    comparison_specs = {
+        "uno_concordance": "higher",
+        "integrated_brier_score": "lower",
+    }
+    wins, losses = [], []
+    for metric_name, direction in comparison_specs.items():
+        active_value = active_test_metrics.get(metric_name)
+        if active_value is None:
+            continue
+        for comparator_name, comparator in test_metrics.items():
+            if comparator_name == active_model or comparator.get(metric_name) is None:
+                continue
+            better = active_value > comparator[metric_name] if direction == "higher" else active_value < comparator[metric_name]
+            (wins if better else losses).append(f"{metric_name} vs {comparator_name}")
+    active_due_auc = (active_test_metrics.get("time_dependent_auc") or {}).get("due_date")
+    for comparator_name, comparator in test_metrics.items():
+        if comparator_name == active_model:
+            continue
+        comparator_auc = (comparator.get("time_dependent_auc") or {}).get("due_date")
+        if active_due_auc is not None and comparator_auc is not None:
+            (wins if active_due_auc > comparator_auc else losses).append(f"due-date AUC vs {comparator_name}")
+    model_card = {
+        "deployed_model": active_model,
+        "selection_rule": "Lowest inverse-probability-of-censoring-weighted integrated Brier score on the time-separated validation cohort.",
+        "validation_integrated_brier": {"lightgbm": val_ibs, "kaplan_meier": val_km_ibs},
+        "held_out_metrics_won": wins,
+        "held_out_metrics_lost": losses,
+        "training_window": [min(deployment_issue_dates).isoformat(), max(deployment_issue_dates).isoformat()],
+        "training_cutoff": history_cutoff.isoformat(),
+        "known_limits": [
+            "Synthetic-only training cohort; external public-data evaluation is reported separately.",
+            "Paid-only date error and interval coverage exclude invoices censored before final payment; IPCW survival scores include observed censored records.",
+            "The final artifact is refit through the current cutoff after evaluation; validation calibration is transferred and should be monitored.",
+        ],
+    }
     evaluation = {
         "as_of_date": history_cutoff.isoformat(), "seed": SEED,
         "split": {
@@ -443,20 +589,33 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "survival_metrics": test_metrics,
         "concordance_confidence_intervals": confidence_intervals,
         "model_comparison_note": (
-            f"Release model selected: {active_model}. Selection uses the preselected validation integrated Brier criterion (LightGBM {val_ibs:.3f} vs pooled Kaplan–Meier {val_km_ibs:.3f}); the held-out table includes Cox as a comparator and does not establish broad superiority because client-bootstrap intervals overlap. Issue weekday features were removed from the v5 model."
+            f"Release model selected: {active_model}. Selection uses the preselected validation integrated Brier criterion (LightGBM {val_ibs:.3f} vs pooled Kaplan–Meier {val_km_ibs:.3f}); the held-out table includes Cox as a comparator and does not establish broad superiority because client-bootstrap intervals overlap. Issue weekday features are absent from the v6 schema."
             if val_ibs is not None and val_km_ibs is not None else
-            f"Release model selected: {active_model}. Validation integrated Brier estimates were unavailable, so no measured superiority claim is supported. Issue weekday features were removed from the v5 model."
+            f"Release model selected: {active_model}. Validation integrated Brier estimates were unavailable, so no measured superiority claim is supported. Issue weekday features are absent from the v6 schema."
         ),
+        "model_card": model_card,
+        "ablation_metrics": ablation_metrics,
         "shap_summary": shap_summary,
         "interval_calibration": conformal,
-        "error_by_currency": grouped_errors(backtest_rows, "currency"),
-        "error_by_age_bucket": grouped_errors(age_errors, "age_bucket"),
+        "error_by_currency": grouped_errors(backtest_rows, "currency", "within_interval"),
+        "error_by_age_bucket": grouped_errors(age_errors, "age_bucket", "within_p10_p90"),
         "drift_backtest": backtest_drift(records, history_cutoff),
+        "censor_aware_evaluation": {
+            "test_invoice_count": len(test_subjects),
+            "paid_event_count": int(sum(event for _, _, event in test_subjects)),
+            "right_censored_count": int(sum(not event for _, _, event in test_subjects)),
+            "metrics": "Uno concordance, time-dependent AUC, and integrated Brier use right-censoring-aware estimators; paid-only date errors remain descriptive.",
+        },
+        "calibration_30d": calibration_30d,
+        "residual_drift": test_residual_drift,
+        "coverage_by_issue_month": monthly_coverage,
         "calibration_14d": test_calibration_metrics | {"count_unit": "held-out invoice-probability observations", "validation_deciles": calibration_deciles},
         "backtest": {
             "paid_invoice_count": len(backtest_rows), "p50_median_absolute_error_days": float(np.median(p50_errors)) if p50_errors else None,
             "p10_p90_coverage": coverage, "coverage_invoice_count": eligible_for_coverage,
             "target_coverage": 0.8, "invoices": backtest_rows,
+            "interval_label": "Validation-calibrated coverage interval; P10/P50/P90 dates separately come from the displayed survival curve.",
+            "raw_quantile_coverage": sum(row["within_p10_p90"] for row in backtest_rows) / len(backtest_rows) if backtest_rows else None,
         },
         "cox_baseline_fit": {"converged": cox_model["converged"], "iterations": cox_model["iterations"]},
         "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy.",
@@ -486,6 +645,7 @@ def train(output_dir: Path = Path("artifacts"), observation_cutoff: date | str |
         "test_paid_only_date_mae_days": float(np.mean(p50_errors)) if p50_errors else None,
         "test_paid_only_invoice_count": int(sum(event for _, _, event in test_subjects)),
         "test_p10_p90_coverage": coverage,
+        "test_calibrated_interval_coverage": coverage,
         "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
     }
     X_full, y_full, full_subjects = make_risk_rows(records, history_cutoff, lambda row: row["issue_date"] <= history_cutoff)

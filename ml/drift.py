@@ -164,6 +164,7 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
     activity = fit_bgnbd(historical_issues, evaluation_date).get("probabilities", {})
     flagged: list[tuple[str, float, str]] = []
     recency: list[tuple[str, float]] = []
+    plain_delay_flags: set[str] = set()
     actual_by_client: dict[str, bool] = {}
     for client_id, rows in grouped.items():
         history = []
@@ -208,10 +209,17 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
         if drift["signal_type"] in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
             flagged.append((client_id, float(drift["severity_score"]), drift["signal_type"]))
 
-        prior_delays = [
-            (row["settled_at"] - row["due_date"]).days
-            for row in history if row["status"] == "PAID" and row.get("settled_at") and row["settled_at"] <= evaluation_date
-        ]
+        prior_paid = sorted(
+            (row for row in history if row["status"] == "PAID" and row.get("settled_at")
+             and row["settled_at"] <= evaluation_date),
+            key=lambda row: (row["issue_date"], row["id"]),
+        )
+        prior_delays = [(row["settled_at"] - row["due_date"]).days for row in prior_paid]
+        if len(prior_delays) >= 6:
+            usual_delay = float(median(prior_delays[:-3]))
+            recent_three_median = float(median(prior_delays[-3:]))
+            if recent_three_median > 0 and recent_three_median > 1.5 * max(1.0, usual_delay):
+                plain_delay_flags.add(client_id)
         future = [
             row for row in rows if evaluation_date < row["issue_date"] <= outcome_window_end
             and row["status"] == "PAID" and row.get("settled_at") and row["settled_at"] <= as_of
@@ -235,6 +243,7 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
                          and row.get("outcome_paid_at") and row["outcome_paid_at"] > row["due_date"]]
         if actual_by_client.get(client_id) and future_misses:
             lead_times.append((min(future_misses) - evaluation_date).days)
+    plain_hits = sum(actual_by_client.get(client_id, False) for client_id in plain_delay_flags)
     return {
         "actual_positive_client_count": total_positives,
         "recall": round(model_hits / total_positives, 4) if total_positives else None,
@@ -248,6 +257,16 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
         "precision": round(model_hits / len(model_ids), 4) if model_ids else None,
         "recency_only_flagged_client_count": len(baseline_ids), "recency_only_true_positive_count": baseline_hits,
         "recency_only_precision": round(baseline_hits / len(baseline_ids), 4) if baseline_ids else None,
+        "plain_delay_rule": {
+            "name": "median delay of the last three settled invoices > 1.5× the preceding median",
+            "minimum_history": 6,
+            "flagged_client_count": len(plain_delay_flags),
+            "true_positive_count": plain_hits,
+            "precision": round(plain_hits / len(plain_delay_flags), 4) if plain_delay_flags else None,
+            "recall": round(plain_hits / total_positives, 4) if total_positives else None,
+            "client_ids": sorted(plain_delay_flags),
+        },
+        "label_caveat": "Evaluation positives are generator-defined: no invoice issue in the next 90 days, or future paid-invoice median delay at least 7 days above the preceding median.",
         "flagged_clients": [{"client_id": client_id, "signal_type": signal,
                               "actual_went_quiet_or_got_slower": actual_by_client.get(client_id, False)}
                              for client_id, _, signal in flagged],

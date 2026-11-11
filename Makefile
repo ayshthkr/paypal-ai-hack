@@ -1,4 +1,4 @@
-.PHONY: setup dev web api migrate seed-demo train rescore-demo sync seed-sandbox record-payment check smoke browser-smoke clean
+.PHONY: setup dev web api migrate seed-demo train evaluate-public rescore-demo sync seed-sandbox record-payment check smoke browser-smoke clean
 
 AS_OF ?= today
 
@@ -32,6 +32,10 @@ seed-demo:
 
 train:
 	AS_OF="$(AS_OF)" PYTHONPATH=. uv run python scripts/train_model.py
+
+evaluate-public:
+	@test -n "$(PUBLIC_INVOICE_CSV)" || (echo "Set PUBLIC_INVOICE_CSV to a local dataset CSV path" && exit 2)
+	PYTHONPATH=.:services/api uv run python scripts/evaluate_public_dataset.py "$(PUBLIC_INVOICE_CSV)"
 
 rescore-demo:
 	PYTHONPATH=.:services/api uv run python scripts/rescore_demo.py

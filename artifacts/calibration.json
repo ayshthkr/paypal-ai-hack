@@ -1,68 +1,62 @@
 {
-  "applied": true,
+  "applied": false,
+  "model": "kaplan_meier",
   "target": "P(full settlement within 14 days)",
-  "method": "isotonic regression on validation invoices",
+  "method": "identity",
   "thresholds_x": [
-    0.0060517668786543855,
-    0.01858020490849699,
-    0.018784124051070217,
-    0.32391779832223966,
-    0.32622641707652333,
-    0.6261464510567716,
-    0.6305972390134036,
-    0.6702624385049871,
-    0.6711745361300778,
-    0.9757052638429896,
-    0.9757114127910813,
-    0.999326278746651,
-    0.9993700030783278,
-    0.9999284675513884,
-    0.9999368111312241,
-    0.999997364669479
+    0.0,
+    1.0
   ],
   "thresholds_y": [
     0.0,
-    0.0,
-    0.02247191011235955,
-    0.02247191011235955,
-    0.08333333333333333,
-    0.08333333333333333,
-    0.2,
-    0.2,
-    0.2054794520547945,
-    0.2054794520547945,
-    0.5675675675675675,
-    0.5675675675675675,
-    0.92,
-    0.92,
-    1.0,
     1.0
   ],
-  "validation_brier_raw": 0.19594712612896828,
-  "validation_brier_calibrated": 0.0703482929412544,
+  "validation_brier_raw": null,
+  "validation_brier_calibrated": null,
   "validation_cohort": [
     "2025-11-17",
     "2026-05-14"
   ],
   "interval_calibration": {
     "method": "split conformal interval correction fitted on validation paid invoices, with per-currency calibration when n \u2265 20",
-    "correction_days": 17,
+    "correction_days": 0,
     "count": 442,
     "target": 0.8,
     "currency_corrections": {
       "EUR": {
-        "correction_days": 17,
+        "correction_days": 0,
         "count": 129
       },
       "GBP": {
-        "correction_days": 18,
+        "correction_days": 3,
         "count": 133
       },
       "USD": {
-        "correction_days": 18,
+        "correction_days": 0,
         "count": 180
       }
     },
-    "caveat": "Paid-only calibration; censoring, small currency slices, and client dependence limit marginal coverage guarantees."
+    "caveat": "Paid-only calibration; censoring, small currency slices, and client dependence limit marginal coverage guarantees.",
+    "selection": {
+      "window": "full validation window",
+      "recent_months": [
+        "2026-03",
+        "2026-04",
+        "2026-05"
+      ],
+      "recent_paid_count": 185,
+      "validation_residual_drift": {
+        "method": "two-sample Kolmogorov\u2013Smirnov test on signed paid-invoice P50 residuals",
+        "calibration_count": 257,
+        "test_count": 185,
+        "calibration_median_residual_days": 1.0,
+        "test_median_residual_days": 6.0,
+        "statistic": 0.11122094857503412,
+        "p_value": 0.1270817432126065,
+        "drift_detected_at_0_05": false,
+        "caveat": "Paid-only residual diagnostic; it is a drift check, not a censoring-adjusted calibration guarantee."
+      },
+      "rule": "Use the recent window only when earlier-versus-recent validation residual KS p < 0.05 and the recent window has at least 20 paid invoices; never select a window using test outcomes."
+    }
   }
 }

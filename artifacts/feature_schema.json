@@ -1,5 +1,5 @@
 {
-  "version": "latepayer-features-v5",
+  "version": "latepayer-features-v6",
   "features": [
     "log_outstanding",
     "terms_days",

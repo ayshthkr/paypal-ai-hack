@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 import pytest
 from app.services.forecast import (
-    _calibrate_survival_curve, _consistent_quantiles, _display_curve,
+    _apply_promise_scenario, _calibrate_survival_curve, _consistent_quantiles, _display_curve,
     conditional_tail, _quantile, collection_probability,
 )
 from app.services.policy import decide
@@ -21,7 +21,7 @@ def test_unpaid_tail_conditions_at_current_age_without_tomorrow_floor():
     assert collection_probability([], today) == .35
 
 
-def test_forecast_quantiles_obey_14_day_probability_and_display_curve_is_compact():
+def test_curve_quantiles_are_not_overwritten_by_conformal_interval():
     today = date(2026, 11, 11)
     quantiles = {
         "p10": {"days": 1, "date": "2026-11-12"},
@@ -29,9 +29,11 @@ def test_forecast_quantiles_obey_14_day_probability_and_display_curve_is_compact
         "p90": {"days": 100, "date": "2027-02-19"},
     }
     consistent = _consistent_quantiles(quantiles, {"14d": .06}, today)
-    assert consistent["p10"]["days"] == 15
-    assert consistent["p50"]["days"] == 15
+    assert consistent["p10"]["days"] == 1
+    assert consistent["p50"]["days"] == 5
     assert consistent["p10"]["days"] <= consistent["p50"]["days"] <= consistent["p90"]["days"]
+    with pytest.raises(ValueError, match="same survival curve"):
+        _consistent_quantiles({"p10": quantiles["p90"], "p50": quantiles["p50"], "p90": quantiles["p10"]}, {}, today)
 
     raw_curve = [1 - .2 * day / 180 for day in range(181)]
     calibration = {"applied": True, "thresholds_x": [0, .2], "thresholds_y": [0, .6]}
@@ -42,6 +44,75 @@ def test_forecast_quantiles_obey_14_day_probability_and_display_curve_is_compact
     display_curve = _display_curve(calibrated)
     assert len(display_curve) == 60
     assert display_curve[0] == calibrated[0] and display_curve[-1] == calibrated[-1]
+
+
+def test_one_hundred_curve_p10_dates_match_ten_percent_probability():
+    import random
+    rng = random.Random(20261111)
+    today = date(2026, 11, 11)
+    for _ in range(100):
+        hazard = rng.uniform(.015, .035)
+        curve = [1.0]
+        for _day in range(180):
+            curve.append(curve[-1] * (1.0 - hazard))
+        p10 = _quantile(curve, .9, today)
+        p50 = _quantile(curve, .5, today)
+        p90 = _quantile(curve, .1, today)
+        assert p10 and p50 and p90
+        assert p10["days"] <= p50["days"] <= p90["days"]
+        day = p10["days"]
+        lower = int(day)
+        survival_at_crossing = curve[lower] + (curve[lower + 1] - curve[lower]) * (day - lower)
+        assert 1.0 - survival_at_crossing == pytest.approx(.10, abs=.002)
+
+
+def test_uno_concordance_matches_pairwise_definition_with_ties_and_censoring():
+    from ml.survival_metrics import uno_concordance
+    subjects = [({"id": "a"}, 2, 1), ({"id": "b"}, 3, 1), ({"id": "c"}, 4, 0), ({"id": "d"}, 5, 1)]
+    risks = {"a": 0.8, "b": 0.8, "c": 0.2, "d": 0.1}
+    censor_g = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5]
+    pairs = []
+    for invoice, duration, event in subjects:
+        if event:
+            weight = 1 / censor_g[duration - 1] ** 2
+            for other, later_duration, _ in subjects:
+                if later_duration > duration:
+                    score = risks[invoice["id"]] - risks[other["id"]]
+                    pairs.append((weight, 1.0 if score > 0 else .5 if score == 0 else 0.0))
+    expected = sum(weight * score for weight, score in pairs) / sum(weight for weight, _ in pairs)
+    assert uno_concordance(subjects, risks, censor_g) == pytest.approx(expected)
+
+
+def test_thirty_day_calibration_uses_censored_invoices_observed_through_horizon():
+    from ml.evaluation import horizon_calibration
+    subjects = [
+        ({"id": "paid"}, 10, 1),
+        ({"id": "censored-after"}, 45, 0),
+        ({"id": "censored-before"}, 20, 0),
+    ]
+    curves = {
+        "paid": [1.0] + [.5] * 180,
+        "censored-after": [1.0] + [.9] * 180,
+        "censored-before": [1.0] + [.8] * 180,
+    }
+    result = horizon_calibration(subjects, curves, [1.0] * 181, 30)
+    assert result["count"] == 2
+    assert result["censored_known_negative_count"] == 1
+    assert result["censored_before_horizon_excluded"] == 1
+
+
+def test_promise_date_shifts_curve_as_labeled_mixture_without_exceeding_recovery_cap():
+    today = date(2026, 11, 11)
+    curve = [1.0 - .6 * day / 180 for day in range(181)]
+    adjusted, detail = _apply_promise_scenario(curve, today + timedelta(days=10), today, .6)
+    assert detail["applied"] is True
+    assert detail["weight"] == .25
+    assert adjusted[14] < curve[14]
+    assert adjusted[180] == pytest.approx(.4)
+    assert all(left >= right for left, right in zip(adjusted, adjusted[1:]))
+    unchanged, expired = _apply_promise_scenario(curve, today - timedelta(days=1), today, .6)
+    assert expired["status"] == "expired"
+    assert unchanged == curve
 
 
 def test_ninety_day_bucket_boundary_matches_policy_cutoff():

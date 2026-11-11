@@ -6,7 +6,7 @@ import math
 import statistics
 from datetime import date, datetime
 
-FEATURE_SCHEMA_VERSION = "latepayer-features-v5"
+FEATURE_SCHEMA_VERSION = "latepayer-features-v6"
 GLOBAL_DELAY_PRIOR_DAYS = 10.0
 GLOBAL_LATE_RATE_PRIOR = 0.45
 GLOBAL_AMOUNT_MEDIAN_PRIOR = 4_000.0

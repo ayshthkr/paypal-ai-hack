@@ -21,7 +21,7 @@ from ml.features import FEATURES, FEATURE_SCHEMA_VERSION, features
 
 HORIZON = 180
 DISPLAY_CURVE_POINTS = 60
-FORECAST_REVISION = "calibrated-survival-v6"
+FORECAST_REVISION = "curve-quantiles-v7"
 
 
 def _display_curve(curve: list[float]) -> list[float]:
@@ -60,20 +60,13 @@ def _calibrate_survival_curve(curve: list[float], calibration: dict) -> list[flo
 
 
 def _consistent_quantiles(quantiles: dict, probabilities: dict, today: date) -> dict:
-    """Keep reported payment quantiles consistent with the same probability curve."""
+    """Reject quantiles whose ordering contradicts their source survival curve."""
+    del probabilities, today
     output = dict(quantiles)
-    p10, p50, p90 = output.get("p10"), output.get("p50"), output.get("p90")
-    if probabilities.get("14d", 0.0) < 0.50 and p50 and p50.get("days", 0) <= 14:
-        p50 = {"days": 15.0, "date": (today + timedelta(days=15)).isoformat()}
-        output["p50"] = p50
-    if probabilities.get("14d", 0.0) < 0.10 and p10 and p10.get("days", 0) <= 14:
-        minimum_day = max(15, int(math.ceil(p50["days"]))) if p50 else 15
-        p10 = {"days": float(minimum_day), "date": (today + timedelta(days=minimum_day)).isoformat()}
-        output["p10"] = p10
-    if p50 and output.get("p10") and output["p10"]["days"] > p50["days"]:
-        output["p10"] = p50
-    if p50 and p90 and p90["days"] < p50["days"]:
-        output["p90"] = p50
+    ordered = [output.get(key) for key in ("p10", "p50", "p90")]
+    days = [value["days"] for value in ordered if value and value.get("days") is not None]
+    if days != sorted(days):
+        raise ValueError("Payment quantiles must be monotone and come from the same survival curve.")
     return output
 
 
@@ -101,6 +94,7 @@ def _as_record(invoice: Invoice, payments: list[Payment]) -> dict:
         "currency": invoice.currency,
         "status": invoice.status,
         "disputed": invoice.disputed,
+        "promised_payment_date": invoice.promised_payment_date,
         "viewed_at": business_date(invoice.viewed_at) if invoice.viewed_at else None,
         "viewed_by_recipient": bool(invoice.viewed_at or invoice.viewed_by_recipient),
         "viewed_observed_at": business_date(invoice.viewed_observed_at) if invoice.viewed_observed_at else None,
@@ -208,6 +202,36 @@ def _quantile(curve: list[float], threshold: float, today: date) -> dict | None:
     return {"days": round(crossing, 2), "date": (today + timedelta(days=math.ceil(crossing))).isoformat()}
 
 
+def _apply_promise_scenario(curve: list[float], promised_date, today: date,
+                            recovery_probability: float = 1.0, weight: float = 0.25) -> tuple[list[float], dict]:
+    if isinstance(promised_date, str):
+        try:
+            promised_date = date.fromisoformat(promised_date[:10])
+        except ValueError:
+            promised_date = None
+    if not promised_date:
+        return curve, {"applied": False, "status": "none", "weight": 0.0}
+    if promised_date <= today:
+        return curve, {"applied": False, "status": "expired", "date": promised_date.isoformat(), "weight": 0.0}
+    promise_day = (promised_date - today).days
+    if promise_day > HORIZON:
+        return curve, {"applied": False, "status": "after_horizon", "date": promised_date.isoformat(), "weight": 0.0}
+    recovery = min(1.0, max(0.0, float(recovery_probability)))
+    if recovery <= 0:
+        return curve, {"applied": False, "status": "no_recovery_evidence", "date": promised_date.isoformat(), "weight": 0.0}
+    adjusted = []
+    for day, survival in enumerate(curve):
+        base_recovered_cdf = min(1.0, max(0.0, (1.0 - survival) / recovery))
+        promised_cdf = 1.0 if day >= promise_day else 0.0
+        scenario_cdf = (1.0 - weight) * base_recovered_cdf + weight * promised_cdf
+        adjusted.append(1.0 - recovery * scenario_cdf)
+    return adjusted, {
+        "applied": True, "status": "scenario", "date": promised_date.isoformat(),
+        "weight": weight, "method": "Illustrative mixture: 25% of eventual recovery is placed on the stated date; remaining mass follows the forecast curve.",
+        "caveat": "Promise adherence is not estimated from training data; the adjustment is a scenario, not a guarantee.",
+    }
+
+
 @timed("scoring")
 def forecast_invoice(
     db: Session, invoice: Invoice, today: date | None = None, persist: bool = True,
@@ -256,6 +280,7 @@ def forecast_invoice(
             item.issue_date.isoformat(), item.due_date.isoformat(), item.viewed_at.isoformat() if item.viewed_at else None,
             item.viewed_by_recipient, item.viewed_observed_at.isoformat() if item.viewed_observed_at else None,
             item.partial_payment_allowed, item.payment_term_type, item.reminder_step, item.reminder_events or [],
+            item.promised_payment_date.isoformat() if item.promised_payment_date else None,
         ) for item in client_invoices),
         "payments": sorted((p.provider_payment_id, str(p.amount), p.occurred_at.isoformat()) for p in payments),
         "today": today.isoformat(),
@@ -285,6 +310,10 @@ def forecast_invoice(
         scored_at = existing.scored_at
         if scored_at.tzinfo is None:
             scored_at = scored_at.replace(tzinfo=timezone.utc)
+        _, promise_adjustment = _apply_promise_scenario(
+            curve, target.get("promised_payment_date"), today,
+            collection_probability(records, today) if max(0, (today - invoice.due_date).days) >= 90 else 1.0,
+        )
     else:
         curve = None
     hazards: list[float] = []
@@ -316,6 +345,10 @@ def forecast_invoice(
             # Keep all calibrated probabilities below the historical recovery
             # ceiling while preserving a non-increasing survival curve.
             curve = [max(1.0 - collection, survival) for survival in curve]
+        recovery_probability = collection if overdue >= 90 else 1.0
+        curve, promise_adjustment = _apply_promise_scenario(
+            curve, target.get("promised_payment_date"), today, recovery_probability,
+        )
         model_label = active_model if use_model else "kaplan_meier"
         history_count = int(base_features["history_count"])
         late_rate = base_features["history_late_rate"]
@@ -331,20 +364,13 @@ def forecast_invoice(
         overdue_days_for_reason = max(0, (today - invoice.due_date).days)
         if overdue_days_for_reason:
             reasons.append(f"Invoice is already {overdue_days_for_reason} days overdue.")
+        if promise_adjustment.get("applied"):
+            reasons.append(f"A client promise for {promise_adjustment['date']} is reflected as an illustrative 25% scenario adjustment.")
         quantiles = {
             "p10": _quantile(curve, 0.9, today),
             "p50": _quantile(curve, 0.5, today),
             "p90": _quantile(curve, 0.1, today),
         }
-        interval = calibration.get("interval_calibration", {})
-        if interval.get("count", 0) > 0:
-            currency_correction = interval.get("currency_corrections", {}).get(invoice.currency, {}).get(
-                "correction_days", interval.get("correction_days", 0),
-            )
-            age_widening = math.ceil(max(0, overdue_days_for_reason - 60) / 6)
-            lo, median, hi = calibrated_band(curve, int(currency_correction) + age_widening)
-            quantiles["p10"] = {"days": lo, "date": (today + timedelta(days=lo)).isoformat()} if lo else None
-            quantiles["p90"] = {"days": hi, "date": (today + timedelta(days=hi)).isoformat()} if hi else None
         probabilities = {f"{day}d": round(1.0 - curve[day], 6) for day in (7, 14, 30)}
         quantiles = _consistent_quantiles(quantiles, probabilities, today)
         scored_at = datetime.now(timezone.utc)
@@ -360,10 +386,26 @@ def forecast_invoice(
                 portfolio["predictions_by_key"][prediction_key] = prediction
             else:
                 db.flush()
+    interval = calibration.get("interval_calibration", {})
+    currency_correction = interval.get("currency_corrections", {}).get(invoice.currency, {}).get(
+        "correction_days", interval.get("correction_days", 0),
+    )
+    age_widening = math.ceil(max(0, max(0, (today - invoice.due_date).days) - 60) / 6)
+    lower_day, median_day, upper_day = calibrated_band(curve, int(currency_correction) + age_widening)
+    coverage_interval = {
+        "lower_date": (today + timedelta(days=lower_day)).isoformat() if lower_day else None,
+        "median_date": (today + timedelta(days=median_day)).isoformat() if median_day else None,
+        "upper_date": (today + timedelta(days=upper_day)).isoformat() if upper_day else None,
+        "target_coverage": interval.get("target", 0.8),
+        "method": interval.get("method", "Uncalibrated survival interval"),
+        "caveat": "Coverage calibration is paid-only; promise adherence and promise-adjusted coverage are not estimated from training data.",
+    }
     overdue_days = max(0, (today - invoice.due_date).days)
     return {
         "curve": _display_curve(curve),
         "quantiles": quantiles,
+        "coverage_interval": coverage_interval,
+        "promise_adjustment": promise_adjustment,
         "probabilities": probabilities,
         "probability_by_due": round(1.0 - curve[min(HORIZON, max(0, (invoice.due_date - today).days))], 6) if invoice.due_date >= today else 0.0,
         "reasons": reasons,

@@ -1,0 +1,102 @@
+{
+  "dataset": "Customer Invoices Dataset",
+  "source": "https://www.kaggle.com/datasets/pradumn203/payment-date-prediction-for-invoices-dataset",
+  "license": "CC BY-NC 4.0",
+  "evaluation_type": "Independent public-cohort refits of Cox and pooled Kaplan\u2013Meier plus the production daily LightGBM hazard training recipe on a smaller deterministic sample. All models use issue-time features and the same IPCW survival metrics as the synthetic evaluation. This is an external pipeline check, not a prospective result for the synthetic-trained deployed model.",
+  "cleaning": {
+    "source_rows": 50000,
+    "valid_unique_invoice_count": 48702,
+    "conflicting_invoice_id_groups_dropped": 0,
+    "invalid_or_anomalous_rows_dropped": 140,
+    "right_censored_open_count": 9654,
+    "fully_paid_count": 39048,
+    "observation_end": "2020-05-22",
+    "currencies": {
+      "CAD": 3818,
+      "USD": 44884
+    },
+    "issue_date_range": [
+      "2018-12-30",
+      "2020-05-22"
+    ],
+    "privacy": "Customer and invoice identifiers are SHA-256 hashed in memory; output contains aggregates and no row-level data."
+  },
+  "split": {
+    "training_issue_date_through": "2019-11-24",
+    "test_issue_date_after": "2019-11-24",
+    "observation_end": "2020-05-22",
+    "horizon_days": 180,
+    "train_invoice_count": 3265,
+    "train_paid_count": 3265,
+    "test_invoice_count": 1735,
+    "test_paid_count": 745,
+    "test_right_censored_count": 990,
+    "test_unit": "invoice",
+    "benchmark_sample_count": 5000,
+    "benchmark_sample_method": "Deterministic SHA-256 sample stratified across the temporal train and test partitions; all unique invoices remain available as point-in-time client-history evidence.",
+    "lightgbm_train_invoice_count": 653,
+    "lightgbm_train_paid_count": 653,
+    "lightgbm_test_invoice_count": 347,
+    "lightgbm_test_paid_count": 149,
+    "lightgbm_test_right_censored_count": 198,
+    "lightgbm_sample_method": "Deterministic SHA-256 temporal sample bounded at 1,000 invoices to run the production daily risk-row expansion and LightGBM training recipe."
+  },
+  "survival_metrics": {
+    "kaplan_meier": {
+      "uno_concordance": 0.5,
+      "integrated_brier_score": 0.14108009577963962,
+      "brier_scores": {
+        "7": 0.016079047863579558,
+        "14": 0.18015698951513748,
+        "30": 0.4578709977129104,
+        "60": 0.3362399059172144,
+        "90": 0.009311872029597065,
+        "120": 0.004015422631776742
+      },
+      "time_dependent_auc": {
+        "due_date": 0.5410071030160581,
+        "due_plus_14_days": 0.518742084267418,
+        "due_plus_30_days": 0.5317671903282755
+      }
+    },
+    "cox": {
+      "uno_concordance": 0.6238059845294134,
+      "integrated_brier_score": 0.14284973487804317,
+      "brier_scores": {
+        "7": 0.01593341453299393,
+        "14": 0.18155220337378952,
+        "30": 0.4722742650630014,
+        "60": 0.32988798564312055,
+        "90": 0.007891707816553163,
+        "120": 0.006440950052698527
+      },
+      "time_dependent_auc": {
+        "due_date": 0.696000914444109,
+        "due_plus_14_days": 0.5728450582123821,
+        "due_plus_30_days": 0.5453082750452524
+      }
+    },
+    "lightgbm_daily_hazard": {
+      "uno_concordance": 0.6499161810489343,
+      "integrated_brier_score": 0.14512434885071937,
+      "brier_scores": {
+        "7": 0.017007504208040414,
+        "14": 0.20593910127990858,
+        "30": 0.49480333543290766,
+        "60": 0.3163615144010606,
+        "90": 0.012458282162490019,
+        "120": 0.006713870816054662
+      },
+      "time_dependent_auc": {
+        "due_date": 0.7299589603283174,
+        "due_plus_14_days": 0.775,
+        "due_plus_30_days": 0.7909167367535744
+      }
+    }
+  },
+  "caveats": [
+    "Payment timing and customer mix differ from the synthetic USD/EUR/GBP demonstration data; public data includes USD and CAD.",
+    "The public benchmark is historical and limited to its source population and collection process.",
+    "The non-commercial license permits research evaluation; do not use the dataset as a commercial training source without separate rights review."
+  ]
+}

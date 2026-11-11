@@ -2,25 +2,56 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.optimize import minimize
+from bisect import bisect_left, bisect_right
 
 
 def uno_concordance(subjects, risks: dict[str, float], censor_survival: list[float]) -> float | None:
     """Uno's IPCW concordance for right-censored invoice settlement times."""
     comparable_weight = 0.0
     concordant_weight = 0.0
-    for invoice, duration, event in subjects:
-        if not event or invoice["id"] not in risks:
-            continue
-        g_index = min(max(0, duration - 1), len(censor_survival) - 1)
-        g = max(1e-6, censor_survival[g_index])
-        weight = 1.0 / (g * g)
-        risk = risks[invoice["id"]]
-        for other, other_duration, _ in subjects:
-            if other_duration <= duration or other["id"] not in risks:
+    observed = [(invoice["id"], int(duration), int(event), float(risks[invoice["id"]]))
+                for invoice, duration, event in subjects
+                if invoice["id"] in risks and np.isfinite(risks[invoice["id"]])]
+    if not observed:
+        return None
+    levels = sorted({risk for _, _, _, risk in observed})
+    tree = [0] * (len(levels) + 1)
+
+    def add(index: int, amount: int) -> None:
+        index += 1
+        while index < len(tree):
+            tree[index] += amount
+            index += index & -index
+
+    def prefix(stop: int) -> int:
+        total = 0
+        while stop:
+            total += tree[stop]
+            stop -= stop & -stop
+        return total
+
+    grouped = {}
+    for row in observed:
+        grouped.setdefault(row[1], []).append(row)
+    later_count = 0
+    for duration in sorted(grouped, reverse=True):
+        current = grouped[duration]
+        # Only strictly later observed durations are comparable with events at this time.
+        for _, _, event, risk in current:
+            if not event:
                 continue
-            comparable_weight += weight
-            other_risk = risks[other["id"]]
-            concordant_weight += weight * (1.0 if risk > other_risk else 0.5 if risk == other_risk else 0.0)
+            rank = bisect_left(levels, risk)
+            less = prefix(rank)
+            through_equal = prefix(bisect_right(levels, risk))
+            equal = through_equal - less
+            g_index = min(max(0, duration - 1), len(censor_survival) - 1)
+            g = max(1e-6, censor_survival[g_index])
+            weight = 1.0 / (g * g)
+            comparable_weight += later_count * weight
+            concordant_weight += (less + 0.5 * equal) * weight
+        for _, _, _, risk in current:
+            add(bisect_left(levels, risk), 1)
+            later_count += 1
     return concordant_weight / comparable_weight if comparable_weight else None
 
 

@@ -1,6 +1,6 @@
 {
-  "model_version": "lgbm-hazard-v5-seed-20261110-asof-2026-11-11",
-  "feature_schema_version": "latepayer-features-v5",
+  "model_version": "lgbm-hazard-v6-seed-20261110-asof-2026-11-11",
+  "feature_schema_version": "latepayer-features-v6",
   "seed": 20261110,
   "training_seed": 20261110,
   "feature_list": [
@@ -40,7 +40,7 @@
     "currency_is_eur",
     "currency_is_gbp"
   ],
-  "trained_at": "2026-11-10T22:47:16.080589+00:00",
+  "trained_at": "2026-11-11T05:51:42.997236+00:00",
   "as_of_date": "2026-11-11",
   "history_cutoff": "2026-11-11",
   "training_date_range": [
@@ -86,12 +86,13 @@
   ],
   "test_integrated_brier_lightgbm": 0.09701018163590626,
   "test_integrated_brier_km": 0.08783296886466115,
-  "test_uno_concordance_lightgbm": 0.756300414162722,
+  "test_uno_concordance_lightgbm": 0.7563004141627692,
   "test_uno_concordance_km": 0.5,
-  "test_uno_concordance_cox": 0.7874802127193867,
-  "test_paid_only_date_mae_days": 17.065359477124183,
+  "test_uno_concordance_cox": 0.7874802127194457,
+  "test_paid_only_date_mae_days": 19.607843137254903,
   "test_paid_only_invoice_count": 306,
-  "test_p10_p90_coverage": 0.7941176470588235,
+  "test_p10_p90_coverage": 0.8104575163398693,
+  "test_calibrated_interval_coverage": 0.8104575163398693,
   "caveat": "These synthetic-cohort metrics verify the pipeline only; they do not establish real-world forecast accuracy. Paid-only date error excludes censored invoices.",
   "evaluation_training_cutoff": "2025-11-16",
   "deployment_refit": "Expanding window through as-of; held-out metrics use the earlier frozen model. Calibration is transferred from the frozen validation model and requires monitoring after refit."
