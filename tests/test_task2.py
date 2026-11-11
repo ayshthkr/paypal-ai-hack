@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from app.services.forecast import (
     _apply_promise_scenario, _calibrate_survival_curve, _consistent_quantiles, _display_curve,
+    _weekly_settlement_probabilities,
     conditional_tail, _quantile, collection_probability,
 )
 from app.services.policy import decide
@@ -34,6 +35,18 @@ def test_curve_quantiles_are_not_overwritten_by_conformal_interval():
     assert consistent["p10"]["days"] <= consistent["p50"]["days"] <= consistent["p90"]["days"]
     with pytest.raises(ValueError, match="same survival curve"):
         _consistent_quantiles({"p10": quantiles["p90"], "p50": quantiles["p50"], "p90": quantiles["p10"]}, {}, today)
+
+
+def test_weekly_cash_uses_settlement_probability_mass_by_calendar_week():
+    today = date(2026, 11, 11)
+    curve = [1.0, 0.8, 0.8, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5, 0.0]
+    allocation = _weekly_settlement_probabilities(curve, today)
+    assert allocation == [
+        {"week_start": "2026-11-09", "probability": 0.2},
+        {"week_start": "2026-11-16", "probability": 0.8},
+    ]
+    expected_cash = {point["week_start"]: 1000 * point["probability"] for point in allocation}
+    assert expected_cash == {"2026-11-09": 200, "2026-11-16": 800}
 
     raw_curve = [1 - .2 * day / 180 for day in range(181)]
     calibration = {"applied": True, "thresholds_x": [0, .2], "thresholds_y": [0, .6]}
@@ -298,12 +311,18 @@ def test_skip_undo_and_draft_persistence(api):
         assert db.get(Invoice,'draft-invoice').reminder_step == 0
 
 
-def test_repeated_queue_reads_reuse_one_proposal_and_one_audit(api):
+def test_repeated_queue_reads_reuse_one_proposal_and_one_audit(api, monkeypatch):
     from decimal import Decimal
     from app.models import Client, Invoice, Recommendation, PolicyDecisionLog, DemoState
     from app.services.policy import holdback_assignment
     from app.http_cache import invalidate
+    import app.main as main
     client, Session = api
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1},
+        "quantiles": {"p10": None, "p50": None, "p90": None},
+        "reasons": [], "model": "test", "model_version": "test", "already_overdue": True,
+    })
     today = date.today()
     invoice_id = next(f'queue-race-{i}' for i in range(100) if not holdback_assignment(f'queue-race-{i}',today))
     with Session() as db:

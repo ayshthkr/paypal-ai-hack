@@ -4,9 +4,11 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app import main
 from app import security
@@ -438,7 +440,7 @@ def test_mixed_currency_open_totals_remain_separate_in_api(api):
     assert payload["currency_totals"] == {"EUR": "80.00", "USD": "120.00"}
     amounts = payload["aging_buckets"]["late_1_30"]["amounts"]
     assert amounts == {"EUR": "80.00", "USD": "120.00"}
-    assert payload["cash_horizon"]["next_8_weeks"]["count"] + payload["cash_horizon"]["after_8_weeks"]["count"] + payload["cash_horizon"]["beyond_180_days"]["count"] == payload["view_counts"]["open"]
+    assert sum(bucket["count"] for bucket in payload["cash_horizon"].values()) == payload["view_counts"]["open"]
     horizon_amounts = {}
     for bucket in payload["cash_horizon"].values():
         for currency, amount in bucket["amounts"].items():
@@ -662,9 +664,9 @@ def test_portfolio_signal_total_equals_all_visible_signal_counts(api, monkeypatc
             db.add(_invoice(f"signal-invoice-{index}", owner.id, due=today-timedelta(days=10)))
         db.commit()
     payload = client.get("/invoices?view=open").json()
-    assert payload["drifting_client_count"] == 4
-    assert sum(payload["drifting_signal_counts"].values()) == 4
-    assert payload["drifting_signal_counts"]["habitually_late"] == 1
+    assert payload["drifting_client_count"] == 3
+    assert sum(payload["drifting_signal_counts"].values()) == 3
+    assert payload["habitually_late_client_count"] == 1
 
 
 def test_health_probe_is_minimal_and_ready_does_not_expose_configuration(api):
@@ -858,7 +860,7 @@ def test_reply_classifier_extracts_promise_dates_and_flags_disputes(monkeypatch)
     assert ai_service.classify_reply("Could you send a receipt?")[0] == "question"
 
 
-def test_reply_triage_pauses_promised_invoice_and_dispute(api, monkeypatch):
+def test_reply_triage_requires_approval_and_can_be_corrected(api, monkeypatch):
     client, Session = api
     fixed_today = date(2026, 11, 10)
     monkeypatch.setattr(main, "_today", lambda db=None, source=None: fixed_today)
@@ -878,7 +880,15 @@ def test_reply_triage_pauses_promised_invoice_and_dispute(api, monkeypatch):
     assert promised.status_code == 200, promised.text
     assert promised.json()["classification"] == "promise_to_pay"
     assert promised.json()["promised_payment_date"] == "2026-11-13"
-    assert promised.json()["reminders_paused"] is True
+    assert promised.json()["state"] == "pending"
+    assert promised.json()["reminders_paused"] is False
+    detail = client.get("/invoices/reply-invoice").json()
+    assert detail["promised_payment_date"] is None
+    applied = client.post(f"/invoices/reply-invoice/reply-triage/{promised.json()['id']}/apply", json={
+        "classification": "promise_to_pay", "promised_payment_date": "2026-11-13",
+    })
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["state"] == "applied"
     detail = client.get("/invoices/reply-invoice").json()
     assert detail["decision"]["action"] == "wait"
     assert "promised payment" in detail["decision"]["reason"]
@@ -888,9 +898,82 @@ def test_reply_triage_pauses_promised_invoice_and_dispute(api, monkeypatch):
     assert disputed.json()["classification"] == "dispute"
     assert disputed.json()["reminders_paused"] is True
     with Session() as db:
+        assert db.get(Invoice, "reply-invoice").disputed is False
+    applied_dispute = client.post(f"/invoices/reply-invoice/reply-triage/{disputed.json()['id']}/apply", json={
+        "classification": "dispute", "promised_payment_date": None,
+    })
+    assert applied_dispute.status_code == 200, applied_dispute.text
+    with Session() as db:
         invoice = db.get(Invoice, "reply-invoice")
         assert invoice.disputed is True
         assert db.query(ReplyTriage).filter_by(invoice_id=invoice.id).count() == 2
+
+
+def test_forecast_scores_hypothetical_new_invoice_dates(api, monkeypatch):
+    from app.services import forecast as forecast_service
+
+    _, Session = api
+    as_of = date(2026, 11, 10)
+    monkeypatch.setattr(forecast_service, "_load_artifacts", lambda: (
+        None, [0.01] * 180, "kaplan_meier", "scenario-test", {}, {},
+    ))
+    with Session() as db:
+        owner = Client(id="scenario-owner", display_name="Scenario Client", source="demo", drift={})
+        db.add(owner)
+        db.flush()
+        invoice = _invoice("scenario-existing-invoice", owner.id)
+        invoice.issue_date = date(2026, 7, 1)
+        invoice.due_date = date(2026, 7, 31)
+        db.add(invoice)
+        db.flush()
+        result = forecast_service.forecast_invoice(db, invoice, today=as_of, persist=False, scenario={
+            "issue_date": as_of,
+            "due_date": as_of + timedelta(days=15),
+            "payment_term_type": "NET_15",
+            "outstanding": Decimal("100.00"),
+            "total": Decimal("100.00"),
+        })
+        assert result["already_overdue"] is False
+        assert result["probability_by_due"] > 0
+
+
+def test_demo_sessions_keep_mutations_isolated_between_browsers(api, monkeypatch):
+    client, Session = api
+    session_a, session_b = str(uuid4()), str(uuid4())
+    monkeypatch.setattr(main, "SessionLocal", Session)
+    monkeypatch.setattr(main, "forecast_invoice", lambda *args, **kwargs: {
+        "probability_by_due": 0.1, "probabilities": {"14d": 0.1},
+        "quantiles": {"p10": None, "p50": None, "p90": None},
+        "reasons": [], "model": "test", "model_version": "test", "already_overdue": True,
+    })
+    monkeypatch.setattr(main, "_drift_for", lambda *args, **kwargs: {
+        "signal_type": "insufficient_history", "available": False, "severity_score": 0,
+    })
+    today = date.today()
+    with Session() as db:
+        db.add(DemoState(id="demo", as_of_date=today))
+        db.add(Client(id="isolated-owner", display_name="Isolated", source="demo", drift={}))
+        db.flush()
+        db.add(_invoice("shared-base-invoice", "isolated-owner", due=today - timedelta(days=5)))
+        db.commit()
+
+    source_a = main._ensure_demo_session(session_a)
+    source_b = main._ensure_demo_session(session_b)
+    assert source_a != source_b
+    first = client.get("/invoices?view=open", headers={"x-demo-session": session_a})
+    second = client.get("/invoices?view=open", headers={"x-demo-session": session_b})
+    assert first.status_code == second.status_code == 200
+    invoice_a = first.json()["items"][0]
+    invoice_b = second.json()["items"][0]
+    assert invoice_a["source"] == source_a and invoice_b["source"] == source_b
+    assert invoice_a["id"] != invoice_b["id"]
+
+    paid = client.post(f"/demo/invoices/{invoice_a['id']}/payment", json={}, headers={"x-demo-session": session_a})
+    assert paid.status_code == 200, paid.text
+    with Session() as db:
+        assert db.get(Invoice, "shared-base-invoice").outstanding == Decimal("100.00")
+        assert db.scalar(select(Invoice).where(Invoice.source == source_b)).outstanding == Decimal("100.00")
+        assert db.scalar(select(Invoice).where(Invoice.source == source_a)).outstanding == Decimal("0.00")
 
 
 def test_facts_endpoints_and_receivables_questions_are_structured_and_scoped(api, monkeypatch):

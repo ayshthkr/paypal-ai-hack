@@ -3,7 +3,7 @@ import json
 from datetime import date, datetime
 from decimal import Decimal
 from sqlalchemy import Date, DateTime, Numeric, bindparam, delete, insert, select, update
-from app.models import ActionAttempt, Client, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
+from app.models import ActionAttempt, Client, CollectionReview, DemoState, Invoice, Payment, PolicyDecisionLog, Prediction, ReadModel, Recommendation, ReplyTriage
 
 SNAPSHOT_VERSION = "task3-v5"
 
@@ -43,6 +43,7 @@ def restore(db, as_of):
     invoice_ids = select(Invoice.id).where(Invoice.source == "demo")
     rec_ids = select(Recommendation.id).where(Recommendation.invoice_id.in_(invoice_ids))
     db.execute(delete(ActionAttempt).where(ActionAttempt.recommendation_id.in_(rec_ids)))
+    db.execute(delete(CollectionReview).where(CollectionReview.invoice_id.in_(invoice_ids)))
     for model in (Recommendation, PolicyDecisionLog, ReplyTriage, Prediction, Payment):
         db.execute(delete(model).where(model.invoice_id.in_(invoice_ids)))
     db.execute(delete(Invoice).where(Invoice.source == "demo"))
@@ -122,6 +123,7 @@ def _restore_changed(db, as_of, payload):
         if values:
             db.execute(update(model.__table__).where(model.__table__.c.id == bindparam("restore_id")), values)
     if clients:
+        db.execute(delete(CollectionReview).where(CollectionReview.invoice_id.in_(client_invoice_ids)))
         db.execute(delete(Prediction).where(Prediction.invoice_id.in_(client_invoice_ids)))
         predictions = [_decoded(Prediction, row) for row in payload["predictions"] if row["invoice_id"] in client_invoice_ids]
         if predictions:

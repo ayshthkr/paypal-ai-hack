@@ -35,7 +35,9 @@ class PrivateReadCache:
         eligible = method == "GET" and path not in {"/health", "/ready", "/auth/me"} and not path.endswith(".csv")
         if method == "GET" and not eligible:
             return await self.app(scope, receive, send)
-        key = (None, path, scope["query_string"], hashlib.sha256(headers.get(b"cookie", b"")).digest())
+        demo_session = headers.get(b"x-demo-session", b"")
+        cache_identity = headers.get(b"cookie", b"") + b"\0" + demo_session
+        key = (None, path, scope["query_string"], hashlib.sha256(cache_identity).digest())
         with _lock:
             generation = _generation
             entry = _entries.get(key) if eligible else None

@@ -34,6 +34,15 @@ class DemoState(Base):
     reset_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class DemoSession(Base):
+    __tablename__ = "demo_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, unique=True, index=True)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
 class Invoice(Base):
     __tablename__ = "invoices"
     __table_args__ = (Index("ix_invoices_status_due_date", "status", "due_date"),)
@@ -184,7 +193,20 @@ class ReplyTriage(Base):
     classification: Mapped[str] = mapped_column(String(24), nullable=False)
     promised_payment_date: Mapped[date | None] = mapped_column(Date)
     classifier: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
+class CollectionReview(Base):
+    __tablename__ = "collection_reviews"
+
+    invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    follow_up_date: Mapped[date | None] = mapped_column(Date)
+    resolution_status: Mapped[str] = mapped_column(String(24), nullable=False, default="open", index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
 
 
 class SyncRun(Base):

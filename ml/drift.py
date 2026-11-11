@@ -8,8 +8,8 @@ from ml.activity import fit_bgnbd
 
 
 MIN_SETTLED_FOR_TREND = 4
-RECENT_DELAY_INCREASE_THRESHOLD_DAYS = 2.0
-PAYING_LATER_SLOPE_THRESHOLD_DAYS_PER_INVOICE = 0.8
+RECENT_DELAY_INCREASE_THRESHOLD_DAYS = 7.0
+PAYING_LATER_SLOPE_THRESHOLD_DAYS_PER_INVOICE = 1.5
 
 
 def theil_sen_slope(values: list[float]) -> float | None:
@@ -100,6 +100,11 @@ def client_drift(
         "max_open_overdue_days": max((delay for _, _, delay in censored), default=None),
         "signal_strength": 0.0,
         "severity_score": 0.0,
+        "action_thresholds": {
+            "recent_delay_increase_days": RECENT_DELAY_INCREASE_THRESHOLD_DAYS,
+            "paying_later_slope_days_per_invoice": PAYING_LATER_SLOPE_THRESHOLD_DAYS_PER_INVOICE,
+            "minimum_settled_invoices": MIN_SETTLED_FOR_TREND,
+        },
     }
 
     if gone_quiet:
@@ -206,7 +211,7 @@ def backtest_drift(records: list[dict], as_of: date, horizon_days: int = 90) -> 
         drift = client_drift(history, evaluation_date, cadence, activity.get(client_id), money_at_risk)
         if cadence and issued:
             recency.append((client_id, (evaluation_date - issued[-1]).days / cadence))
-        if drift["signal_type"] in {"paying_later", "later_than_usual", "gone_quiet", "habitually_late"}:
+        if drift["signal_type"] in {"paying_later", "later_than_usual", "gone_quiet"}:
             flagged.append((client_id, float(drift["severity_score"]), drift["signal_type"]))
 
         prior_paid = sorted(
