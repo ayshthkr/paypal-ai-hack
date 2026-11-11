@@ -4,14 +4,14 @@ This project uses Render web services and a Render Postgres database. Render's c
 
 ## Record the active database dates
 
-The repository does not contain the database creation timestamp. Read the exact dates from the Render Dashboard and record them before relying on hosted state:
+The Render Dashboard was checked on November 11, 2026. It showed the database was created 18 hours earlier and listed an exact expiration date. The dashboard did not expose the exact creation timestamp in this view.
 
 | Field | Value |
 | --- | --- |
 | Render database resource | `latepayer-db` from `render.yaml` |
-| Created at | **Record from Render Dashboard → database → Info** |
-| Expires at | **Record the dashboard's exact expiration date** |
-| Grace-period deletion date | **Expiration date + 14 days; confirm in Dashboard** |
+| Created at | November 10, 2026 (dashboard showed “18 hours ago” on November 11; exact time not displayed) |
+| Expires at | December 10, 2026 (Render Dashboard → database → Info) |
+| Grace-period deletion date | December 24, 2026, based on Render's 14-day grace period; confirm current dashboard status before relying on this date |
 | Calendar owner | Ayush Thakur |
 | Reminder dates | 7 days before expiry and on expiry day |
 
