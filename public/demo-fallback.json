@@ -171,5 +171,88 @@
       "status": "OVERDUE",
       "disputed": false
     }
-  ]
+  ],
+  "workflow_examples": {
+    "portfolio": {
+      "title": "Portfolio walkthrough example",
+      "body": "Trace one open balance from the portfolio totals to its invoice due date and current status.",
+      "invoice": {
+        "invoice_number": "LP-16-045",
+        "client_name": "Verdant Market",
+        "currency": "USD",
+        "outstanding": "4893.00",
+        "due_date": "2026-07-09",
+        "status": "OVERDUE",
+        "disputed": false,
+        "overdue_days": 125
+      },
+      "facts": [
+        "Snapshot date: 2026-11-11",
+        "Totals are grouped by currency."
+      ]
+    },
+    "verdant_outlier": {
+      "title": "Verdant Market \u00b7 overdue outlier",
+      "body": "This unpaid invoice is at least this many days overdue. Its age is a lower bound, not a forecast of when it will be paid.",
+      "invoice": {
+        "invoice_number": "LP-16-045",
+        "client_name": "Verdant Market",
+        "currency": "USD",
+        "outstanding": "4893.00",
+        "due_date": "2026-07-09",
+        "status": "OVERDUE",
+        "disputed": false,
+        "overdue_days": 125
+      },
+      "facts": [
+        "No settled payment date exists for this open balance."
+      ]
+    },
+    "action_queue": {
+      "title": "Action queue \u00b7 approval example",
+      "body": "Check the balance and recorded reminder history, then compare the live queue recommendation and delivery preview before an operator approves. This offline example performs no action and sends nothing.",
+      "invoice": {
+        "invoice_number": "LP-45-028",
+        "client_name": "Arc & Alder",
+        "currency": "GBP",
+        "outstanding": "2166.00",
+        "due_date": "2026-11-10",
+        "status": "OVERDUE",
+        "disputed": false,
+        "overdue_days": 1
+      },
+      "facts": [
+        "Recorded synthetic reminders: 2",
+        "Existing reminders are history; they do not imply a causal payment effect."
+      ]
+    },
+    "model_performance": {
+      "title": "Model performance \u00b7 metric example",
+      "body": "Use the generated held-out evaluation to explain how the release model is measured and where interval coverage excludes unbounded cases.",
+      "facts": [
+        "Model: cox-ph-v7-seed-20261110-asof-2026-11-11",
+        "Paid test invoices: 306",
+        "Eligible interval coverage: 266/294 (90.5%)",
+        "Paid invoices without a finite interval: 12"
+      ]
+    },
+    "reply_triage": {
+      "title": "Reply triage \u00b7 review example",
+      "body": "Inspect the recorded dispute state, then show the preview, correction, and approval sequence using the illustrative message below. It is not a captured customer message; this offline stop does not create or approve a triage record.",
+      "invoice": {
+        "invoice_number": "LP-06-051",
+        "client_name": "Cinder & Co",
+        "currency": "GBP",
+        "outstanding": "7539.00",
+        "due_date": "2026-12-10",
+        "status": "SENT",
+        "disputed": true,
+        "overdue_days": 0
+      },
+      "facts": [
+        "Illustrative reply: \u201cWe dispute this invoice; please pause reminders while we review it.\u201d",
+        "Only an approved triage action changes invoice state in the live workflow."
+      ]
+    }
+  }
 }

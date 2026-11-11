@@ -9,6 +9,7 @@ type Snapshot = {
   overdue_count: number; disputed_count: number; currency_totals: Record<string, string>;
   aging_buckets: Record<string, { count: number; amounts: Record<string, string> }>;
   sample: { id: string; invoice_number: string; client_name: string; currency: string; outstanding: string; due_date: string; status: string; disputed: boolean }[];
+  workflow_examples: Record<string, { title: string; body: string; invoice?: { invoice_number: string; client_name: string; currency: string; outstanding: string; due_date: string; status: string; disputed: boolean; overdue_days: number } | null; facts: string[] }>;
 };
 
 const stops = [
@@ -18,6 +19,7 @@ const stops = [
   ["Model performance", "Validation metrics and their synthetic-data limits."],
   ["Reply triage", "A preview, correction, and explicit approval before invoice state changes."],
 ];
+const exampleKeys = ["portfolio", "verdant_outlier", "action_queue", "model_performance", "reply_triage"];
 
 function format(currency: string, value: string | number) {
   return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -52,6 +54,7 @@ export default function OfflineDemoClient() {
         <div className="aging-grid">{Object.entries(snapshot.aging_buckets).map(([key, bucket]) => <article className="aging-bucket" key={key}><span>{key.replaceAll("_", " ")}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => format(currency, amount)).join(" · ")}</small></article>)}</div>
       </section>
       <section className="panel guided-stop"><div className="eyebrow">Offline stop {stop} of 5</div><h2>{current[0]}</h2><p>{current[1]}</p>
+        {(() => { const example = snapshot.workflow_examples?.[exampleKeys[stop - 1]]; return example ? <div className="drift-card" style={{ marginTop: 12 }}><strong>{example.title}</strong><p>{example.body}</p>{example.invoice && <div className="fine-print">{example.invoice.invoice_number} · {example.invoice.client_name} · {format(example.invoice.currency, example.invoice.outstanding)} outstanding · due {example.invoice.due_date} · {example.invoice.overdue_days} days overdue · {example.invoice.disputed ? "disputed" : example.invoice.status}</div>}{example.facts.length > 0 && <ul className="reasons">{example.facts.map(fact => <li key={fact}><span className="reason-mark">•</span>{fact}</li>)}</ul>}</div> : null; })()}
         <nav className="tour-navigation" aria-label="Offline tour navigation"><button className="btn" disabled={stop === 1} onClick={() => selectStop(stop - 1)}>← Previous</button><div className="tour-progress">{stops.map((item, index) => <button key={item[0]} className={index + 1 === stop ? "active" : ""} onClick={() => selectStop(index + 1)} aria-label={`Offline stop ${index + 1}`}>{index + 1}</button>)}</div><button className="btn" disabled={stop === stops.length} onClick={() => selectStop(stop + 1)}>Next →</button></nav>
       </section>
       <section className="panel"><div className="panel-title">Sample open invoices</div><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Client</th><th>Balance</th><th>Due</th><th>Status</th></tr></thead><tbody>{snapshot.sample.map(row => <tr key={row.id}><td>{row.invoice_number}</td><td>{row.client_name}</td><td>{format(row.currency, row.outstanding)}</td><td>{row.due_date}</td><td>{row.disputed ? "Disputed · unforecastable" : row.status}</td></tr>)}</tbody></table></div><p className="fine-print">Generated from {snapshot.generated_from}. Forecasts and mutations require the live API.</p></section>

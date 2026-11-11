@@ -33,6 +33,73 @@ def export(path: Path = Path("public/demo-fallback.json")) -> dict:
         buckets[key]["count"] += 1
         buckets[key]["amounts"][row["currency"]] += Decimal(row["outstanding"])
     samples = sorted(open_rows, key=lambda row: (-int(row["disputed"]), row["due_date"], row["number"]))[:12]
+
+    def invoice_context(row: dict) -> dict:
+        return {
+            "invoice_number": row["number"], "client_name": row["client_name"],
+            "currency": row["currency"], "outstanding": format(Decimal(row["outstanding"]), ".2f"),
+            "due_date": row["due_date"].isoformat(), "status": row["status"],
+            "disputed": bool(row["disputed"]),
+            "overdue_days": max(0, (today - row["due_date"]).days),
+        }
+
+    overdue_row = min(
+        (row for row in open_rows if not row["disputed"] and row["due_date"] < today),
+        key=lambda row: row["due_date"], default=None,
+    )
+    verdant_rows = sorted(
+        (row for row in open_rows if row["client_name"] == "Verdant Market"),
+        key=lambda row: (row["due_date"], row["number"]),
+    )
+    action_row = max(
+        (row for row in open_rows if not row["disputed"] and row["due_date"] < today and row["reminder_events"]),
+        key=lambda row: (len(row["reminder_events"]), row["due_date"]), default=None,
+    )
+    dispute_row = next((row for row in open_rows if row["disputed"]), None)
+    evaluation_path = Path("artifacts/eval.json")
+    metadata_path = Path("artifacts/model_metadata.json")
+    evaluation = json.loads(evaluation_path.read_text()) if evaluation_path.exists() else {}
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    backtest = evaluation.get("backtest", {})
+    workflow_examples = {
+        "portfolio": {
+            "title": "Portfolio walkthrough example",
+            "body": "Trace one open balance from the portfolio totals to its invoice due date and current status.",
+            "invoice": invoice_context(overdue_row) if overdue_row else None,
+            "facts": [f"Snapshot date: {today.isoformat()}", "Totals are grouped by currency."],
+        },
+        "verdant_outlier": {
+            "title": "Verdant Market · overdue outlier",
+            "body": "This unpaid invoice is at least this many days overdue. Its age is a lower bound, not a forecast of when it will be paid.",
+            "invoice": invoice_context(verdant_rows[0]) if verdant_rows else None,
+            "facts": ["No settled payment date exists for this open balance."],
+        },
+        "action_queue": {
+            "title": "Action queue · approval example",
+            "body": "Check the balance and recorded reminder history, then compare the live queue recommendation and delivery preview before an operator approves. This offline example performs no action and sends nothing.",
+            "invoice": invoice_context(action_row) if action_row else None,
+            "facts": ([
+                f"Recorded synthetic reminders: {len(action_row['reminder_events'])}",
+                "Existing reminders are history; they do not imply a causal payment effect.",
+            ] if action_row else []),
+        },
+        "model_performance": {
+            "title": "Model performance · metric example",
+            "body": "Use the generated held-out evaluation to explain how the release model is measured and where interval coverage excludes unbounded cases.",
+            "facts": [
+                f"Model: {metadata.get('model_version', evaluation.get('model_card', {}).get('deployed_model', 'unavailable'))}",
+                f"Paid test invoices: {backtest.get('paid_invoice_count', 0)}",
+                f"Eligible interval coverage: {backtest.get('coverage_hit_count', '—')}/{backtest.get('coverage_invoice_count', 0)} ({(backtest.get('p10_p90_coverage') or 0) * 100:.1f}%)",
+                f"Paid invoices without a finite interval: {max(0, backtest.get('paid_invoice_count', 0) - backtest.get('coverage_invoice_count', 0))}",
+            ],
+        },
+        "reply_triage": {
+            "title": "Reply triage · review example",
+            "body": "Inspect the recorded dispute state, then show the preview, correction, and approval sequence using the illustrative message below. It is not a captured customer message; this offline stop does not create or approve a triage record.",
+            "invoice": invoice_context(dispute_row) if dispute_row else None,
+            "facts": ['Illustrative reply: “We dispute this invoice; please pause reminders while we review it.”', "Only an approved triage action changes invoice state in the live workflow."],
+        },
+    }
     payload = {
         "as_of": today.isoformat(),
         "generated_from": "ml.synthetic.generate_records · seed 20261110",
@@ -50,6 +117,7 @@ def export(path: Path = Path("public/demo-fallback.json")) -> dict:
             "currency": row["currency"], "outstanding": format(Decimal(row["outstanding"]), ".2f"),
             "due_date": row["due_date"].isoformat(), "status": row["status"], "disputed": bool(row["disputed"]),
         } for row in samples],
+        "workflow_examples": workflow_examples,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n")
