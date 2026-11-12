@@ -159,6 +159,7 @@ function DashboardMoreMenu({ authenticated }: { authenticated: boolean }) {
       <Link href="/tour">Guided tour</Link>
       <Link href="/performance">Model performance</Link>
       <Link href="/offline-demo">Read-only fallback</Link>
+      {!authenticated && <Link href="/login">Operator login</Link>}
       {authenticated && <Link href="/operator">PayPal operator</Link>}
     </div>
   </details>;
