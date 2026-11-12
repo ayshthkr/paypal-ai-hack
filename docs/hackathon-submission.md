@@ -59,7 +59,7 @@ Checked against the [official rules](https://paypalaihackathon.devpost.com/rules
 | Identify AI tools and use | Paste the tools disclosure above. |
 | Working build | Hosted app plus complete local setup. The packaged read-only fallback is supplemental evidence, not the functional build. |
 | Public source and open-source license | Repository link above; root [MIT license](../LICENSE). Verify GitHub shows Public and MIT before submitting. Third-party dependencies retain their own licenses. |
-| Public YouTube demonstration under three minutes | **Pending upload.** [Recording script](demo-video-script.md) supplied. |
+| Public YouTube demonstration under three minutes | **Pending upload.** |
 | Continued judge access | Keep the demo available through December 15, 2026; check Render database expiry and the [hosting runbook](render-free-tier-runbook.md). |
 
 Sponsor emphasis: **PayPal** powers the payment lifecycle; **AG Grid Community** makes invoice operations inspectable; **Render** serves the working full-stack demo. Gemini and survival modelling supply the AI layer. Only claim the integrations listed here.

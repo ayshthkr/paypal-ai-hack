@@ -16,3 +16,6 @@ coverage/
 !.env.render.example
 playwright-report/
 test-results/
+
+# Next.js regenerates these declarations for dev, build, and typegen.
+next-env.d.ts

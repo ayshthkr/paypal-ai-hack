@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test:browser": "playwright test",
     "capture:screenshots": "bun scripts/capture-review-screenshots.mjs",
     "check:demo-tour": "bun scripts/check-demo-tour.mjs"
