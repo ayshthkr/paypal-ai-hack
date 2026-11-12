@@ -219,6 +219,9 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
 .auth-card { max-width: 410px; margin: 55px auto; padding: 28px; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 12px 40px #1d35470b; }
 .auth-card h1 { font-size: 27px; }
 .field-label { display: block; font-weight: 650; font-size: 12px; margin: 17px 0 7px; }
+.payment-simulation .field-label { display: grid; gap: 7px; margin-top: 14px; }
+.payment-simulation input[type="number"] { width: min(100%, 280px); padding: 10px 12px; border: 1px solid #d8e0e5; border-radius: 8px; outline: none; }
+.payment-simulation input[type="number"]:focus { border-color: #9dbaf8; box-shadow: 0 0 0 3px #e9f0ff; }
 .input { width: 100%; border: 1px solid #d8e0e5; border-radius: 8px; padding: 11px; outline: none; }
 .auth-card .btn { width: 100%; margin-top: 20px; }
 .fine-print { font-size: 11px; color: #71818d; line-height: 1.5; }
