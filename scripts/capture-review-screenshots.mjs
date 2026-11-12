@@ -627,7 +627,10 @@ try {
   });
 
   await optional("narrow-portfolio", async () => {
-    await page.evaluate(() => sessionStorage.removeItem("latepayer-tour-stop"));
+    await page.evaluate(() => {
+      sessionStorage.removeItem("latepayer-tour-stop");
+      sessionStorage.removeItem("latepayer-tour-active");
+    });
     await page.setViewportSize({ width: 390, height: 844 });
     await navigate("/");
     await save("10-responsive/01-narrow-portfolio.jpg");

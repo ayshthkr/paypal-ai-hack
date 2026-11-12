@@ -12,15 +12,14 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
-### Active application release — commit `8b3b217`, 2026-11-12
+### Active application release — commit `bf448ef`, 2026-11-12
 
-- Render API and web run `8b3b217`. `/health` and the hosted web root return 200; `/ready` is not implemented. Startup memory pressure from the Nov 11 incident was addressed in `09e7195`.
-- The release implements the reviewer workflow fixes across forecasting, collections, replies, actions, scenarios, performance, operator controls, and the packaged fallback. Follow-up fixes reconcile weekly cash cards to invoice probability-mass contributors, align the first-visit queue count with its ranked actions, label filtered versus portfolio-wide summaries, and keep survival-chart dates and table readable.
+- Render API and web both report `bf448ef` Live. The API `/health` and hosted web root return 200; `/ready` is not implemented. Startup memory pressure from the Nov 11 incident was addressed in `09e7195`.
+- The release implements reviewer workflow fixes across forecasting, collections, replies, actions, scenarios, performance, operator controls, and the packaged fallback. Weekly cash cards reconcile to probability-mass contributors, first-visit queue counts align with ranked actions, filtered and portfolio-wide summaries are labeled, and survival-chart dates and tables remain readable.
 - Collections and reply flows retain edits through errors, distinguish save from refresh failures, and provide status reconciliation. Synthetic payment retries reuse stable identities. The packaged fallback is directly reachable from failure states.
-- `make check` passes: Ruff, 96 Python tests, ESLint, TypeScript, and the Next.js production build. The local production browser suite passed 13 checks with two fixture/provider-gated skips. It covers cash-card contributors, empty-search scope, controlled outages, reply timeout recovery, tour/fallback, and collections save/reload.
-- Guided-tour progress controls and the mobile header remain readable on narrow screens. The added Playwright layout regression passed locally and against Render.
-- The hosted five-stop route completed in 40.6 seconds, all five stops live, under the 180-second budget. Web root, tour, fallback, and API `/health` returned HTTP 200 in the post-deploy checks. Render Free can sleep; the route check records a hosted run, not a forced sleep/wake cycle.
-- The 48 ordered hosted screenshots are in `artifacts/screenshots/review-2026-11-12/`, including all optional captures and the final responsive tour navigation. PayPal remained in Sandbox, and this implementation/capture pass did not send a reminder or alter a PayPal record.
+- `make check` passed during implementation: Ruff, 96 Python tests, ESLint, TypeScript, and the Next.js production build. The hosted Playwright suite passed 15 checks with two fixture/provider-gated skips. It covers cash-card contributors, empty-search scope, controlled outages, reply timeout recovery, tour/fallback, and collections save/reload.
+- The hosted five-stop route completed in 44.5 seconds, under the 180-second budget, with all stops live (23.9, 7.9, 5.9, 1.1, and 1.8 seconds). Render Free can sleep; the route check records a hosted run, not a forced sleep/wake cycle.
+- The final 56 ordered hosted screenshots are in `artifacts/screenshots/review-2026-11-12/`; the README records app revision `bf448ef` and confirms no captures were skipped. They include all optional captures, the centered approval dialogs, scenario details, and responsive layouts. PayPal remained in Sandbox, and this implementation/capture pass did not send a reminder or alter a PayPal record.
 - The health workflow is enabled and scheduled every five minutes, but recorded scheduled history was sparse. Render Free can sleep; scheduled jobs are best-effort.
 
 ### Earlier deployed state and evidence
@@ -32,7 +31,7 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-Application release `8b3b217` is pushed to `origin/codex/late-payer-v1`; both Render services are deployed. Preserve the user's uncommitted `docs/final-walkthrough-audit.md` and any existing `AGENTS.md` or `walkthrough.md` changes.
+Application release `bf448ef` is pushed to `origin/codex/late-payer-v1`; both Render services are deployed. Preserve the user's uncommitted `docs/final-walkthrough-audit.md` and any existing `AGENTS.md` or `walkthrough.md` changes.
 
 ## Next checks
 
