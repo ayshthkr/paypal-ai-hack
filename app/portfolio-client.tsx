@@ -65,7 +65,7 @@ type PaypalRecipient = { id: string; name: string; email: string };
 type DemoStory = { key: string; title: string; summary: string; href: string };
 
 const modules = [AllCommunityModule];
-const gridTheme = themeQuartz.withParams({ accentColor: "#155eef", backgroundColor: "#ffffff", borderColor: "#e6ebee", fontFamily: "Arial, sans-serif", fontSize: "12px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f5f8fc" });
+const gridTheme = themeQuartz.withParams({ accentColor: "#0070e0", backgroundColor: "#ffffff", borderColor: "#dadde1", fontFamily: "Arial, Helvetica, sans-serif", fontSize: "13px", headerBackgroundColor: "#f7f9fa", headerFontWeight: 700, rowHoverColor: "#f4f9ff" });
 const viewTabs = [
   ["open", "Open"], ["due_this_week", "Due this week"], ["overdue", "Overdue"], ["paid", "Paid"], ["all", "All"],
 ] as const;
@@ -136,7 +136,7 @@ function shortIsoDate(value: string) {
   return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric" });
 }
 
-function DemoStoriesMenu() {
+function DashboardMoreMenu({ authenticated }: { authenticated: boolean }) {
   const [stories, setStories] = useState<DemoStory[] | null>(null);
   const [error, setError] = useState("");
   const load = async () => {
@@ -149,12 +149,18 @@ function DemoStoriesMenu() {
       setError(cause instanceof Error ? cause.message : "Demo stories are unavailable.");
     }
   };
-  return <details className="column-chooser" onToggle={event => { if (event.currentTarget.open) void load(); }}>
-    <summary>Demo stories</summary>
-    <div className="column-menu demo-story-menu">
-      {stories?.map(story => <Link href={story.href} key={story.key}><strong>{story.title}</strong><span>{story.summary}</span></Link>)}
-      {!stories && !error && <span>Loading demo stories…</span>}
-      {error && <span role="alert">{error} <button className="btn" onClick={() => { setStories(null); setError(""); void load(); }}>Retry</button></span>}
+  return <details className="column-chooser dashboard-more" onToggle={event => { if (event.currentTarget.open) void load(); }}>
+    <summary>More</summary>
+    <div className="column-menu dashboard-more-menu">
+      <strong className="menu-section-title">Demo stories</strong>
+      {stories?.map(story => <Link className="dashboard-story-link" href={story.href} key={story.key}><strong>{story.title}</strong><span>{story.summary}</span></Link>)}
+      {!stories && !error && <span className="dashboard-menu-muted">Loading stories…</span>}
+      {error && <span className="dashboard-menu-muted" role="alert">{error} <button className="btn" onClick={() => { setStories(null); setError(""); void load(); }}>Retry</button></span>}
+      <Link href="/tour">Guided tour</Link>
+      <Link href="/performance">Model performance</Link>
+      <Link href="/offline-demo">Read-only fallback</Link>
+      {!authenticated && <Link href="/login">Operator login</Link>}
+      {authenticated && <Link href="/operator">PayPal operator</Link>}
     </div>
   </details>;
 }
@@ -492,7 +498,7 @@ export default function PortfolioClient() {
     { colId: "expected_cash", headerName: "Assumed 14-day cash uplift · 10% scenario", minWidth: 245,
       valueGetter: cell => cell.data?.decision.expected_cash_gain,
       valueFormatter: cell => cell.data?.decision.expected_cash_gain_currency ? money(cell.data.decision.expected_cash_gain_currency, cell.value || 0) : "—" },
-    { colId: "open", headerName: "Record", pinned: "right", minWidth: 88, maxWidth: 95,
+    { colId: "open", headerName: "Open", pinned: "right", minWidth: 88, maxWidth: 95,
       cellRenderer: (cell: ICellRendererParams<InvoiceRow>) => <Link className="btn row-open-action" href={detailHref(cell.data?.id || "")}>Open</Link> },
   ], [detailHref, router, searchKey]);
   const columns = useMemo(() => baseColumns.map(column => ({ ...column, hide: column.colId === "open" ? false : !visibleColumns.includes(column.colId || column.field || "") })), [baseColumns, visibleColumns]);
@@ -594,18 +600,26 @@ export default function PortfolioClient() {
     : [];
 
   return <AgGridProvider modules={modules}>
-    <div className="app-shell">
-      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/tour">Guided tour</Link><DemoStoriesMenu/><Link className="back-link" href="/performance">Model performance</Link><Link className="back-link" href="/actions">Action queue</Link><Link className="back-link" href="/collections">Collections</Link>{authenticated && <Link className="back-link" href="/operator">PayPal operator</Link>}<Link className="btn" href="/offline-demo">Read-only fallback</Link><OperatorControls/></div></header>
+    <div className="app-shell dashboard-app-shell">
+      <header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/" aria-current="page">Overview</Link><Link className="back-link" href="#invoice-grid">Invoices</Link><Link className="back-link" href="/actions">Action queue</Link><Link className="back-link" href="/collections">Collections</Link><DashboardMoreMenu authenticated={authenticated}/><OperatorControls/></div></header>
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools"><button className="btn" onClick={() => setUsdMode(value => !value)}>{usdMode ? "Show source currencies" : "Show USD equivalent"}</button>{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
-        {!authenticated && data && <><TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={data.as_of} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={commitDemoClock} onReset={() => setResetConfirmOpen(true)} /><div className="fine-print" style={{ margin: "-6px 0 14px" }}>Simulated payments, replies, approvals, promises, and disputes persist across reloads in this browser&apos;s isolated demo session. Reset restores that session and clears unsaved session drafts; saved column preferences and PayPal Sandbox records stay as they are.</div></>}
+        {!authenticated && data && <><TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={data.as_of} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={commitDemoClock} onReset={() => setResetConfirmOpen(true)} /><details className="dashboard-session-note"><summary>Demo actions and replies stay in this browser until reset.</summary><div><p>Simulated payments, replies, approvals, promises, and disputes persist across reloads in this isolated demo session. Reset restores that session and clears unsaved session drafts; saved column preferences and PayPal Sandbox records stay as they are.</p></div></details></>}
         {error && <div className="error-box" role="alert">{error}{data && <span className="fine-print"> Showing the last successful portfolio snapshot from {data.as_of}.</span>}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setFallbackVisible(false); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
         {fallbackVisible && <section className="panel fallback-callout"><div><div className="panel-title">Continue with the read-only fallback demo</div><div className="panel-subtitle">A synthetic portfolio snapshot and five repeatable stops are packaged with this web app. No demo mutations are written from that page.</div></div><Link className="btn primary" href="/offline-demo">Open fallback demo</Link></section>}
         {data && <section className="decision-hero" aria-label="Portfolio snapshot and review actions">
-          <div><span className="eyebrow">{hasAggregateFilters ? "Filtered invoice scope" : "Demo snapshot"} · {data.as_of}</span><span>{data.view_counts.open} matching open invoices · {data.view_counts.overdue} matching past due · {data.drifting_client_count} portfolio-wide new or worsening client signals. Amount totals appear in the exposure section below.</span></div>
-          <div className="decision-hero-action"><span>Today&apos;s actions</span><strong>{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} ready for review</strong><Link className="btn primary" href="/actions">Open action queue</Link></div>
+          <div className="dashboard-hero-balance"><span className="eyebrow">{hasAggregateFilters ? "Filtered open balance" : "Open receivables"} · snapshot {data.as_of}</span><strong>{formatAmounts(data.currency_totals)}</strong><span>{data.view_counts.open.toLocaleString("en-US")} open invoices across {Object.keys(data.currency_totals).length} currencies · {data.view_counts.overdue.toLocaleString("en-US")} past due</span><small>{usdMode ? "Illustrative USD conversion uses fixed demo rates; source currency totals remain available." : "Balances stay in their source currencies. No live FX conversion is applied."}</small></div>
+          <div className="decision-hero-action"><span>Today&apos;s actions</span><strong>{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} ready for review</strong><Link className="btn primary" href="/actions">Review action queue</Link></div>
         </section>}
+        {data && <section className="stats-grid" aria-label="Portfolio indicators">
+          <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
+          <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
+          <button className="stat-card stat-button" onClick={() => setCardFilter("actions")}><div className="stat-label">Ready for review</div><div className="stat-value">{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} of {data.ready_for_review_count}</div><div className="stat-note">Daily cap {data.daily_suggestion_cap} · portfolio-wide queue</div></button>
+          <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">New or worsening signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet}</div></button>
+        </section>}
+        {data && <details className="dashboard-scope-notes"><summary>How to read these figures</summary><div><p className="fine-print">Invoice summary scope: {hasAggregateFilters ? "cash, aging, exposure, and scenario summaries use the active search, client, status, and due-date filters" : "cash, aging, exposure, and scenario summaries cover the accessible invoice portfolio"}; grid view, aging bucket, settlement week, action-only, and drift-only filters do not change them. Client timing cards always cover all clients in the accessible portfolio. Habitually late clients are tracked separately ({driftCounts.habituallyLate}); only a ≥7-day worsening, a sustained ≥1.5-day-per-invoice slope, or a strong overdue outlier enters the action signal count.</p>
+          <p className="fine-print">The demo cohort has {data.view_counts.all.toLocaleString("en-US")} invoices: {data.view_counts.paid.toLocaleString("en-US")} historical paid records provide model context, alongside {data.view_counts.open.toLocaleString("en-US")} currently open invoices.</p></div></details>}
         {data && <nav className="workflow-strip" aria-label="Forecast to outcome workflow">
           <a href="#cash-forecast"><strong>1 · Forecast</strong><span>Review probability-weighted cash</span></a>
           <a href="#client-signals"><strong>2 · Changed client</strong><span>Inspect timing signals and evidence</span></a>
@@ -625,6 +639,7 @@ export default function PortfolioClient() {
           </div>}
         </section>
         <section className="panel" id="morning-brief"><div className="panel-head"><div><div className="panel-title">Morning brief</div><div className="panel-subtitle">Expected cash, highest value actions, and client timing signals.</div></div><button className="btn" onClick={() => void openBrief()}>{briefOpen ? "Refresh full brief" : "Expand full brief"}</button></div>
+          {!briefOpen && <p className="morning-brief-preview">This snapshot includes expected cash this week, the highest priority actions, and clients with changing payment timing.</p>}
           {briefOpen && (briefLoading ? <div className="empty-inline" role="status">Building the structured brief…</div> : brief ? <><div className="fine-print">Snapshot {brief.as_of} · this week through {brief.week_end}</div>
             <div className="cash-week-grid">{brief.expected_cash_this_week.length ? brief.expected_cash_this_week.map(item => <div className="cash-week" key={item.currency}><span>Expected cash · {item.currency}</span><strong>{money(item.currency, item.amount)}</strong><small>Probability-weighted · {item.invoice_count} contributing invoices</small>{item.invoice_ids?.slice(0, 5).map(invoiceId => <Link className="table-link" key={invoiceId} href={detailHref(invoiceId)}>Open contributing invoice</Link>)}</div>) : <div className="empty-inline">No expected settlements this week.</div>}</div>
             <div className="drift-signal-grid" style={{ marginTop: 12 }}>{brief.top_candidates.length ? brief.top_candidates.map(item => <article className="drift-signal-card" key={item.invoice_id}><div className="drift-signal-top"><Link className="table-link" href={detailHref(item.invoice_id, "view=open&page=1&page_size=25&sort=action&direction=asc")}>{item.invoice_number}</Link><span className="drift-badge">{decisionLabel(item.action)}</span></div><p><Link className="table-link" href={`/clients/${encodeURIComponent(item.client_id)}`}>{item.client_name}</Link> · {money(item.currency, item.outstanding)}</p><div className="fine-print">Assumed 14-day cash uplift · 10% scenario, not measured incremental cash: {money(item.currency, item.expected_cash_gain)} · {item.reason}</div></article>) : <div className="empty-inline">No reminder is pending review for this snapshot.</div>}</div>
@@ -651,15 +666,6 @@ export default function PortfolioClient() {
         {loading && !data && <div role="status" aria-label="Loading portfolio" className="portfolio-skeleton"><div className="stats-grid">{[1,2,3,4].map(key => <div className="skeleton-card" key={key} />)}</div><div className="skeleton-grid" /></div>}
         {data && <>
           {data.as_of !== data.as_of_max && <div className="demo-banner" role="status">Viewing as of {data.as_of} · simulation is disabled while the clock is moved back.</div>}
-          <section className="panel"><div className="eyebrow">{aggregateScopeLabel} open book · {data.as_of}</div><h2>{usdMode ? formatAmounts(data.currency_totals) : formatAmounts(data.currency_totals)} open across {data.view_counts.open.toLocaleString("en-US")} invoices</h2><p className="subheading">{data.view_counts.overdue.toLocaleString("en-US")} past due · {data.drifting_client_count.toLocaleString("en-US")} portfolio-wide client timing signals</p><p className="fine-print">{usdMode ? "Fixed demo rates: EUR 1.08 USD · GBP 1.27 USD · CAD 0.74 USD. FX is not live." : "Balances remain separated by source currency; toggle to a fixed USD equivalent when presenting."}</p></section>
-          <section className="stats-grid">
-            <button className="stat-card stat-button" onClick={() => setCardFilter("open")}><div className="stat-label">Open invoices</div><div className="stat-value">{data.view_counts.open}</div><div className="stat-note">Across {Object.keys(data.currency_totals).length} currencies</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("overdue")}><div className="stat-label">Past due</div><div className="stat-value">{data.view_counts.overdue}</div><div className="stat-note">Invoices with a remaining balance</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("actions")}><div className="stat-label">Ready for review</div><div className="stat-value">{Math.min(data.ready_for_review_count, data.daily_suggestion_cap)} of {data.ready_for_review_count}</div><div className="stat-note">Daily cap {data.daily_suggestion_cap} · portfolio-wide queue, independent of invoice filters</div></button>
-            <button className="stat-card stat-button" onClick={() => setCardFilter("drifting")}><div className="stat-label">New or worsening signals</div><div className="stat-value">{data.drifting_client_count}</div><div className="stat-note">Paying later {driftCounts.payingLater} · Later than usual {driftCounts.laterThanUsual} · Gone quiet {driftCounts.goneQuiet}</div></button>
-          </section>
-          <p className="fine-print">Invoice summary scope: {hasAggregateFilters ? "cash, aging, exposure, and scenario summaries use the active search, client, status, and due-date filters" : "cash, aging, exposure, and scenario summaries cover the accessible invoice portfolio"}; grid view, aging bucket, settlement week, action-only, and drift-only filters do not change them. Client timing cards always cover all clients in the accessible portfolio. Habitually late clients are tracked separately ({driftCounts.habituallyLate}); only a ≥7-day worsening, a sustained ≥1.5-day-per-invoice slope, or a strong overdue outlier enters the action signal count.</p>
-          <p className="fine-print" style={{ marginTop: -8, marginBottom: 14 }}>The demo cohort has {data.view_counts.all.toLocaleString("en-US")} invoices: {data.view_counts.paid.toLocaleString("en-US")} historical paid records provide model context, alongside {data.view_counts.open.toLocaleString("en-US")} currently open invoices.</p>
           <section className="insight-strip" id="client-signals"><div className="drift-strip-head"><div><div className="insight-title">Portfolio-wide client payment timing</div><div className="insight-text">Top five of {data.drifting_client_count} portfolio signals, sorted by money at risk and signal strength. This client view is global; the invoice grid below uses the active filters.</div></div><span className="fine-print">Activity signal · not a churn score</span></div>
             {drifting.length ? <div className="drift-signal-grid">{drifting.slice(0, 5).map(client => {
               const drift = client.drift;

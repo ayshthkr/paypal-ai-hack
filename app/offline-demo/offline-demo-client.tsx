@@ -28,10 +28,18 @@ function format(currency: string, value: string | number) {
 function FallbackExample({ example, snapshotDate }: { example?: Snapshot["workflow_examples"][string]; snapshotDate: string }) {
   if (!example) return null;
   const invoice = example.invoice;
-  return <div className="drift-card" style={{ marginTop: 12 }}>
-    <strong>{example.title}</strong><p>{example.body}</p>
+  return <article className="drift-card offline-example">
+    <div className="offline-example-heading"><span className="tour-content-label">Packaged example</span><h3>{example.title}</h3></div>
+    <p>{example.body}</p>
     {invoice && <>
-      <div className="fine-print">{invoice.invoice_number} · {invoice.client_name} · {format(invoice.currency, invoice.outstanding)} outstanding · due {invoice.due_date} · {invoice.overdue_days} days overdue · {invoice.disputed ? "disputed" : invoice.status}</div>
+      <div className="offline-invoice-summary">
+        <span className="offline-invoice-id">{invoice.invoice_number}</span>
+        <strong>{invoice.client_name}</strong>
+        <span>{format(invoice.currency, invoice.outstanding)} outstanding</span>
+        <span>Due {invoice.due_date}</span>
+        <span>{invoice.overdue_days} days overdue</span>
+        <span className="offline-record-status">{invoice.disputed ? "Disputed" : invoice.status}</span>
+      </div>
       <details className="fallback-invoice-detail">
         <summary>Expand packaged invoice evidence</summary>
         <div className="fallback-evidence-grid">
@@ -48,8 +56,8 @@ function FallbackExample({ example, snapshotDate }: { example?: Snapshot["workfl
         <div className="fine-print">Packaged read-only record from snapshot {snapshotDate}; live invoice timeline requires the API.</div>
       </details>
     </>}
-    {example.facts.length > 0 && <ul className="reasons">{example.facts.map(fact => <li key={fact}><span className="reason-mark">•</span>{fact}</li>)}</ul>}
-  </div>;
+    {example.facts.length > 0 && <ul className="reasons offline-example-facts">{example.facts.map(fact => <li key={fact}><span className="reason-mark">•</span>{fact}</li>)}</ul>}
+  </article>;
 }
 
 export default function OfflineDemoClient() {
@@ -71,21 +79,46 @@ export default function OfflineDemoClient() {
     router.replace(`/offline-demo?stop=${next}`, { scroll: false });
   };
   const current = stops[stop - 1];
-  return <>
-    <div className="demo-banner"><strong>Read-only fallback demo</strong><span>Packaged snapshot {snapshot?.snapshot_version || "late-payer-fallback-v2"} stays usable when the API is unavailable. The browser still needs to load the web app and its packaged files; airplane-mode availability is not guaranteed. This page cannot change shared demo data.</span></div>
+  return <div className="offline-content">
+    <header className="offline-intro">
+      <div className="eyebrow">Demonstration data</div>
+      <h1>Read-only fallback</h1>
+      <p className="subheading">Review a packaged snapshot and workflow examples when the live API is unavailable.</p>
+    </header>
+    <aside className="demo-banner offline-readonly-notice" role="note" aria-label="Fallback limitations">
+      <span className="offline-readonly-mark" aria-hidden="true">i</span>
+      <div><strong>Read-only snapshot</strong><span>Packaged snapshot {snapshot?.snapshot_version || "late-payer-fallback-v2"} stays usable when the API is unavailable. The browser still needs to load the web app and its packaged files; airplane-mode availability is not guaranteed. This page cannot change shared demo data.</span></div>
+    </aside>
     {error && <div className="error-box" role="alert">{error}</div>}
     {snapshot && <>
-      <section className="panel"><div className="eyebrow">Snapshot {snapshot.snapshot_version} · as of {snapshot.as_of}</div><h1>{snapshot.open_count} open invoices · {snapshot.overdue_count} past due · {snapshot.disputed_count} disputed</h1>
-        <p className="subheading">Aging counts include all open balances. Totals remain separate by currency.</p>
-        <div className="queue-metrics">{Object.entries(snapshot.currency_totals).map(([currency, amount]) => <span key={currency}>Open {currency} <strong>{format(currency, amount)}</strong></span>)}</div>
-        <div className="aging-grid">{Object.entries(snapshot.aging_buckets).map(([key, bucket]) => <article className="aging-bucket" key={key}><span>{key.replaceAll("_", " ")}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => format(currency, amount)).join(" · ")}</small></article>)}</div>
+      <section className="panel offline-overview" aria-labelledby="offline-overview-title">
+        <div className="offline-overview-header">
+          <div><div className="eyebrow">Snapshot {snapshot.snapshot_version} <span aria-hidden="true">·</span> as of {snapshot.as_of}</div><h2 id="offline-overview-title">Portfolio snapshot</h2></div>
+          <span className="offline-snapshot-badge">Packaged data</span>
+        </div>
+        <div className="offline-summary-metrics" role="group" aria-label="Invoice counts">
+          <article><span>Open invoices</span><strong>{snapshot.open_count}</strong></article>
+          <article><span>Past due</span><strong>{snapshot.overdue_count}</strong></article>
+          <article><span>Disputed</span><strong>{snapshot.disputed_count}</strong></article>
+        </div>
+        <div className="offline-currency-section">
+          <div className="panel-title">Open balance by currency</div>
+          <p className="fine-print">Aging counts include all open balances. Totals remain separate by currency.</p>
+          <div className="offline-currency-totals">{Object.entries(snapshot.currency_totals).map(([currency, amount]) => <article key={currency}><span>Open {currency}</span><strong>{format(currency, amount)}</strong></article>)}</div>
+        </div>
+        <div className="offline-aging-section">
+          <div className="panel-title">Invoice aging</div>
+          <div className="aging-grid">{Object.entries(snapshot.aging_buckets).map(([key, bucket]) => <article className="aging-bucket" key={key}><span>{key.replaceAll("_", " ")}</span><strong>{bucket.count}</strong><small>{Object.entries(bucket.amounts).map(([currency, amount]) => format(currency, amount)).join(" · ")}</small></article>)}</div>
+        </div>
       </section>
-      <section className="panel guided-stop"><div className="eyebrow">Offline stop {stop} of 5</div><h2>{current[0]}</h2><p>{current[1]}</p>
+      <section className="panel guided-stop offline-step-card" aria-labelledby="offline-stop-title">
+        <div className="offline-step-heading"><div><div className="eyebrow">Fallback stop {stop} of 5</div><h2 id="offline-stop-title">{current[0]}</h2></div><span className="tour-stop-count" aria-hidden="true">{String(stop).padStart(2, "0")} <span>/ 05</span></span></div>
+        <p className="offline-step-description">{current[1]}</p>
         <FallbackExample example={snapshot.workflow_examples?.[exampleKeys[stop - 1]]} snapshotDate={snapshot.as_of} />
-        <nav className="tour-navigation" aria-label="Offline tour navigation"><button className="btn" disabled={stop === 1} onClick={() => selectStop(stop - 1)}>← Previous</button><div className="tour-progress">{stops.map((item, index) => <button key={item[0]} className={index + 1 === stop ? "active" : ""} onClick={() => selectStop(index + 1)} aria-label={`Offline stop ${index + 1}`}>{index + 1}</button>)}</div><button className="btn" disabled={stop === stops.length} onClick={() => selectStop(stop + 1)}>Next →</button></nav>
+        <nav className="tour-navigation" aria-label="Offline tour navigation"><button className="btn" disabled={stop === 1} onClick={() => selectStop(stop - 1)}>← Previous</button><div className="tour-progress" role="group" aria-label={`Stop ${stop} of 5`}>{stops.map((item, index) => <button key={item[0]} className={index + 1 === stop ? "active" : ""} onClick={() => selectStop(index + 1)} aria-label={`Offline stop ${index + 1}: ${item[0]}`} aria-current={index + 1 === stop ? "step" : undefined}>{index + 1}</button>)}</div><button className="btn" disabled={stop === stops.length} onClick={() => selectStop(stop + 1)}>Next →</button></nav>
       </section>
-      <section className="panel"><div className="panel-title">Sample open invoices</div><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Client</th><th>Balance</th><th>Due</th><th>Status</th></tr></thead><tbody>{snapshot.sample.map(row => <tr key={row.id}><td>{row.invoice_number}</td><td>{row.client_name}</td><td>{format(row.currency, row.outstanding)}</td><td>{row.due_date}</td><td>{row.disputed ? "Disputed · unforecastable" : row.status}</td></tr>)}</tbody></table></div><p className="fine-print">Generated from {snapshot.generated_from}. Forecasts and mutations require the live API.</p></section>
+      <section className="panel offline-sample-panel" aria-labelledby="offline-sample-title"><div className="panel-title" id="offline-sample-title">Sample open invoices</div><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Invoice</th><th>Client</th><th>Balance</th><th>Due</th><th>Status</th></tr></thead><tbody>{snapshot.sample.map(row => <tr key={row.id}><td>{row.invoice_number}</td><td>{row.client_name}</td><td>{format(row.currency, row.outstanding)}</td><td>{row.due_date}</td><td>{row.disputed ? "Disputed · unforecastable" : row.status}</td></tr>)}</tbody></table></div><p className="fine-print">Generated from {snapshot.generated_from}. Forecasts and mutations require the live API.</p></section>
     </>}
-    <div className="action-buttons"><Link className="btn primary" href="/">Retry live portfolio</Link><Link className="btn" href="/tour">Open guided tour</Link></div>
-  </>;
+    <div className="action-buttons offline-page-actions"><Link className="btn primary" href="/">Retry live portfolio</Link><Link className="btn" href="/tour">Open guided tour</Link></div>
+  </div>;
 }

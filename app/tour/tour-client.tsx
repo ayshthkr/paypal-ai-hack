@@ -96,25 +96,47 @@ export default function TourClient() {
   destination.searchParams.set("tour", "1");
   destination.searchParams.set("tour_stop", String(activeIndex + 1));
   const openHref = `${destination.pathname}${destination.search}${anchor}`;
-  return <>
-    <div className="heading-row"><div><div className="eyebrow">Three-minute route · five stops</div><h1>Guided demo tour</h1><p className="subheading">Keep each stop to about 20 seconds; the remaining minute covers live transitions and questions. If a live read stalls, continue from the packaged snapshot.</p></div></div>
-    {storyError && <div className="empty-inline" role="status">Named story lookup failed. This stop still has a local fallback. <button className="btn" onClick={() => setRetry(value => value + 1)}>Retry named story</button></div>}
-    <section className="panel guided-stop" aria-label={`Stop ${activeIndex + 1} of 5`}>
-      <div className="eyebrow">Stop {activeIndex + 1} of 5 · about 20 seconds</div>
-      <h2>{step.title}</h2>
-      {story && <p className="panel-subtitle">{story.title} · {story.summary}</p>}
-      <p><strong>Say:</strong> “{step.read}”</p>
-      <p className="fine-print">{step.detail}</p>
+  return <div className="tour-content">
+    <header className="tour-intro">
+      <div className="eyebrow">Three-minute route <span aria-hidden="true">·</span> five stops</div>
+      <h1>Guided demo tour</h1>
+      <p className="subheading">Spend about 20 seconds at each stop. The remaining minute is for live transitions and questions. If a live read stalls, continue from the packaged snapshot.</p>
+    </header>
+    {storyError && step.story && <div className="empty-inline tour-story-error" role="status">
+      <span>Named story lookup failed. This stop still has a local fallback.</span>
+      <button className="btn" onClick={() => setRetry(value => value + 1)}>Retry named story</button>
+    </div>}
+    <section className="panel guided-stop tour-step-card" aria-labelledby="tour-stop-title">
+      <div className="tour-step-heading">
+        <div>
+          <div className="eyebrow">Stop {activeIndex + 1} of 5 <span aria-hidden="true">·</span> about 20 seconds</div>
+          <h2 id="tour-stop-title">{step.title}</h2>
+        </div>
+        <span className="tour-stop-count" aria-hidden="true">{String(activeIndex + 1).padStart(2, "0")} <span>/ 05</span></span>
+      </div>
+      {story && <div className="tour-story-summary"><span className="tour-content-label">Live example</span><p className="panel-subtitle">{story.title} <span aria-hidden="true">·</span> {story.summary}</p></div>}
+      <div className="tour-presenter-cue">
+        <span className="tour-content-label">Presenter cue</span>
+        <p>“{step.read}”</p>
+      </div>
+      <div className="tour-show-note">
+        <span className="tour-content-label">What to show</span>
+        <p>{step.detail}</p>
+      </div>
       {step.story && !story && !storyError && <div className="fine-print" role="status">Retrying the named synthetic story…</div>}
-      {step.story && !story && !storyError
-        ? <span className="btn" aria-disabled="true">Loading live destination…</span>
-        : <Link className="btn primary" href={openHref}>{story ? `Open live ${story.title}` : storyError && step.story ? `Open local fallback · ${step.title}` : `Open live ${step.title}`}</Link>}
-      <Link className="btn" href={fallbackHref}>Open packaged fallback · stop {activeIndex + 1}</Link>
+      <div className="tour-step-actions" role="group" aria-label="Open this stop">
+        {step.story && !story && !storyError
+          ? <span className="btn" aria-disabled="true">Loading live destination…</span>
+          : <Link className="btn primary" href={openHref}>{story ? `Open live ${story.title}` : storyError && step.story ? `Open local fallback · ${step.title}` : `Open live ${step.title}`}</Link>}
+        <Link className="btn" href={fallbackHref}>Open packaged fallback <span aria-hidden="true">·</span> stop {activeIndex + 1}</Link>
+      </div>
       <nav className="tour-navigation" aria-label="Guided tour navigation">
         <button className="btn" disabled={activeIndex === 0} onClick={() => setStop(activeIndex - 1)}>← Previous stop</button>
-        <div className="tour-progress">{steps.map((item, index) => <button key={item.title} className={index === activeIndex ? "active" : ""} aria-label={`Go to stop ${index + 1}: ${item.title}`} aria-current={index === activeIndex ? "step" : undefined} onClick={() => setStop(index)}>{index + 1}</button>)}</div>
+        <div className="tour-progress" role="group" aria-label={`Stop ${activeIndex + 1} of 5`}>
+          {steps.map((item, index) => <button key={item.title} className={index === activeIndex ? "active" : ""} aria-label={`Go to stop ${index + 1}: ${item.title}`} aria-current={index === activeIndex ? "step" : undefined} onClick={() => setStop(index)}>{index + 1}</button>)}
+        </div>
         <button className="btn" disabled={activeIndex === steps.length - 1} onClick={() => setStop(activeIndex + 1)}>Next stop →</button>
       </nav>
     </section>
-  </>;
+  </div>;
 }
