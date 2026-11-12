@@ -23,7 +23,9 @@ let demoSessionReady: Promise<void> | null = null;
 export const API_READ_TIMEOUT_MS = 30_000;
 export const API_WRITE_TIMEOUT_MS = 30_000;
 export const AI_DRAFT_TIMEOUT_MS = 45_000;
-export const TOUR_READ_TIMEOUT_MS = 20_000;
+// Leave a small margin over the API's observed ~20s wake-up reads while keeping
+// seven route reads (five pages and two named stories) inside the 3-minute tour.
+export const TOUR_READ_TIMEOUT_MS = 23_000;
 export function currentReadTimeoutMs() {
   return typeof window !== "undefined" && (window.location.pathname === "/tour" || new URLSearchParams(window.location.search).get("tour") === "1")
     ? TOUR_READ_TIMEOUT_MS

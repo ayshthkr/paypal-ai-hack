@@ -11,8 +11,7 @@ function dateAt(scoringDate: string, days: number) {
 }
 
 function percent(value: number) {
-  const paid = 1 - value;
-  return paid > 0 && paid < 0.01 ? "<1%" : `${Math.round(paid * 100)}%`;
+  return value > 0 && value < 0.01 ? "<1%" : `${Math.round(value * 100)}%`;
 }
 
 export default function SurvivalCurve({ curve, quantiles, scoringDate }: { curve: number[]; quantiles: Record<string, Quantile>; scoringDate: string }) {
@@ -41,7 +40,7 @@ export default function SurvivalCurve({ curve, quantiles, scoringDate }: { curve
   const probabilityDays = [0, 7, 14, 30, 60, 90, 180];
 
   return <div className="curve-wrap">
-    <div className="curve-interaction" role="slider" tabIndex={0} aria-label="Explore daily full-settlement survival forecast" aria-valuemin={0} aria-valuemax={180} aria-valuenow={selected?.day ?? 0} aria-valuetext={selected ? `Day ${selected.day}, ${dateAt(scoringDate, selected.day)}: ${percent(selected.unpaid)} probability paid in full by this date` : `Day 0, ${dateAt(scoringDate, 0)}: current balance unpaid`} aria-describedby="survival-curve-description" onPointerMove={event => setFromPointer(event.clientX, event.currentTarget.getBoundingClientRect())} onPointerLeave={() => setActiveIndex(null)} onFocus={() => setActiveIndex(current => current ?? 0)} onKeyDown={moveByKeyboard}>
+    <div className="curve-interaction" role="slider" tabIndex={0} aria-label="Explore daily full-settlement survival forecast" aria-valuemin={0} aria-valuemax={180} aria-valuenow={selected?.day ?? 0} aria-valuetext={selected ? `Day ${selected.day}, ${dateAt(scoringDate, selected.day)}: ${percent(1 - selected.unpaid)} probability paid in full by this date` : `Day 0, ${dateAt(scoringDate, 0)}: current balance unpaid`} aria-describedby="survival-curve-description" onPointerMove={event => setFromPointer(event.clientX, event.currentTarget.getBoundingClientRect())} onPointerLeave={() => setActiveIndex(null)} onFocus={() => setActiveIndex(current => current ?? 0)} onKeyDown={moveByKeyboard}>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Probability that the remaining balance is unpaid from today through day 180" width="100%" height="100%">
         {[0, .25, .5, .75, 1].map(value => <g key={value}><line x1={pad.left} x2={width - pad.right} y1={pad.top + (1 - value) * innerHeight} y2={pad.top + (1 - value) * innerHeight} stroke="#e9eef1" strokeDasharray={value === 0 || value === 1 ? "0" : "3 5"}/><text x={pad.left - 9} y={pad.top + (1 - value) * innerHeight + 4} textAnchor="end" fill="#87949d" fontSize="10">{Math.round(value * 100)}%</text></g>)}
         {p10 != null && p90 != null && <rect x={x(p10)} y={pad.top} width={Math.max(0, x(p90) - x(p10))} height={innerHeight} fill="#e7efff" opacity=".68"/>}
@@ -53,7 +52,7 @@ export default function SurvivalCurve({ curve, quantiles, scoringDate }: { curve
       </svg>
     </div>
     <p id="survival-curve-description" className="fine-print">The curve tracks time to full settlement of the remaining balance. Partial receipts can reduce the balance before full settlement and are shown separately in the payment history. Hover, touch, or focus the chart; use left/right arrows for exact point values.</p>
-    {selected && <div className="curve-readout" role="status" aria-live="polite">Day {selected.day} · {dateAt(scoringDate, selected.day)} · {percent(selected.unpaid)} modeled probability fully settled · {Math.round(selected.unpaid * 100)}% still unpaid</div>}
-    <details className="curve-values"><summary>Inspect dated probabilities</summary><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Horizon</th><th>Date</th><th>Paid in full by date</th><th>Still unpaid</th></tr></thead><tbody>{probabilityDays.map(day => { const index = Math.round(day / 180 * (curve.length - 1)); const unpaid = curve[index] ?? 1; return <tr key={day}><td>{day === 0 ? "Today" : `${day} days`}</td><td>{dateAt(scoringDate, day)}</td><td>{percent(unpaid)}</td><td>{Math.round(unpaid * 100)}%</td></tr>; })}</tbody></table></div></details>
+    {selected && <div className="curve-readout" role="status" aria-live="polite">Day {selected.day} · {dateAt(scoringDate, selected.day)} · {percent(1 - selected.unpaid)} modeled probability fully settled · {percent(selected.unpaid)} still unpaid</div>}
+    <details className="curve-values"><summary>Inspect dated probabilities</summary><div className="table-wrap"><table className="client-invoice-table"><thead><tr><th>Horizon</th><th>Date</th><th>Paid in full by date</th><th>Still unpaid</th></tr></thead><tbody>{probabilityDays.map(day => { const index = Math.round(day / 180 * (curve.length - 1)); const unpaid = curve[index] ?? 1; return <tr key={day}><td>{day === 0 ? "Today" : `${day} days`}</td><td>{dateAt(scoringDate, day)}</td><td>{percent(1 - unpaid)}</td><td>{percent(unpaid)}</td></tr>; })}</tbody></table></div></details>
   </div>;
 }

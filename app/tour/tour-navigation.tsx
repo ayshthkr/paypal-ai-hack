@@ -21,9 +21,13 @@ function readActive() { return window.sessionStorage.getItem(ACTIVE_KEY) === "1"
 function readStop() { return Number(window.sessionStorage.getItem(STOP_KEY) || "1"); }
 function serverActive() { return false; }
 function serverStop() { return 1; }
+function subscribeMount() { return () => {}; }
+function readMounted() { return true; }
+function serverMounted() { return false; }
 function notifyTourChange() { window.dispatchEvent(new Event(CHANGE_EVENT)); }
 
 export default function TourNavigation() {
+  const mounted = useSyncExternalStore(subscribeMount, readMounted, serverMounted);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
@@ -43,7 +47,7 @@ export default function TourNavigation() {
     notifyTourChange();
   }, [explicitlyActive, routeStop, searchKey, stop]);
 
-  if (!active || isTourPage) return null;
+  if (!mounted || !active || isTourPage) return null;
   const previous = Math.max(1, stop - 1);
   const next = Math.min(stops.length, stop + 1);
   return <div className="tour-return-bar" role="region" aria-label="Guided tour navigation">

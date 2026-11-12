@@ -56,7 +56,7 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
     const wakeMessage = window.setTimeout(() => setWaking(true), 900);
     try {
       await ensureDemoSession();
-      const deadline = Date.now() + (currentReadTimeoutMs() === 20_000 ? 20_000 : 30_000);
+      const deadline = Date.now() + currentReadTimeoutMs();
       let result: QueueResult | null = null;
       let lastError = "";
       while (Date.now() < deadline && !result) {

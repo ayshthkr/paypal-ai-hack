@@ -29,7 +29,7 @@ async function navigate(route) {
 async function save(name, { fullPage = false, selector } = {}) {
   const destination = path.join(outputRoot, name);
   await mkdir(path.dirname(destination), { recursive: true });
-  const target = selector ? page.locator(selector) : null;
+  const target = selector ? (typeof selector === "string" ? page.locator(selector) : selector) : null;
   if (target) await target.scrollIntoViewIfNeeded();
   if (target) await target.screenshot({ path: destination, type: "jpeg", quality: 91 });
   else await page.screenshot({ path: destination, type: "jpeg", quality: 91, fullPage });
@@ -51,6 +51,18 @@ try {
   await navigate("/");
   await page.locator("#cash-forecast .cash-week").first().waitFor({ state: "visible", timeout: 90_000 });
   await save("01-dashboard/01-portfolio-overview.jpg");
+
+  await optional("story-menu-expanded", async () => {
+    await page.getByText("Demo stories", { exact: true }).click();
+    await page.locator(".demo-story-menu a").first().waitFor({ state: "visible", timeout: 45_000 });
+    await save("01-dashboard/06-demo-story-entry-points.jpg", { selector: ".demo-story-menu" });
+  });
+
+  await optional("illustrative-usd-equivalent", async () => {
+    await page.getByRole("button", { name: "Show USD equivalent" }).click();
+    await save("01-dashboard/07-illustrative-usd-equivalent.jpg");
+    await page.getByRole("button", { name: "Show source currencies" }).click();
+  });
 
   await optional("morning-brief-expanded", async () => {
     await page.getByRole("button", { name: "Expand full brief" }).click();
@@ -78,10 +90,58 @@ try {
     await save("01-dashboard/05-empty-search-global-cards.jpg");
   });
 
+  await optional("filter-popover-and-active-chips", async () => {
+    await navigate("/?view=open&statuses=OVERDUE&due_from=2026-01-01&age_bucket=late_90_plus");
+    await page.locator(".active-filter-chips").waitFor({ state: "visible", timeout: 90_000 });
+    await page.locator("#invoice-grid").scrollIntoViewIfNeeded();
+    await save("01-dashboard/08-active-filter-chips-and-clear-all.jpg", { selector: "#invoice-grid" });
+    const statusFilter = page.locator(".status-filter");
+    await statusFilter.locator("summary").click();
+    await save("01-dashboard/09-readable-status-filter-popover.jpg", { selector: ".status-filter .column-menu" });
+    await statusFilter.locator("summary").click();
+    const clientSearch = page.getByRole("combobox", { name: "Search clients" });
+    await clientSearch.fill("zz-no-matching-demo-client");
+    await page.getByText("No matching clients.", { exact: true }).waitFor({ state: "visible", timeout: 30_000 });
+    await save("01-dashboard/10-client-picker-no-results.jpg", { selector: "#client-options" });
+  });
+
+  await optional("column-preferences-menu", async () => {
+    await navigate("/");
+    await page.locator("#invoice-grid").scrollIntoViewIfNeeded();
+    const columns = page.locator("#invoice-grid details.column-chooser");
+    await columns.locator("summary").click();
+    await page.locator(".column-menu-wide").waitFor({ state: "visible" });
+    await save("01-dashboard/11-column-preferences-and-quantile-help.jpg", { selector: ".column-menu-wide" });
+  });
+
+  await optional("scenario-like-for-like-and-weekly-breakdown", async () => {
+    await navigate("/");
+    await page.getByRole("button", { name: "Show weekly comparison" }).click();
+    await page.locator(".scenario-comparison-grid").waitFor({ state: "visible", timeout: 45_000 });
+    const scenario = page.locator(".panel").filter({ hasText: "If the top five late clients" }).last();
+    await save("01-dashboard/12-hypothetical-versus-baseline-delta.jpg", { selector: ".scenario-comparison-grid" });
+    const firstWeek = scenario.locator("details.cash-week").first();
+    if (await firstWeek.count()) {
+      await firstWeek.locator("summary").click();
+      await save("01-dashboard/13-weekly-client-contributions-expanded.jpg", { selector: scenario });
+    }
+  });
+
   await navigate("/actions");
   await page.locator("#action-approval .queue-card").first().waitFor({ state: "visible", timeout: 120_000 });
   const detailHref = await page.locator("#action-approval a[href^='/invoices/']").first().getAttribute("href");
   await save("02-actions/01-ranked-action-queue.jpg");
+
+  await optional("human-edited-draft-provenance", async () => {
+    const card = page.locator(".queue-card").filter({ has: page.locator(".draft-provenance") }).first();
+    const editor = card.locator("textarea").first();
+    if (!(await editor.count()) || !(await editor.isEnabled())) throw new Error("No editable synthetic reminder is available.");
+    const original = await editor.inputValue();
+    await editor.fill(`${original}\nHuman-edited for reviewer walkthrough.`);
+    await page.getByText("Saved to server", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+    await save("02-actions/05-human-edited-draft-provenance.jpg", { selector: ".draft-provenance" });
+    await card.getByRole("button", { name: "Revert to original draft" }).click();
+  });
 
   await optional("policy-explanation", async () => {
     await page.locator("details.policy-thresholds summary").click();
@@ -105,6 +165,15 @@ try {
   await navigate("/collections");
   await page.getByText(/open collections cases/, { exact: false }).waitFor({ state: "visible", timeout: 90_000 });
   await save("04-collections/01-filterable-open-workbench.jpg");
+  await optional("collections-dirty-and-saved-states", async () => {
+    const card = page.locator(".queue-card").first();
+    await card.getByLabel("Owner").fill("Demo reviewer");
+    await card.getByRole("status").getByText(/Unsaved changes/).waitFor({ state: "visible" });
+    await save("04-collections/03-unsaved-review-retained.jpg", { selector: ".queue-card" });
+    await card.getByRole("button", { name: "Save review" }).click();
+    await card.getByRole("status").getByText(/^Saved ·/).waitFor({ state: "visible", timeout: 90_000 });
+    await save("04-collections/04-saved-review-state.jpg", { selector: ".queue-card" });
+  });
   await optional("collections-archive", async () => {
     await page.getByRole("button", { name: /Closed archive/ }).click();
     await save("04-collections/02-closed-archive.jpg");
@@ -114,6 +183,14 @@ try {
     if (!detailHref) throw new Error("No invoice link was found in the action queue.");
     await navigate(detailHref);
     await save("03-invoices/02-invoice-forecast-and-next-action.jpg");
+    await optional("partial-payment-amount-preview", async () => {
+      const panel = page.locator(".payment-simulation");
+      const amount = panel.locator("input[type=number]");
+      const max = Number(await amount.getAttribute("max"));
+      await amount.fill((max / 3).toFixed(2));
+      await page.getByText(/Payment .* remaining balance/).waitFor({ state: "visible" });
+      await save("03-invoices/06-partial-payment-amount-and-balance-preview.jpg", { selector: ".payment-simulation" });
+    });
     await page.locator(".curve-wrap").scrollIntoViewIfNeeded();
     await save("03-invoices/03-survival-curve-and-partial-settlement-explanation.jpg");
     await optional("survival-probability-table", async () => {
@@ -146,6 +223,9 @@ try {
       await page.getByRole("button", { name: "Compare scenarios" }).click();
       await page.locator(".what-if-grid").waitFor({ state: "visible", timeout: 45_000 });
       await save("05-clients/02-terms-scenario-horizons.jpg");
+      const probabilities = page.locator(".client-invoice-table").filter({ hasText: "Paid within 30 days" });
+      await probabilities.scrollIntoViewIfNeeded();
+      await save("05-clients/03-terms-scenario-30-60-90-day-comparison.jpg", { selector: probabilities });
     });
   });
 
@@ -202,6 +282,13 @@ try {
     await save("10-responsive/01-narrow-portfolio.jpg");
     await page.setViewportSize({ width: 1680, height: 1050 });
   });
+
+  await optional("200-percent-zoom-equivalent", async () => {
+    await page.setViewportSize({ width: 840, height: 525 });
+    await navigate("/");
+    await save("10-responsive/02-200-percent-zoom-equivalent.jpg");
+    await page.setViewportSize({ width: 1680, height: 1050 });
+  });
 } finally {
   await browser.close();
   const manifest = [
@@ -209,7 +296,7 @@ try {
     "",
     `Captured from ${baseUrl} on 2026-11-12 after publishing app commit ${deployedRevision}. Public pages use synthetic demo data; no PayPal transaction or reminder was sent.`,
     "",
-    "Screenshots are numbered by workflow and then by page order. Images are viewport captures at a 1680 × 1050 CSS viewport and 1.5× device scale, except the narrow portfolio capture (390 × 844 CSS pixels).",
+    "Screenshots are numbered by workflow and then by page order. Images are viewport captures at a 1680 × 1050 CSS viewport and 1.5× device scale, except the narrow portfolio capture (390 × 844 CSS pixels) and the 200% zoom equivalent (840 × 525 CSS pixels).",
     "",
     "## Captured",
     "",

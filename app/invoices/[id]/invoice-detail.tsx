@@ -4,7 +4,7 @@ import { decisionLabel, signalLabel, statusLabel, termLabel } from "../../lib/la
 import { OperatorControls, useAuth } from "../../providers";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import SurvivalCurve from "./survival-curve";
 
 type Quantile = { days: number; date: string } | null;
@@ -33,6 +33,25 @@ type ReplyTriage = { id: string; reply_text: string; classification: string; cla
 type ReplyTriageStatus = { id: string; state: string; classification: string; promised_payment_date: string | null; disputed: boolean; invoice_promised_payment_date: string | null; reviewed_at: string | null };
 type InvoicePage = { items: { id: string; invoice_number: string }[]; page: number; page_count: number };
 
+const REPLY_REVIEW_STORAGE_CHANGE = "latepayer-reply-review-unresolved-change";
+function subscribeReplyReview(callback: () => void) {
+  window.addEventListener(REPLY_REVIEW_STORAGE_CHANGE, callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener(REPLY_REVIEW_STORAGE_CHANGE, callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+function readReplyReviewState(key: string) {
+  return typeof window === "undefined" ? null : window.sessionStorage.getItem(key);
+}
+function serverReplyReviewState() { return null; }
+function writeReplyReviewState(key: string, triageId: string | null) {
+  if (triageId) sessionStorage.setItem(key, triageId);
+  else sessionStorage.removeItem(key);
+  window.dispatchEvent(new Event(REPLY_REVIEW_STORAGE_CHANGE));
+}
+
 
 function shortDate(value: string | null | undefined) {
   return value ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "Beyond 180 days";
@@ -57,6 +76,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const portfolioHref = requestedReturn.startsWith("/") && !requestedReturn.startsWith("//") ? requestedReturn : `/${routeParams.size ? `?${routeParams.toString()}` : ""}`;
   const clockDate = new URLSearchParams(portfolioQuery).get("as_of");
   const clockQuery = clockDate ? `?as_of=${encodeURIComponent(clockDate)}` : "";
+  const unresolvedReplyKey = `latepayer-reply-review-unresolved:${id}`;
   const [data, setData] = useState<InvoiceData | null>(null);
   const [draft, setDraft] = useState("");
   const { authenticated } = useAuth();
@@ -67,7 +87,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const [replyText, setReplyText] = useState("");
   const [replyTriage, setReplyTriage] = useState<ReplyTriage | null>(null);
   const pendingTriage = data?.reply_triages?.find(row => row.state === "pending");
-  const [replyReviewUnresolved, setReplyReviewUnresolved] = useState(false);
+  const readUnresolvedReply = useCallback(() => readReplyReviewState(unresolvedReplyKey), [unresolvedReplyKey]);
+  const unresolvedTriageId = useSyncExternalStore(subscribeReplyReview, readUnresolvedReply, serverReplyReviewState);
+  const replyReviewUnresolved = Boolean(unresolvedTriageId);
   const visibleReplyTriage = (replyTriage?.state === "pending" ? replyTriage : null) || (pendingTriage && data ? {
     ...pendingTriage,
     reminders_paused: Boolean(data.disputed || data.promised_payment_date),
@@ -305,25 +327,28 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
         method: "POST",
         ...(apply ? { body: JSON.stringify({ classification: visibleReplyTriage.classification, promised_payment_date: visibleReplyTriage.promised_payment_date }) } : {}),
       });
-      setNotice(result.note); setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+      writeReplyReviewState(unresolvedReplyKey, null);
+      setNotice(result.note); setReplyTriage(null); setReplyText("");
       const latest = await refresh(true);
       if (!latest) setError("Reply review saved, but the invoice refresh failed. The server accepted the review; retry the refresh when ready.");
       else if (apply && visibleReplyTriage.classification === "dispute") setNotice(`Dispute approved. Reminders are paused while the dispute remains open. Current next action: ${decisionLabel(latest.decision.action, latest.status, latest.disputed)}. The forecast remains a full-settlement estimate; review the disputed balance before collection.`);
       else if (apply && visibleReplyTriage.classification === "promise_to_pay") setNotice(`Promise recorded for ${shortDate(visibleReplyTriage.promised_payment_date)}. Reminders pause through that date; the forecast shows an illustrative promise adjustment. Current next action: ${decisionLabel(latest.decision.action, latest.status, latest.disputed)}.`);
     } catch {
+      writeReplyReviewState(unresolvedReplyKey, visibleReplyTriage.id);
       clearReads();
       const authoritative = await requestJson<ReplyTriageStatus>(`/api/invoices/${encodeURIComponent(id)}/reply-triage/${encodeURIComponent(visibleReplyTriage.id)}`).catch(() => null);
       if (authoritative?.state === "applied" || authoritative?.state === "dismissed") {
+        writeReplyReviewState(unresolvedReplyKey, null);
         setData(current => current ? { ...current, disputed: authoritative.disputed, promised_payment_date: authoritative.invoice_promised_payment_date,
           reply_triages: current.reply_triages?.map(row => row.id === authoritative.id ? { ...row, state: authoritative.state, classification: authoritative.classification, promised_payment_date: authoritative.promised_payment_date } : row) } : current);
-        setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+        setReplyTriage(null); setReplyText("");
         setNotice(`Status check confirms this reply was ${authoritative.state === "applied" ? "approved" : "dismissed"}. The invoice now reflects the saved review.`);
         setError("");
       } else if (authoritative?.state === "pending") {
-        setReplyTriage({ ...visibleReplyTriage, state: "pending" }); setReplyReviewUnresolved(false);
+        writeReplyReviewState(unresolvedReplyKey, null);
+        setReplyTriage({ ...visibleReplyTriage, state: "pending" });
         setError("Status check confirms the preview is still pending, so the review did not apply. You can correct it and retry.");
       } else {
-        setReplyReviewUnresolved(true);
         setError("Could not confirm the reply review outcome. Use Check status before approving again.");
       }
     }
@@ -332,18 +357,26 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
 
   const checkReplyReviewStatus = async () => {
     clearReads();
-    const triageId = replyTriage?.id || pendingTriage?.id;
-    if (!triageId) { setReplyReviewUnresolved(true); setError("No reply preview is available to check."); return; }
+    const triageId = replyTriage?.id || pendingTriage?.id || unresolvedTriageId;
+    if (!triageId) { setError("No reply preview is available to check."); return; }
     const status = await requestJson<ReplyTriageStatus>(`/api/invoices/${encodeURIComponent(id)}/reply-triage/${encodeURIComponent(triageId)}`).catch(() => null);
-    if (!status) { setReplyReviewUnresolved(true); setError("The server status is still unavailable. Retry this check before approving again."); return; }
+    if (!status) { setError("The server status is still unavailable. Retry this check before approving again."); return; }
     setData(current => current ? { ...current, disputed: status.disputed, promised_payment_date: status.invoice_promised_payment_date,
       reply_triages: current.reply_triages?.map(row => row.id === status.id ? { ...row, state: status.state, classification: status.classification, promised_payment_date: status.promised_payment_date } : row) } : current);
     if (status.state === "applied" || status.state === "dismissed") {
-      setReplyTriage(null); setReplyText(""); setReplyReviewUnresolved(false);
+      writeReplyReviewState(unresolvedReplyKey, null);
+      setReplyTriage(null); setReplyText("");
       setNotice(`Status check confirms this reply was ${status.state === "applied" ? "approved" : "dismissed"}.`); setError("");
     } else {
-      setReplyTriage({ ...(replyTriage || pendingTriage!), ...status, reminders_paused: Boolean(status.disputed || status.invoice_promised_payment_date), note: "Preview only. Review or correct the extracted type and date, then approve it to update invoice state." });
-      setReplyReviewUnresolved(false); setNotice("Status check confirms this preview is still pending. No invoice change was applied."); setError("");
+      const preview = replyTriage?.id === status.id ? replyTriage : data?.reply_triages?.find(row => row.id === status.id);
+      if (!preview) {
+        writeReplyReviewState(unresolvedReplyKey, status.id);
+        setError("Status confirms a pending reply, but its original preview could not be loaded. Retry Check status before approving again.");
+        return;
+      }
+      writeReplyReviewState(unresolvedReplyKey, null);
+      setReplyTriage({ ...preview, ...status, reminders_paused: Boolean(status.disputed || status.invoice_promised_payment_date), note: "Preview only. Review or correct the extracted type and date, then approve it to update invoice state." });
+      setNotice("Status check confirms this preview is still pending. No invoice change was applied."); setError("");
     }
   };
 
@@ -395,7 +428,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="quantiles">{!data.forecast.already_overdue && <div className="quantile"><div className="quantile-label">Paid by due date</div><div className="quantile-value">{probabilityLabel(data.forecast.probability_by_due)}</div></div>}<div className="quantile"><div className="quantile-label">Paid in 14 days</div><div className="quantile-value">{probabilityLabel(data.forecast.probabilities["14d"] || 0)}</div></div><div className="quantile"><div className="quantile-label">Paid in 30 days</div><div className="quantile-value">{probabilityLabel(data.forecast.probabilities["30d"] || 0)}</div></div><div className="quantile"><div className="quantile-label">Paid in 60 days</div><div className="quantile-value">{probabilityLabel(data.forecast.probabilities["60d"] || 0)}</div></div><div className="quantile"><div className="quantile-label">Paid in 90 days</div><div className="quantile-value">{probabilityLabel(data.forecast.probabilities["90d"] || 0)}</div></div></div>
               <div className="quantiles">{(["p10", "p50", "p90"] as const).map(key => <div className="quantile" key={key}><div className="quantile-label">{key.toUpperCase()} full-settlement date</div><div className="quantile-value">{data.forecast?.quantiles[key] ? shortDate(data.forecast.quantiles[key]?.date) : "Not reached within 180 days"}</div></div>)}</div>
               <ul className="reasons">{data.forecast.reasons.map((reason, index) => <li key={index}><span className="reason-mark">✓</span>{reason}</li>)}</ul>
-              {data.forecast.collection_method && <div className="delivery-note" style={{ marginTop: 12 }}><strong>Recovery estimate (heuristic): {Math.round((data.forecast.collection_probability || 0) * 100)}%</strong><p>{data.currency} {(Number(data.outstanding) * (data.forecast.collection_probability || 0)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} of the current balance. Sparse historical recovery evidence; this is not a measured collection probability.</p></div>}
+              {data.forecast.collection_method && <div className="delivery-note" style={{ marginTop: 12 }}><strong>Recovery estimate (heuristic): {probabilityLabel(data.forecast.collection_probability || 0)}</strong><p>{data.currency} {(Number(data.outstanding) * (data.forecast.collection_probability || 0)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} of the current balance. Sparse historical recovery evidence; this is not a measured collection probability.</p></div>}
               <div className="fine-print" style={{ marginTop: 15 }}>Model: {data.forecast.model_version} · Scored {formatIST(data.forecast.scored_at)} · 180-day horizon · curve uses validation-fitted 14-day calibration</div>
             </>}
           </div>
@@ -455,7 +488,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
           <div className="panel" id="reply-triage"><div className="panel-head"><div><div className="panel-title">Client reply triage</div><div className="panel-subtitle">Preview the extracted type and date, then approve or dismiss. Invoice state does not change until approval.</div></div></div>
             {replyReviewUnresolved && <div className="demo-banner" role="status"><span>The last reply review timed out and its saved state could not be confirmed. Check status before approving again.</span><button className="btn" disabled={busy} onClick={() => void checkReplyReviewStatus()}>Check status</button></div>}
             <textarea aria-label="Paste client reply" placeholder="Example: We will pay Friday." value={replyText} onChange={event => setReplyText(event.target.value)} disabled={busy}/>
-            <div className="action-buttons"><button className="btn" disabled={busy || !replyText.trim()} onClick={() => void triageReply()}>{busy ? "Checking…" : "Classify reply"}</button>
+            <div className="action-buttons"><button className="btn" disabled={busy || replyReviewUnresolved || !replyText.trim()} onClick={() => void triageReply()}>{busy ? "Checking…" : "Classify reply"}</button>
               {data.disputed && <span className="status-pill">Reminders paused · disputed</span>}
               {data.promised_payment_date && !data.disputed && <span className="status-pill">Promise recorded · {shortDate(data.promised_payment_date)}</span>}
               {data.disputed && <button className="btn" disabled={busy} onClick={() => void resolveDispute()}>Resolve dispute</button>}
