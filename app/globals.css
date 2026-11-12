@@ -363,7 +363,7 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
   .workflow-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ask-brief-grid { grid-template-columns: 1fr; }
   .morning-summary { align-items: flex-start; flex-direction: column; }
-  .top-actions { width: 100%; max-width: 100%; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+  .top-actions { width: 100%; max-width: 100%; min-width: 0; flex: 1 0 100%; flex-wrap: wrap; overflow: visible; white-space: normal; }
   .top-actions > * { flex: 0 0 auto; }
   .fallback-evidence-grid { grid-template-columns: 1fr; }
 }
