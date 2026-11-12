@@ -270,6 +270,9 @@ test("guided tour exposes five stops and sends a failed live story to the packag
   }));
   await page.goto("/tour?stop=1");
   const titles = ["Portfolio", "Verdant Market outlier", "Action queue", "Model performance", "Reply triage"];
+  const navigation = page.locator(".tour-navigation");
+  await expect(navigation).toHaveCSS("display", "flex");
+  await expect(page.locator(".tour-progress")).toHaveCSS("display", "flex");
   for (let index = 0; index < titles.length; index += 1) {
     await expect(page.getByRole("heading", { name: titles[index], exact: true })).toBeVisible();
     const packagedFallback = page.getByRole("link", { name: `Open packaged fallback · stop ${index + 1}`, exact: true });
@@ -277,6 +280,15 @@ test("guided tour exposes five stops and sends a failed live story to the packag
     await expect(page.locator(".guided-stop > .eyebrow")).toContainText("about 20 seconds");
     if (index < titles.length - 1) await page.getByRole("button", { name: "Next stop" }).click();
   }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(navigation).toHaveCSS("display", "grid");
+  const mobileProgress = await page.locator(".tour-progress").boundingBox();
+  const mobilePrevious = await navigation.locator(":scope > button").first().boundingBox();
+  const mobileNext = await navigation.locator(":scope > button").last().boundingBox();
+  expect(mobileProgress && mobilePrevious && mobileNext).toBeTruthy();
+  expect(mobileProgress!.y).toBeLessThan(mobilePrevious!.y);
+  expect(Math.abs(mobilePrevious!.y - mobileNext!.y)).toBeLessThan(2);
 
   await page.route("**/api/demo-stories", route => route.abort());
   await page.goto("/tour?stop=2");

@@ -108,7 +108,7 @@ try {
   await optional("column-preferences-menu", async () => {
     await navigate("/");
     await page.locator("#invoice-grid").scrollIntoViewIfNeeded();
-    const columns = page.locator("#invoice-grid details.column-chooser");
+    const columns = page.locator("#invoice-grid details.column-chooser:not(.status-filter)");
     await columns.locator("summary").click();
     await page.locator(".column-menu-wide").waitFor({ state: "visible" });
     await save("01-dashboard/11-column-preferences-and-quantile-help.jpg", { selector: ".column-menu-wide" });
@@ -139,7 +139,7 @@ try {
     const original = await editor.inputValue();
     await editor.fill(`${original}\nHuman-edited for reviewer walkthrough.`);
     await page.getByText("Saved to server", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
-    await save("02-actions/05-human-edited-draft-provenance.jpg", { selector: ".draft-provenance" });
+    await save("02-actions/05-human-edited-draft-provenance.jpg", { selector: card.locator(".draft-provenance").first() });
     await card.getByRole("button", { name: "Revert to original draft" }).click();
   });
 
@@ -166,13 +166,13 @@ try {
   await page.getByText(/open collections cases/, { exact: false }).waitFor({ state: "visible", timeout: 90_000 });
   await save("04-collections/01-filterable-open-workbench.jpg");
   await optional("collections-dirty-and-saved-states", async () => {
-    const card = page.locator(".queue-card").first();
+    const card = page.locator(".queue-list > .collection-card").first();
     await card.getByLabel("Owner").fill("Demo reviewer");
     await card.getByRole("status").getByText(/Unsaved changes/).waitFor({ state: "visible" });
-    await save("04-collections/03-unsaved-review-retained.jpg", { selector: ".queue-card" });
+    await save("04-collections/03-unsaved-review-retained.jpg", { selector: card });
     await card.getByRole("button", { name: "Save review" }).click();
     await card.getByRole("status").getByText(/^Saved ·/).waitFor({ state: "visible", timeout: 90_000 });
-    await save("04-collections/04-saved-review-state.jpg", { selector: ".queue-card" });
+    await save("04-collections/04-saved-review-state.jpg", { selector: card });
   });
   await optional("collections-archive", async () => {
     await page.getByRole("button", { name: /Closed archive/ }).click();
@@ -188,7 +188,7 @@ try {
       const amount = panel.locator("input[type=number]");
       const max = Number(await amount.getAttribute("max"));
       await amount.fill((max / 3).toFixed(2));
-      await page.getByText(/Payment .* remaining balance/).waitFor({ state: "visible" });
+      await panel.locator(".payment-preview").waitFor({ state: "visible" });
       await save("03-invoices/06-partial-payment-amount-and-balance-preview.jpg", { selector: ".payment-simulation" });
     });
     await page.locator(".curve-wrap").scrollIntoViewIfNeeded();
@@ -253,7 +253,10 @@ try {
     await navigate("/tour?stop=1");
     for (let stop = 1; stop <= 5; stop += 1) {
       await save(`07-guided-tour/0${stop}-stop-${["portfolio", "verdant-outlier", "action-queue", "model-performance", "reply-triage"][stop - 1]}.jpg`);
-      if (stop < 5) await page.getByRole("button", { name: "Next stop" }).click();
+      if (stop < 5) {
+        await page.getByRole("button", { name: "Next stop" }).click();
+        await page.locator(`.guided-stop[aria-label="Stop ${stop + 1} of 5"]`).waitFor({ state: "visible" });
+      }
     }
   });
 

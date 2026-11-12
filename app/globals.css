@@ -211,6 +211,11 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
 .auth-card .btn { width: 100%; margin-top: 20px; }
 .fine-print { font-size: 11px; color: #71818d; line-height: 1.5; }
 .back-link { color: var(--blue); font-size: 12px; font-weight: 650; }
+.tour-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.tour-progress { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.tour-progress button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #d7e0e5; border-radius: 50%; color: #435563; background: #fff; font-size: 12px; font-weight: 700; }
+.tour-progress button[aria-current="step"] { border-color: var(--blue); color: #fff; background: var(--blue); }
+.guided-stop > .btn { margin-right: 8px; }
 @media (max-width: 850px) {
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-layout { grid-template-columns: minmax(0, 1fr); }
@@ -249,6 +254,9 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
   .pager { flex-wrap: wrap; }
   .invoice-facts { grid-template-columns: repeat(2,1fr); }
   .panel { padding: 16px; }
+  .tour-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tour-progress { grid-column: 1 / -1; grid-row: 1; }
+  .tour-navigation > button:last-child { justify-self: end; }
 }
 
 @keyframes skeleton-pulse { 50% { opacity: .45; } }
