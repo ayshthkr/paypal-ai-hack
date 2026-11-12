@@ -38,6 +38,18 @@ h1 { margin: 8px 0 6px; font-size: clamp(29px, 4vw, 42px); line-height: 1.05; le
 .btn.dark { background: #142b40; color: #fff; border-color: #142b40; }
 .btn.danger { color: #9b332c; border-color: #f0d0ce; background: #fff8f7; }
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.confirm-dialog { width: min(600px, calc(100vw - 32px)); max-width: 600px; max-height: min(82vh, 760px); padding: 0; border: 1px solid #d7e0e5; border-radius: 16px; color: var(--ink); background: #fff; box-shadow: 0 24px 80px #152b3d40; }
+.confirm-dialog::backdrop { background: #142b40a6; }
+.confirm-dialog-content { display: grid; gap: 14px; padding: 24px; }
+.confirm-dialog h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+.confirm-dialog-description { margin: 0; color: #526675; font-size: 13px; line-height: 1.55; }
+.confirm-dialog-details { max-height: min(48vh, 420px); overflow: auto; color: #354856; font-size: 12px; line-height: 1.5; }
+.approval-summary, .approval-item-list { display: grid; gap: 8px; }
+.approval-item-list { margin: 0; padding-left: 23px; }
+.approval-item-list li { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid #e6ebee; border-radius: 9px; }
+.approval-item-list li strong, .approval-summary strong { color: #1e3344; }
+.confirm-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 9px; padding-top: 4px; }
+.confirm-dialog :focus-visible { outline: 3px solid #84aaf8; outline-offset: 2px; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 14px; }
 .stat-card { background: #fff; border: 1px solid var(--line); border-radius: 13px; padding: 18px 19px; min-height: 104px; }
 .stat-button { width: 100%; text-align: left; color: inherit; cursor: pointer; transition: border-color .15s ease, transform .15s ease; }

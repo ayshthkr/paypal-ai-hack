@@ -941,7 +941,7 @@ def _invoice_dict(
         action["action_before_daily_cap"] = action["action"]
         action["action"] = "wait"
         action["tone"] = "none"
-        action["reason"] = "The daily review capacity is full; this invoice is outside today's top five by expected cash gain."
+        action["reason"] = "The daily review capacity is full; this invoice is outside today's top five ranked by assumed 14-day cash uplift (10% scenario, not measured incremental cash)."
     recommendation = _latest_recommendation(db, invoice.id)
     skipped_for_current_policy = bool(
         recommendation
@@ -1229,7 +1229,7 @@ def _check_policy(db: Session, invoice: Invoice, forecast: dict | None, source_s
     if action["action"] not in {"friendly", "firm"}:
         raise HTTPException(status_code=409, detail=action["reason"])
     if invoice.id not in _top_policy_candidates(db, source_scope):
-        raise HTTPException(status_code=409, detail="This invoice is outside today's top five suggestions by expected cash gain.")
+        raise HTTPException(status_code=409, detail="This invoice is outside today's top five suggestions ranked by assumed 14-day cash uplift (10% scenario, not measured incremental cash).")
 
 
 @app.get("/health")
@@ -2864,7 +2864,7 @@ def approve_partial_payment(recommendation_id: str, request: Request, db: Sessio
     if current_action["action"] != "offer_partial_payment" or holdback_assignment(refreshed.id, _today(db, refreshed.source)):
         raise HTTPException(status_code=409, detail="The partial-payment action is no longer recommended by today's policy.")
     if refreshed.id not in _top_policy_candidates(db, refreshed.source):
-        raise HTTPException(status_code=409, detail="This invoice is outside today's top five suggestions by expected cash gain.")
+        raise HTTPException(status_code=409, detail="This invoice is outside today's top five suggestions ranked by assumed 14-day cash uplift (10% scenario, not measured incremental cash).")
     action_text = "Approved: enable PayPal partial payments; no reminder message is sent."
     attempt = _begin_attempt(db, recommendation, refreshed, action_text)
     try:

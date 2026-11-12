@@ -1,10 +1,25 @@
 import { test, expect } from "@playwright/test";
 
+async function warmRead(page: import("@playwright/test").Page, path: string) {
+  let lastStatus = "no response";
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await page.request.get(path, { timeout: Math.min(20_000, deadline - Date.now()) });
+      if (response.ok()) return response;
+      lastStatus = `HTTP ${response.status()}`;
+    } catch (cause) {
+      lastStatus = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (Date.now() < deadline) await page.waitForTimeout(Math.min(2_500, deadline - Date.now()));
+  }
+  throw new Error(`Could not warm ${path} within 90 seconds: ${lastStatus}`);
+}
+
 test("portfolio, queue, client and invoice workflow stays within warm budgets", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   await page.request.get("/api/demo/session");
-  const warmPortfolio = await page.request.get("/api/invoices?view=open&page=1&page_size=25&sort=due&direction=asc");
-  expect(warmPortfolio.ok()).toBeTruthy();
+  const warmPortfolio = await warmRead(page, "/api/invoices?view=open&page=1&page_size=25&sort=due&direction=asc");
   const warmData = await warmPortfolio.json();
   const warmInvoice = warmData.items?.[0];
   if (warmInvoice) {
@@ -386,4 +401,83 @@ test("collections save survives reload and refreshes from the saved record", asy
   await expect(page.getByRole("textbox", { name: "Owner" })).toHaveValue("A. Reviewer");
   await expect(page.getByLabel("Review notes")).toHaveValue("Customer requested a corrected statement.");
   await expect(page.getByText(/Last saved/)).toBeVisible();
+});
+
+test("demo reset opens an accessible confirmation and cancel or Escape keeps the session", async ({ page }) => {
+  test.setTimeout(90_000);
+  let resetRequests = 0;
+  const emptyPortfolio = {
+    items: [], count: 0, page: 1, page_size: 25, page_count: 1, view: "open",
+    view_counts: { open: 0, due_this_week: 0, overdue: 0, paid: 0, all: 0 },
+    currency_totals: {},
+    aging_buckets: Object.fromEntries(["not_due", "late_1_30", "late_31_60", "late_61_89", "late_90_plus"].map(key => [key, { count: 0, amounts: {} }])),
+    expected_cash_by_week: [], cash_horizon: {},
+    top_late_scenario: { assumption: "10% illustrative scenario", client_count: 0, clients: [], invoice_count: 0, baseline_by_currency: [], cash_by_week: [] },
+    synthetic_demo: true, models: [], ready_for_review_count: 0, daily_suggestion_cap: 5, drifting_client_count: 0,
+    habitually_late_client_count: 0, drifting_signal_counts: {}, as_of: "2026-11-12", as_of_max: "2026-11-12", model_timestamp: null, client_signals: [],
+  };
+  await page.route("**/api/portfolio*", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(emptyPortfolio) }));
+  await page.route("**/api/demo/session/reset", route => {
+    resetRequests += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/");
+  const resetButton = page.getByRole("button", { name: "Reset demo" });
+  await expect(resetButton).toBeVisible({ timeout: 60_000 });
+  await resetButton.click();
+  const dialog = page.getByRole("dialog", { name: "Reset this browser’s demo session?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Simulated payments, replies, approvals, promises, and disputes");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(resetButton).toBeFocused();
+  expect(resetRequests).toBe(0);
+  await resetButton.click();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  expect(resetRequests).toBe(0);
+});
+
+test("bulk and per-invoice PayPal approvals show reviewable dialogs before any write", async ({ page }) => {
+  test.setTimeout(90_000);
+  const recommendation = (id: string) => ({
+    id: `recommendation-${id}`, action: "friendly", tone: "friendly", edited_text: `Internal note for ${id}.`,
+    draft_text: `Internal note for ${id}.`, draft_source: "template", reason: "Low probability of payment by the due date.", state: "proposed",
+  });
+  const item = (id: string, number: string, client: string) => ({
+    id, invoice_number: number, client_name: client, client_id: `client-${id}`, client_email: `${client.toLowerCase().replaceAll(" ", "")}@example.test`,
+    source: "paypal", currency: "USD", outstanding: "1250.00", due_date: "2026-11-15", days_late: 0,
+    decision: { action: "friendly_reminder", reason: "Due soon.", expected_cash_gain: 125 },
+    recommendation: recommendation(id),
+  });
+  const queue = {
+    items: [item("invoice-a", "LP-REVIEW-101", "Acme Review"), item("invoice-b", "LP-REVIEW-102", "Birch Review")],
+    count: 2, daily_cap: 1, as_of: "2026-11-12", synthetic_demo: false,
+    pending_count: 2, skipped_count: 0, skipped: [], collections_review: [], collections_closed: [], collections_totals: {},
+  };
+  let providerWrites = 0;
+  await page.route("**/api/action-queue", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(queue) }));
+  await page.route("**/api/recommendations/**", route => {
+    if (route.request().method() !== "GET") providerWrites += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "sent" }) });
+  });
+  await page.goto("/actions");
+  await expect(page.getByRole("heading", { name: "Action queue" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Approve eligible friendly reminders" }).click();
+  const bulkDialog = page.getByRole("dialog", { name: "Review friendly reminders before approval" });
+  await expect(bulkDialog).toBeVisible();
+  await expect(bulkDialog).toContainText("2 reminders are eligible; 1 are included under the shared cap of 1");
+  await expect(bulkDialog).toContainText("LP-REVIEW-101 · Acme Review");
+  await expect(bulkDialog).not.toContainText("LP-REVIEW-102");
+  await bulkDialog.getByRole("button", { name: "Cancel" }).click();
+  expect(providerWrites).toBe(0);
+
+  await page.locator(".queue-card").first().getByRole("button", { name: "Review PayPal reminder" }).click();
+  const providerDialog = page.getByRole("dialog", { name: "Approve this PayPal Sandbox reminder?" });
+  await expect(providerDialog).toBeVisible();
+  await expect(providerDialog).toContainText("PayPal sends its system generated reminder email");
+  await expect(providerDialog).toContainText("Recipient acmereview@example.test");
+  await expect(providerDialog).toContainText("Assumed 14-day cash uplift (10% scenario): USD 125.00");
+  await providerDialog.getByRole("button", { name: "Cancel" }).click();
+  expect(providerWrites).toBe(0);
 });

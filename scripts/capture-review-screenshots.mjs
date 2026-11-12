@@ -52,6 +52,14 @@ try {
   await page.locator("#cash-forecast .cash-week").first().waitFor({ state: "visible", timeout: 90_000 });
   await save("01-dashboard/01-portfolio-overview.jpg");
 
+  await optional("demo-reset-confirmation", async () => {
+    await page.getByRole("button", { name: "Reset demo" }).click();
+    const dialog = page.getByRole("dialog", { name: "Reset this browser’s demo session?" });
+    await dialog.waitFor({ state: "visible" });
+    await save("01-dashboard/14-demo-reset-confirmation.jpg");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+  });
+
   await optional("story-menu-expanded", async () => {
     await page.getByText("Demo stories", { exact: true }).click();
     await page.locator(".demo-story-menu a").first().waitFor({ state: "visible", timeout: 45_000 });
@@ -132,6 +140,51 @@ try {
   const detailHref = await page.locator("#action-approval a[href^='/invoices/']").first().getAttribute("href");
   await save("02-actions/01-ranked-action-queue.jpg");
 
+  await optional("approval-review-dialogs", async () => {
+    await page.route("**/api/action-queue", async route => {
+      const upstream = await route.fetch();
+      if (!upstream.ok()) return route.fulfill({ response: upstream });
+      const payload = await upstream.json();
+      const source = payload.items?.find(item => item.recommendation) || {
+        id: "screenshot-invoice-101", invoice_number: "LP-DEMO-101", client_name: "Harborlight Design",
+        client_id: "screenshot-client-101", currency: "USD", outstanding: "1250.00", due_date: "2026-11-15",
+        decision: { action: "friendly_reminder", reason: "Due soon.", expected_cash_gain: 125 },
+        recommendation: { id: "screenshot-recommendation-101", action: "friendly", state: "proposed", tone: "friendly", edited_text: "A reminder note for internal review.", reason: "Payment is unlikely by the due date." },
+      };
+      const makeItem = (suffix, number, client) => ({
+        ...source,
+        id: `screenshot-invoice-${suffix}`,
+        invoice_number: number,
+        client_name: client,
+        client_email: `${suffix}@example.test`,
+        source: "paypal",
+        recommendation: { ...source.recommendation, id: `screenshot-recommendation-${suffix}`, action: "friendly", state: "proposed", tone: "friendly" },
+      });
+      payload.items = [makeItem("101", "LP-DEMO-101", "Harborlight Design"), makeItem("102", "LP-DEMO-102", "Verdant Market")];
+      payload.daily_cap = 1;
+      payload.pending_count = 2;
+      payload.synthetic_demo = false;
+      payload.skipped = [];
+      await route.fulfill({ response: upstream, body: JSON.stringify(payload) });
+    });
+    try {
+      await navigate("/actions");
+      await page.getByRole("button", { name: "Approve eligible friendly reminders" }).click();
+      const bulkDialog = page.getByRole("dialog", { name: "Review friendly reminders before approval" });
+      await bulkDialog.waitFor({ state: "visible" });
+      await save("02-actions/06-bulk-approval-review-dialog.jpg");
+      await bulkDialog.getByRole("button", { name: "Cancel" }).click();
+
+      await page.locator(".queue-card").first().getByRole("button", { name: "Review PayPal reminder" }).click();
+      const providerDialog = page.getByRole("dialog", { name: "Approve this PayPal Sandbox reminder?" });
+      await providerDialog.waitFor({ state: "visible" });
+      await save("02-actions/07-paypal-reminder-approval-dialog.jpg");
+      await providerDialog.getByRole("button", { name: "Cancel" }).click();
+    } finally {
+      await page.unroute("**/api/action-queue");
+    }
+  });
+
   await optional("human-edited-draft-provenance", async () => {
     const card = page.locator(".queue-card").filter({ has: page.locator(".draft-provenance") }).first();
     const editor = card.locator("textarea").first();
@@ -179,6 +232,54 @@ try {
     await save("04-collections/02-closed-archive.jpg");
   });
 
+  await optional("invoice-provider-approval-dialogs", async () => {
+    if (!detailHref) throw new Error("No invoice detail is available for the approval preview.");
+    const invoiceId = new URL(detailHref, baseUrl).pathname.split("/").filter(Boolean).pop();
+    if (!invoiceId) throw new Error("Could not identify the invoice for the approval preview.");
+    let mode = "friendly";
+    const invoiceMatcher = url => url.pathname === `/api/invoices/${encodeURIComponent(invoiceId)}`;
+    await page.route("**/api/auth/me", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: true, username: "reviewer-preview" }) }));
+    await page.route(invoiceMatcher, async route => {
+      const upstream = await route.fetch();
+      if (!upstream.ok()) return route.fulfill({ response: upstream });
+      const payload = await upstream.json();
+      payload.source = "paypal";
+      payload.client_email ||= "sandbox-recipient@example.test";
+      payload.simulation_disabled = false;
+      payload.disputed = false;
+      payload.decision = { ...payload.decision, action: mode, reason: mode === "friendly" ? "Review a friendly reminder." : "Review partial-payment access." };
+      payload.recommendation = {
+        ...(payload.recommendation || {}),
+        id: `screenshot-${mode}-recommendation`, action: mode, tone: mode === "friendly" ? "friendly" : "partial",
+        state: "proposed", reason: "Generated for a non-mutating Sandbox approval preview.",
+        draft_text: "A friendly reminder to review the outstanding PayPal invoice.",
+        edited_text: "A friendly reminder to review the outstanding PayPal invoice.",
+        draft_source: "template", draft_model: null, drafted_at: null, approved_text: null,
+      };
+      await route.fulfill({ response: upstream, body: JSON.stringify(payload) });
+    });
+    try {
+      await navigate(detailHref);
+      await page.getByRole("button", { name: "Review PayPal reminder" }).click();
+      const reminderDialog = page.getByRole("dialog", { name: "Approve this PayPal Sandbox reminder?" });
+      await reminderDialog.waitFor({ state: "visible" });
+      await save("03-invoices/09-paypal-reminder-approval-dialog.jpg");
+      await reminderDialog.getByRole("button", { name: "Cancel" }).click();
+
+      mode = "offer_partial_payment";
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.getByRole("button", { name: "Review PayPal update" }).waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "Review PayPal update" }).click();
+      const partialDialog = page.getByRole("dialog", { name: "Enable partial payments in PayPal Sandbox?" });
+      await partialDialog.waitFor({ state: "visible" });
+      await save("03-invoices/10-paypal-partial-payment-approval-dialog.jpg");
+      await partialDialog.getByRole("button", { name: "Cancel" }).click();
+    } finally {
+      await page.unroute(invoiceMatcher);
+      await page.unroute("**/api/auth/me");
+    }
+  });
+
   await optional("invoice-details", async () => {
     if (!detailHref) throw new Error("No invoice link was found in the action queue.");
     await navigate(detailHref);
@@ -190,6 +291,11 @@ try {
       await amount.fill((max / 3).toFixed(2));
       await panel.locator(".payment-preview").waitFor({ state: "visible" });
       await save("03-invoices/06-partial-payment-amount-and-balance-preview.jpg", { selector: ".payment-simulation" });
+      if (await panel.getByRole("button", { name: /Record this partial payment/ }).isEnabled()) {
+        await panel.getByRole("button", { name: /Record this partial payment/ }).click();
+        await page.getByRole("status").getByText(/Synthetic demo only; no PayPal payment was made/).waitFor({ state: "visible", timeout: 45_000 });
+        await save("03-invoices/07-simulated-partial-payment-result.jpg", { selector: ".payment-simulation" });
+      }
     });
     await page.locator(".curve-wrap").scrollIntoViewIfNeeded();
     await save("03-invoices/03-survival-curve-and-partial-settlement-explanation.jpg");
@@ -207,6 +313,12 @@ try {
         await page.getByRole("button", { name: "Classify reply" }).click();
         await page.locator(".reply-review").waitFor({ state: "visible", timeout: 45_000 });
         await save("03-invoices/05-reply-classification-review.jpg");
+        const approve = page.getByRole("button", { name: "Approve classification" });
+        if (await approve.isEnabled()) {
+          await approve.click();
+          await page.getByText(/Promise recorded|Reminders paused/).first().waitFor({ state: "visible", timeout: 45_000 });
+          await save("03-invoices/08-approved-reply-lifecycle.jpg", { selector: "#reply-triage" });
+        }
       }
     });
   });
@@ -279,6 +391,22 @@ try {
     await save("09-operator/01-sandbox-operator-login.jpg");
   });
 
+  await optional("authenticated-operator-checklist", async () => {
+    await page.route("**/api/auth/me", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: true, username: "reviewer-preview" }) }));
+    await page.route("**/api/paypal/recipients", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{ id: "allowlisted-reviewer", name: "Sandbox Reviewer", email: "reviewer@example.test" }] }) }));
+    await page.route("**/api/sync/status", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ last_run: null, webhook_failures: 0, webhook_events: [] }) }));
+    try {
+      await navigate("/operator");
+      await page.getByText("Authenticated · PayPal Sandbox", { exact: true }).waitFor({ state: "visible" });
+      await page.locator(".operator-checklist").waitFor({ state: "visible" });
+      await save("09-operator/02-authenticated-sandbox-checklist.jpg");
+    } finally {
+      await page.unroute("**/api/auth/me");
+      await page.unroute("**/api/paypal/recipients");
+      await page.unroute("**/api/sync/status");
+    }
+  });
+
   await optional("narrow-portfolio", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await navigate("/");
@@ -294,6 +422,7 @@ try {
   });
 } finally {
   await browser.close();
+  completed.sort((left, right) => left.localeCompare(right));
   const manifest = [
     "# Deployed demo screenshots",
     "",

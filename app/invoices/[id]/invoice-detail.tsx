@@ -6,6 +6,7 @@ import { OperatorControls, useAuth } from "../../providers";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import SurvivalCurve from "./survival-curve";
+import ConfirmDialog from "../../confirm-dialog";
 
 type Quantile = { days: number; date: string } | null;
 type Forecast = { interval_method?: string; coverage_interval?: { lower_date: string | null; upper_date: string | null; target_coverage: number; method: string; caveat?: string }; promise_adjustment?: { applied: boolean; status: string; date?: string; weight: number; method?: string; caveat?: string }; display_label?: string; collection_probability?: number; collection_method?: string | null; limited_history?: boolean; curve: number[]; quantiles: Record<string, Quantile>; probabilities: Record<string, number>; probability_by_due: number; reasons: string[]; model: string; model_version: string; already_overdue: boolean; forecast_horizon_days: number; history_count: number; scoring_date: string; scored_at: string } | null;
@@ -107,6 +108,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
   const refreshVersion = useRef(0);
   const draftRecommendation = useRef<string | null>(null);
   const [approvalOutcomeUnresolved, setApprovalOutcomeUnresolved] = useState(false);
+  const [providerApproval, setProviderApproval] = useState<{ url: string; body: { text: string }; partial: boolean } | null>(null);
 
   const refresh = useCallback(async (force = false): Promise<InvoiceData | null> => {
     const requestKey = `${id}${clockQuery}`;
@@ -462,8 +464,9 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <div className="action-buttons">
                 {canApplyPartial && <button className="btn primary" disabled={busy} onClick={() => {
                   const url = isDemo ? `/api/demo/recommendations/${rec.id}/send` : `/api/recommendations/${rec.id}/approve-partial-payment`;
-                  if (isDemo || window.confirm("Enable partial payments on this PayPal Sandbox invoice? PayPal may notify the recipient of the invoice update.")) void action(url, "POST", { text: rec.edited_text });
-                }}>{busy ? "Applying…" : isDemo ? "Approve & simulate" : "Approve & enable partial payment"}</button>}
+                  if (isDemo) void action(url, "POST", { text: rec.edited_text });
+                  else setProviderApproval({ url, body: { text: rec.edited_text }, partial: true });
+                }}>{busy ? "Applying…" : isDemo ? "Approve & simulate" : "Review PayPal update"}</button>}
                 {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "applied" && <span className="fine-print">Partial-payment settings are enabled{isDemo ? " in the synthetic demo" : " in PayPal Sandbox"}.</span>}
                 {rec.state === "unknown" && <span className="fine-print">Provider update status is uncertain. Sync PayPal before retrying.</span>}
@@ -476,7 +479,7 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
               <label className="field-label">{isDemo ? "Editable simulated reminder note" : "Internal collection note · not emailed"}<textarea aria-label="Editable reminder preview" value={draft} onChange={event => { setDraft(event.target.value); sessionStorage.setItem(`latepayer-draft:${rec.id}`, event.target.value); }} onBlur={() => { if (!clockDate && !data.simulation_disabled && draft.trim() && ["proposed", "failed"].includes(rec.state)) void requestJson(`/api/recommendations/${rec.id}/draft`, { method: "POST", body: JSON.stringify({ text: draft }) }).catch(cause => setError(cause.message)); }} disabled={approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled || rec.state === "sending" || rec.state === "sent" || rec.state === "unknown" || rec.state === "skipped"}/></label>
               <div className="action-buttons">
                 {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void generateDraft()}>{busy ? "Drafting…" : "Generate AI draft"}</button>}
-                {canSend && <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => { if (isDemo || window.confirm("Approve this PayPal Sandbox reminder? PayPal sends its system-generated email; this internal note is saved for review and is not emailed.")) void action(actionUrl, "POST", { text: draft }); }}>{busy ? "Processing…" : isDemo ? "Approve & simulate" : "Approve PayPal reminder"}</button>}
+                {canSend && <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => { const body = { text: draft }; if (isDemo) void action(actionUrl, "POST", body); else setProviderApproval({ url: actionUrl, body, partial: false }); }}>{busy ? "Processing…" : isDemo ? "Approve & simulate" : "Review PayPal reminder"}</button>}
                 {rec.state === "proposed" && <button className="btn" disabled={busy || approvalOutcomeUnresolved || Boolean(clockDate) || data.simulation_disabled} onClick={() => void action(`/api/recommendations/${rec.id}/skip`)}>Skip</button>}
                 {rec.state === "sent" && <span className="fine-print">{isDemo ? "Recorded as a simulated demo action." : "PayPal accepted the reminder request."}</span>}
                 {rec.state === "unknown" && <span className="fine-print">Delivery is uncertain. Sync PayPal and reconcile before trying again.</span>}
@@ -507,5 +510,25 @@ export default function InvoiceDetail({ id, portfolioQuery }: { id: string; port
         </aside>
       </div>
     </main>
+    <ConfirmDialog
+      open={Boolean(providerApproval)}
+      title={providerApproval?.partial ? "Enable partial payments in PayPal Sandbox?" : "Approve this PayPal Sandbox reminder?"}
+      description={providerApproval?.partial
+        ? "This updates the existing invoice setting and may notify the recipient. Confirm the change after reviewing the invoice and balance."
+        : "PayPal sends its system generated reminder email. The internal note below is retained for review and is not emailed."}
+      confirmLabel={providerApproval?.partial ? "Enable partial payments" : "Approve reminder"}
+      onCancel={() => setProviderApproval(null)}
+      onConfirm={() => { const approval = providerApproval; setProviderApproval(null); if (approval) void action(approval.url, "POST", approval.body); }}
+    >
+      {providerApproval && <div className="approval-summary">
+        <strong>{data.invoice_number} · {data.client_name}</strong>
+        <div>Recipient {data.client_email || "email saved on the PayPal invoice"}</div>
+        <div>Balance {money(data.currency, data.outstanding)}</div>
+        {providerApproval.partial
+          ? <div>Change: enable partial payments for this invoice.</div>
+          : <div>Internal note preview: {providerApproval.body.text}</div>}
+        <div>PayPal mode: Sandbox</div>
+      </div>}
+    </ConfirmDialog>
   </div>;
 }

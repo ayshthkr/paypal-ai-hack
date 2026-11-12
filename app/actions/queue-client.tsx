@@ -4,6 +4,7 @@ import Link from "next/link";
 import { requestJson, clearReads, ensureDemoSession, RequestError, currentReadTimeoutMs } from "../lib/api";
 import { decisionLabel } from "../lib/labels";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ConfirmDialog from "../confirm-dialog";
 
 type QueueItem = {
   id: string; invoice_number: string; client_name: string; client_id: string; client_email?: string | null; source: string; currency: string; outstanding: string;
@@ -15,6 +16,7 @@ type QueueItem = {
   recommendation: { id: string; action: string; tone: string; edited_text: string; draft_text?: string; draft_source?: string; draft_model?: string | null; drafted_at?: string; approved_text?: string | null; approved_at?: string | null; reason: string; state: string } | null;
 };
 export type QueueResult = { items: QueueItem[]; count: number; daily_cap: number; as_of: string; synthetic_demo: boolean; pending_count: number; skipped_count: number; skipped: { id: string; invoice_id: string; invoice_number: string; client_name: string; replacement_state?: string | null; replacement_id?: string | null }[]; collections_review?: QueueItem[]; collections_closed?: QueueItem[]; collections_totals?: Record<string, string>; review_time?: { completed_count: number; median_seconds: number | null; sample_window: string } };
+type BulkApprovalPreview = { eligibleCount: number; cap: number; items: QueueItem[] };
 
 function money(currency: string, value: number | string) { return `${currency} ${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function reviewClockNow() { return performance.now(); }
@@ -32,6 +34,8 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
   const saveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const reviewStartedAt = useRef(new Map<string, number>());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState<BulkApprovalPreview | null>(null);
+  const [providerApproval, setProviderApproval] = useState<QueueItem | null>(null);
   const [error, setError] = useState("");
   const [waking, setWaking] = useState(false);
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { owner: string; notes: string; follow_up_date: string; resolution_status: string }>>({});
@@ -227,13 +231,12 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
         .catch(cause => { setDraftSaveStates(current => ({ ...current, [id]: "failed" })); setError(`Draft save failed. The text remains in this session and can be retried. ${cause.message}`); });
     }, 500));
   };
-  const act = async (item: QueueItem, operation: "approve" | "skip", confirmed = false) => {
+  const act = async (item: QueueItem, operation: "approve" | "skip") => {
     const recommendation = item.recommendation;
     if (!recommendation || operationStates[recommendation.id]) return;
     const startedAt = reviewStartedAt.current.get(recommendation.id) ?? reviewClockNow();
     clearTimeout(saveTimers.current.get(recommendation.id));
     const isPartial = recommendation.action === "offer_partial_payment";
-    if (operation === "approve" && !confirmed && item.source === "paypal" && !window.confirm(isPartial ? "Enable partial payments on this PayPal Sandbox invoice?" : "Send this reminder through PayPal Sandbox?")) return;
     setBusyId(recommendation.id); setError("");
     try {
       let path: string;
@@ -271,27 +274,20 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
     finally { setBusyId(""); }
   };
 
-  const approveFriendly = async () => {
+  const openFriendlyPreview = () => {
     const cap = Math.min(5, data?.daily_cap ?? 5);
     const items = (data?.items.filter(item => item.recommendation?.action === "friendly") || []).slice(0, cap);
     if (!items.length) return;
     const eligibleCount = data?.items.filter(item => item.recommendation?.action === "friendly").length || 0;
-    const itemList = items.map(item => {
-      const recipient = !item.source.startsWith("demo")
-        ? item.client_email || "recipient email unavailable"
-        : "synthetic demo; no email sent";
-      return `Invoice: ${item.invoice_number} · Recipient: ${item.client_name} (${recipient}) · Balance: ${money(item.currency, item.outstanding)} · Assumed 14-day cash uplift (10% scenario): ${money(item.currency, item.decision.expected_cash_gain)}`;
-    }).join("\n");
-    const deliveryNote = items.some(item => !item.source.startsWith("demo"))
-      ? "PayPal Sandbox reminders send test notifications; synthetic reminders are simulated."
-      : "Synthetic reminders are simulated; no PayPal email is sent.";
-    if (!window.confirm(`${eligibleCount} friendly reminders are eligible; ${items.length} are included under the shared cap of ${cap}.\n\n${itemList}\n\n${deliveryNote}\n\nApprove these ${items.length} reminders one at a time?`)) return;
+    setBulkPreview({ eligibleCount, cap, items });
+  };
+  const approveFriendly = async (items: QueueItem[]) => {
     setBulkBusy(true);
     setBulkResults([]);
     try {
       const outcomes: string[] = [];
       for (const item of items) {
-        const ok = await act(item, "approve", true);
+        const ok = await act(item, "approve");
         outcomes.push(`${item.invoice_number}: ${ok ? "success" : "failed or needs status check"}`);
         setBulkResults([...outcomes]);
         if (!ok) break;
@@ -307,7 +303,6 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
     if (collectionTab === "open" && closed || collectionTab === "closed" && !closed) return false;
     if (collectionSearch && !`${item.invoice_number} ${item.client_name} ${item.client_id}`.toLowerCase().includes(collectionSearch.toLowerCase())) return false;
     if (collectionOwner && (review?.owner || "") !== collectionOwner) return false;
-    if (unassignedOnly && (review?.owner || "").trim()) return false;
     if (collectionStatus && review?.resolution_status !== collectionStatus) return false;
     const followUp = review?.follow_up_date || "";
     if (followUpFrom && (!followUp || followUp < followUpFrom)) return false;
@@ -321,7 +316,7 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
     {!collectionsOnly && data?.review_time && <div className="fine-print" style={{ marginBottom: 12 }}>Measured queue review time: {data.review_time.median_seconds == null ? "no completed actions yet" : `${data.review_time.median_seconds}s median`} across {data.review_time.completed_count} completed actions. The timer starts with interaction and includes service delay; no manual baseline is collected.</div>}
     {loading && data && waking && <div className="empty-inline" role="status">Waking the API… refreshing the snapshot-date queue. The first request can take up to 30 seconds.</div>}
     {!collectionsOnly && data?.items.length ? <><div className="fine-print" style={{ marginBottom: 12 }}>Assumed 14-day cash uplift uses a 10% scenario; it is not measured incremental cash or an observed effect. The outcome rows below show recorded payments after reminders; results are descriptive and do not establish causality.</div><details className="panel policy-thresholds"><summary>Policy fact → threshold → action</summary><ul><li>Due within three days: a friendly reminder is eligible when predicted payment by the due date is below the configured probability threshold.</li><li>At least 3 days overdue: friendly follow-up when the 14-day payment probability is below 80%; 5-day reminder cooldown.</li><li>At least 10 days overdue: firm follow-up when 14-day payment probability is below 95%; 7-day cooldown.</li><li>At +21 days: offer partial payment only for balances of at least 2,500 with prior partial-payment history; at +45 days, recommend a personal call.</li><li>At +90 days: move the open balance to collections review instead of sending another reminder.</li><li>The shared daily cap is allocated round-robin across currency lanes in alphabetical order (EUR, GBP, USD); within each lane rank by assumed uplift, then due date, then stable invoice ID. No FX conversion is used for ranking.</li></ul></details><section id="recorded-outcomes" className="fine-print">Recorded outcomes are shown on each action card and linked to its invoice timeline. Payment after a reminder is descriptive evidence; it does not establish causality.</section></> : null}
-    {!collectionsOnly && data && <><div className="action-buttons"><button className="btn primary" disabled={bulkBusy || Boolean(busyId) || !data.items.some(item => item.recommendation?.action === "friendly")} onClick={() => void approveFriendly()}>Approve eligible friendly reminders</button>{data.skipped.map(item => <div className="skip-recovery" key={item.id}><span>{item.invoice_number} · {item.client_name}</span><Link className="btn" href={`/invoices/${encodeURIComponent(item.invoice_id)}#invoice-timeline`}>Open skipped record</Link>{item.replacement_state ? <span className="fine-print">A replacement action is already {item.replacement_state}; the original skip remains recorded.</span> : <button className="btn" disabled={Boolean(busyId) || bulkBusy || skipBusy === item.id} onClick={() => void reconcileSkipped(item)}>{skipBusy === item.id ? "Checking…" : "Restore skipped suggestion"}</button>}{skipRecovery[item.id] && <span className="fine-print" role="status">{skipRecovery[item.id]} <button className="btn" disabled={skipBusy === item.id} onClick={() => void reconcileSkipped(item, true)}>Check status</button></span>}</div>)}</div>{bulkResults.length > 0 && <div className="delivery-note" role="status"><strong>Bulk approval results</strong>{bulkResults.map(result => <div key={result}>{result}</div>)}</div>}</>}
+    {!collectionsOnly && data && <><div className="action-buttons"><button className="btn primary" disabled={bulkBusy || Boolean(busyId) || !data.items.some(item => item.recommendation?.action === "friendly")} onClick={openFriendlyPreview}>Approve eligible friendly reminders</button>{data.skipped.map(item => <div className="skip-recovery" key={item.id}><span>{item.invoice_number} · {item.client_name}</span><Link className="btn" href={`/invoices/${encodeURIComponent(item.invoice_id)}#invoice-timeline`}>Open skipped record</Link>{item.replacement_state ? <span className="fine-print">A replacement action is already {item.replacement_state}; the original skip remains recorded.</span> : <button className="btn" disabled={Boolean(busyId) || bulkBusy || skipBusy === item.id} onClick={() => void reconcileSkipped(item)}>{skipBusy === item.id ? "Checking…" : "Restore skipped suggestion"}</button>}{skipRecovery[item.id] && <span className="fine-print" role="status">{skipRecovery[item.id]} <button className="btn" disabled={skipBusy === item.id} onClick={() => void reconcileSkipped(item, true)}>Check status</button></span>}</div>)}</div>{bulkResults.length > 0 && <div className="delivery-note" role="status"><strong>Bulk approval results</strong>{bulkResults.map(result => <div key={result}>{result}</div>)}</div>}</>}
     {error && <div className="error-box" role="alert">{error}</div>}
     {collectionsOnly && loading && !data ? <div className="empty-box" role="status">{waking ? "Waking the API… the first request can take up to 30 seconds." : "Loading collections…"}</div> : !collectionsOnly && loading && !data ? <div className="empty-box" role="status">{waking ? "Waking the API… the first request can take up to 30 seconds." : "Loading snapshot-date suggestions…"}</div> : error && !data ? <div className="empty-box">The {collectionsOnly ? "collections" : "action queue"} could not load. {error} <button className="btn" onClick={() => void refresh()}>Retry</button></div> : collectionsOnly ? null : !data?.items.length ? <div className="empty-box">No reminder or partial-payment action is pending for this snapshot. The policy may recommend waiting, or all suggestions may already be reviewed.</div> : <div className="queue-list" id="action-approval">{data.items.map(item => {
       const recommendation = item.recommendation;
@@ -342,7 +337,7 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
         {operationState === "uncertain" && <div className="delivery-note" role="status"><strong>Action status needs reconciliation.</strong><p>The saved server state is not confirmed. Check it before retrying.</p><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button></div>}
         {operationState === "saved_refresh_failed" && <div className="delivery-note" role="status"><strong>Action saved; queue refresh failed.</strong><p>Check the invoice record or retry the queue refresh before continuing.</p><div className="action-buttons"><button className="btn" disabled={busy} onClick={() => void checkActionStatus(item)}>Check status</button><button className="btn" disabled={loading} onClick={() => void refresh()}>Retry refresh</button></div></div>}
         {operationState === "confirmed" && <div className="fine-print" role="status">Server status checked. Refresh the queue before taking another action.</div>}
-        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || Boolean(operationState) || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => void act(item, "approve")}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Approve partial payments" : synthetic ? "Approve & simulate" : "Approve & send"}</button><button className="btn" disabled={busy || bulkBusy || Boolean(operationState)} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
+        <div className="action-buttons"><button className="btn primary" disabled={busy || bulkBusy || Boolean(operationState) || (!partial && !(drafts[recommendation.id] || "").trim())} onClick={() => { if (item.source === "paypal") setProviderApproval(item); else void act(item, "approve"); }}>{busy ? "Applying…" : partial ? synthetic ? "Approve & simulate" : "Review PayPal approval" : synthetic ? "Approve & simulate" : "Review PayPal reminder"}</button><button className="btn" disabled={busy || bulkBusy || Boolean(operationState)} onClick={() => void act(item, "skip")}>Skip</button><Link className="btn" href={`/invoices/${encodeURIComponent(item.id)}`}>Open invoice</Link></div>
       </article>;
     })}</div>}
     {collectionsOnly && data && <section className="panel collections-workspace" aria-labelledby="collections-workspace-title">
@@ -392,5 +387,40 @@ export default function ActionQueue({ collectionsOnly = false }: { collectionsOn
         })()}
       </article>)}</div>
     </section> : null}
+    <ConfirmDialog
+      open={Boolean(providerApproval)}
+      title={providerApproval?.recommendation?.action === "offer_partial_payment" ? "Enable partial payments in PayPal Sandbox?" : "Approve this PayPal Sandbox reminder?"}
+      description={providerApproval?.recommendation?.action === "offer_partial_payment"
+        ? "This updates the existing PayPal Sandbox invoice and may notify its recipient. Review the invoice record before approval."
+        : "PayPal sends its system generated reminder email. The editable internal note is saved for review and is not emailed."}
+      confirmLabel={providerApproval?.recommendation?.action === "offer_partial_payment" ? "Approve payment setting" : "Approve reminder"}
+      onCancel={() => setProviderApproval(null)}
+      onConfirm={() => { const selected = providerApproval; setProviderApproval(null); if (selected) void act(selected, "approve"); }}
+    >
+      {providerApproval && <div className="approval-summary">
+        <strong>{providerApproval.invoice_number} · {providerApproval.client_name}</strong>
+        <div>Recipient {providerApproval.client_email || "email unavailable"}</div>
+        <div>Balance {money(providerApproval.currency, providerApproval.outstanding)}</div>
+        <div>Assumed 14-day cash uplift (10% scenario): {money(providerApproval.currency, providerApproval.decision.expected_cash_gain)}</div>
+      </div>}
+    </ConfirmDialog>
+    <ConfirmDialog
+      open={Boolean(bulkPreview)}
+      title="Review friendly reminders before approval"
+      description={bulkPreview ? `${bulkPreview.eligibleCount} reminders are eligible; ${bulkPreview.items.length} are included under the shared cap of ${bulkPreview.cap}. They will be approved one at a time with a result shown for each invoice.` : undefined}
+      confirmLabel={`Approve ${bulkPreview?.items.length || 0} reminders`}
+      onCancel={() => setBulkPreview(null)}
+      onConfirm={() => { const preview = bulkPreview; setBulkPreview(null); if (preview) void approveFriendly(preview.items); }}
+    >
+      {bulkPreview && <>
+        <ol className="approval-item-list">{bulkPreview.items.map(item => <li key={item.id}>
+          <strong>{item.invoice_number} · {item.client_name}</strong>
+          <span>Recipient: {item.source.startsWith("demo") ? "synthetic demo; no email sent" : item.client_email || "email unavailable"}</span>
+          <span>Balance: {money(item.currency, item.outstanding)}</span>
+          <span>Assumed 14-day cash uplift (10% scenario): {money(item.currency, item.decision.expected_cash_gain)}</span>
+        </li>)}</ol>
+        <p className="fine-print">{bulkPreview.items.some(item => !item.source.startsWith("demo")) ? "PayPal Sandbox reminders send test notifications; synthetic reminders are simulated." : "Synthetic reminders are simulated; no PayPal email is sent."}</p>
+      </>}
+    </ConfirmDialog>
   </>;
 }

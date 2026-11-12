@@ -11,6 +11,7 @@ import type { ChangeEvent, FormEvent } from "react";
 import { requestJson as getJson, clearReads, ensureDemoSession, RequestError, API_WRITE_TIMEOUT_MS, currentReadTimeoutMs } from "./lib/api";
 import { decisionLabel, signalLabel, statusLabel } from "./lib/labels";
 import { OperatorControls, useAuth } from "./providers";
+import ConfirmDialog from "./confirm-dialog";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -200,6 +201,7 @@ export default function PortfolioClient() {
   const [portfolioRefreshedAt, setPortfolioRefreshedAt] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [paypalRecipients, setPaypalRecipients] = useState<PaypalRecipient[]>([]);
   const [newInvoiceClient, setNewInvoiceClient] = useState("");
   const [newInvoiceAmount, setNewInvoiceAmount] = useState("");
@@ -350,7 +352,6 @@ export default function PortfolioClient() {
   };
 
   const resetDemo = async () => {
-    if (!window.confirm("Reset this browser's isolated synthetic demo session? Simulated payments, replies, approvals, promises, and disputes return to their starting state. Unsaved notes and collection drafts plus the tour position are cleared. Column preferences, other reviewers, and PayPal Sandbox records are unchanged.")) return;
     setResetBusy(true); setError("");
     let resetConfirmed = false;
     try {
@@ -598,7 +599,7 @@ export default function PortfolioClient() {
       <main className="main-wrap">
         {!authenticated && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Deterministic sample invoices. Simulated actions never contact PayPal.</span></div>}
         <div className="heading-row"><div><div className="eyebrow">Receivables intelligence</div><h1>Invoice portfolio</h1><p className="subheading">See what may get paid, who is slowing down, and what needs a human decision.</p></div><div className="toolbar-tools"><button className="btn" onClick={() => setUsdMode(value => !value)}>{usdMode ? "Show source currencies" : "Show USD equivalent"}</button>{authenticated && <button className="btn primary" disabled={busy} onClick={() => void sync()}>{busy ? "Syncing…" : "↻ Sync PayPal"}</button>}</div></div>
-        {!authenticated && data && <><TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={data.as_of} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={commitDemoClock} onReset={() => void resetDemo()} /><div className="fine-print" style={{ margin: "-6px 0 14px" }}>Simulated payments, replies, approvals, promises, and disputes persist across reloads in this browser&apos;s isolated demo session. Reset restores that session and clears unsaved session drafts; saved column preferences and PayPal Sandbox records stay as they are.</div></>}
+        {!authenticated && data && <><TimeTravelControl key={`${searchKey}-${data.as_of_max}`} currentAsOf={data.as_of} maxAsOf={data.as_of_max} resetBusy={resetBusy} onCommit={commitDemoClock} onReset={() => setResetConfirmOpen(true)} /><div className="fine-print" style={{ margin: "-6px 0 14px" }}>Simulated payments, replies, approvals, promises, and disputes persist across reloads in this browser&apos;s isolated demo session. Reset restores that session and clears unsaved session drafts; saved column preferences and PayPal Sandbox records stay as they are.</div></>}
         {error && <div className="error-box" role="alert">{error}{data && <span className="fine-print"> Showing the last successful portfolio snapshot from {data.as_of}.</span>}{!error.startsWith("The API is waking up.") && <button className="btn" style={{ marginLeft: 10 }} onClick={() => { wakeRetries.current.delete(searchKey); setFallbackVisible(false); setError(""); setLoading(true); void refresh(); }}>Retry</button>}</div>}
         {fallbackVisible && <section className="panel fallback-callout"><div><div className="panel-title">Continue with the read-only fallback demo</div><div className="panel-subtitle">A synthetic portfolio snapshot and five repeatable stops are packaged with this web app. No demo mutations are written from that page.</div></div><Link className="btn primary" href="/offline-demo">Open fallback demo</Link></section>}
         {data && <section className="decision-hero" aria-label="Portfolio snapshot and review actions">
@@ -730,6 +731,15 @@ export default function PortfolioClient() {
           </section>
         </>}
       </main>
+      <ConfirmDialog
+        open={resetConfirmOpen}
+        title="Reset this browser’s demo session?"
+        description="Simulated payments, replies, approvals, promises, and disputes return to their starting state. Unsaved notes and collection drafts plus the tour position are cleared. Saved column preferences, other reviewers, and PayPal Sandbox records are unchanged."
+        confirmLabel="Reset demo session"
+        tone="danger"
+        onCancel={() => setResetConfirmOpen(false)}
+        onConfirm={() => { setResetConfirmOpen(false); void resetDemo(); }}
+      />
     </div>
   </AgGridProvider>;
 }
