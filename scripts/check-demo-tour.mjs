@@ -34,13 +34,12 @@ async function openAndWait(stop, liveLabel, ready, fallbackReady) {
     } catch { /* Use the on-page packaged fallback after its bounded live read. */ }
   }
   if (!mode) {
-    const inlineFallback = page.getByRole("link", { name: "Open fallback demo", exact: true });
-    const sharedFallback = page.getByRole("link", { name: "Read-only fallback", exact: true }).last();
-    if (await inlineFallback.isVisible().catch(() => false)) await inlineFallback.click();
-    else if (await sharedFallback.isVisible().catch(() => false)) await sharedFallback.click();
-    else throw new Error(`Stop ${stop} did not render live content or expose its packaged fallback.`);
-    const stopButton = page.getByRole("button", { name: `Offline stop ${stop}` });
-    if (stop > 1 && await stopButton.isVisible().catch(() => false)) await stopButton.click();
+    await page.goto(`${baseUrl}/tour?stop=${stop}`, { waitUntil: "domcontentloaded", timeout: Math.min(remaining(), 30_000) });
+    await page.getByRole("heading", { name: "Guided demo tour" }).waitFor({ state: "visible", timeout: Math.min(remaining(), 10_000) });
+    const directFallback = page.getByRole("link", { name: `Open packaged fallback · stop ${stop}`, exact: true });
+    await directFallback.waitFor({ state: "visible", timeout: Math.min(remaining(), 10_000) });
+    await directFallback.click();
+    await page.waitForURL(url => url.pathname === "/offline-demo" && url.searchParams.get("stop") === String(stop), { timeout: Math.min(remaining(), 15_000) });
     await fallbackReady.waitFor({ state: "visible", timeout: Math.min(remaining(), 15_000) });
     mode = "fallback";
   }

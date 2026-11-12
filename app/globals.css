@@ -230,7 +230,8 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
   .toolbar-tools { flex-wrap: wrap; justify-content: flex-start; }
 }
 @media (max-width: 620px) {
-  .topbar { height: 62px; padding: 0 17px; }
+  .topbar { height: auto; min-height: 62px; flex-wrap: wrap; gap: 8px; padding: 9px 17px; }
+  .brand { white-space: nowrap; }
   .tour-return-bar { align-items: flex-start; flex-direction: column; padding: 10px 17px; }
   .tour-return-bar nav { width: 100%; flex-wrap: wrap; }
   .main-wrap { padding: 25px 14px 50px; }
@@ -347,7 +348,8 @@ textarea { width: 100%; min-height: 160px; resize: vertical; padding: 12px; line
   .workflow-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ask-brief-grid { grid-template-columns: 1fr; }
   .morning-summary { align-items: flex-start; flex-direction: column; }
-  .top-actions { overflow-x: auto; max-width: 72vw; }
+  .top-actions { width: 100%; max-width: 100%; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+  .top-actions > * { flex: 0 0 auto; }
   .fallback-evidence-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 850px) {

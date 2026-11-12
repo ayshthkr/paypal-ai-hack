@@ -290,6 +290,17 @@ test("guided tour exposes five stops and sends a failed live story to the packag
   expect(mobileProgress!.y).toBeLessThan(mobilePrevious!.y);
   expect(Math.abs(mobilePrevious!.y - mobileNext!.y)).toBeLessThan(2);
 
+  await page.route("**/api/**", route => route.abort());
+  await page.goto("/");
+  await expect(page.locator(".topbar")).toBeVisible();
+  await expect(page.locator(".topbar .brand")).toHaveCSS("white-space", "nowrap");
+  await expect(page.locator(".topbar .top-actions")).toHaveCSS("flex-wrap", "nowrap");
+  await expect(page.locator(".topbar .top-actions")).toHaveCSS("overflow-x", "auto");
+  const brandBox = await page.locator(".topbar .brand").boundingBox();
+  const actionsBox = await page.locator(".topbar .top-actions").boundingBox();
+  expect(brandBox && actionsBox).toBeTruthy();
+  expect(actionsBox!.y).toBeGreaterThan(brandBox!.y);
+
   await page.route("**/api/demo-stories", route => route.abort());
   await page.goto("/tour?stop=2");
   await expect(page.getByRole("status").getByText(/Named story lookup failed/)).toBeVisible();
