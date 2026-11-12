@@ -12,6 +12,13 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
+### Submission preparation — 2026-11-12
+
+- `docs/hackathon-submission.md` contains paste-ready project text, AI/tool disclosure, sponsor integration details, and a requirement mapping against the official Devpost rules. `docs/demo-video-script.md` supplies a 2:45 recording script. The public YouTube upload remains pending at the user's request.
+- The user authorized MIT licensing and public GitHub visibility. Root `LICENSE` contains MIT; README now foregrounds demo/source links and complete local setup. Before publication, Gitleaks scanned all Git refs and tracked file contents: its only matches were the literal forecast bucket `beyond_180_days`, not credentials. An exact-value check of five locally configured credential values found no matches in historical Git blobs. Ignored environment files remain excluded.
+- Submission verification found the existing `TourNavigation` component had been disconnected from the root layout. It is restored under Suspense; a local browser check confirmed Continue opens stop 2. ESLint passed with two existing unused-variable warnings in the screenshot script, TypeScript and the production build passed. Hosted root, API health, and AI configuration status returned HTTP 200; this preparation did not dispatch a PayPal operation.
+- Keep the hosted demo available through the end of judging (December 15, 2026). The Render database expiry runbook remains relevant. The video URL placeholder must be replaced before Devpost submission.
+
 ### Active application release — commit `bf448ef`, 2026-11-12
 
 - Render API and web both report `bf448ef` Live. The API `/health` and hosted web root return 200; `/ready` is not implemented. Startup memory pressure from the Nov 11 incident was addressed in `09e7195`.

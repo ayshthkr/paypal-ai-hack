@@ -2,23 +2,49 @@
 
 Receivables dashboard with a conditional time-to-payment forecast, client delay signals, and human-approved PayPal invoice reminders. The local experience uses a reproducible synthetic dataset. PayPal calls are restricted to Sandbox and controlled recipient emails.
 
+- **Working demo:** [latepayer-web.onrender.com](https://latepayer-web.onrender.com/)
+- **Judge walkthrough:** [five-stop interactive tour](https://latepayer-web.onrender.com/tour)
+- **Source:** [ayshthkr/paypal-ai-hack](https://github.com/ayshthkr/paypal-ai-hack)
+- **Submission text and AI tool disclosure:** [docs/hackathon-submission.md](docs/hackathon-submission.md)
+
+Judges can use the hosted synthetic demo without an account or API keys. Open the portfolio, inspect an invoice forecast, approve a simulated action, and review a client reply. Each browser has an isolated synthetic session; these actions do not contact PayPal. Render may take a minute to wake after inactivity. The read-only fallback is presentation support; use the live app or local setup to evaluate working functionality.
+
 For the guided screen-by-screen tour, see [walkthrough.md](walkthrough.md).
+
+## PayPal, AI, and sponsor tools
+
+PayPal Sandbox Invoicing handles invoice creation/sending, reminder dispatch, and payment reconciliation through verified webhooks or manual sync. Google Gemini assists with grounded reminder wording and reply classification; survival models estimate payment timing. **AG Grid Community** powers the invoice workspace, and **Render** hosts the web app, API, and Postgres. See the [tools disclosure](docs/hackathon-submission.md#tools--ai-disclosure--ready-to-paste) for implementation details.
+
+## License
+
+[MIT](LICENSE) for the project code. Third-party software and data retain their respective licenses; the optional external benchmark dataset is not bundled or needed to run the app.
 
 ## Requirements
 
 - Bun 1.3.6
 - Python 3.12 or 3.13 with `uv`
-- Docker Compose
+- Docker Engine or Docker Desktop with Docker Compose v2, running before setup
+- Git and GNU Make
+- Internet access for dependency installation; ports 3000, 8000, and 5432 available
 
 ## Local setup
 
 ```sh
+git clone https://github.com/ayshthkr/paypal-ai-hack.git
+cd paypal-ai-hack
 test -f .env || cp .env.example .env
-# Set OPERATOR_USERNAME, OPERATOR_PASSWORD, and SESSION_SECRET in .env.
-bun install
+```
+
+Edit `.env` before continuing: choose your own `OPERATOR_USERNAME` and `OPERATOR_PASSWORD`, and set `SESSION_SECRET` to a random value (generate one with `openssl rand -hex 32`). Keep the example local database URL and `PAYPAL_MODE=sandbox`. Leave PayPal and Gemini keys blank for the self-contained synthetic demo.
+
+```sh
 make setup
 make dev
 ```
+
+The first setup installs dependencies, starts the database, applies migrations, generates data, and trains/evaluates the model; allow several minutes. Keep `make dev` running and use Ctrl+C to stop it. Restart with `make dev`; stop Postgres separately with `docker compose stop db`. Setup resets the synthetic fixture set, so it is not needed on every restart.
+
+If Docker reports a connection error, start Docker and retry. If port 5432 is occupied, stop the conflicting local service or change both the Compose port mapping and `.env` database port. If the UI cannot reach the API, check `http://localhost:8000/healthz` and confirm `API_URL=http://127.0.0.1:8000` in `.env`.
 
 Open `http://localhost:3000` for the dashboard, `http://localhost:8000/docs` for the API, and `http://localhost:8000/healthz` for the minimal liveness check. `/ready` is not public. Render probes `/health` during deployment; `/healthz` is also available as a minimal liveness endpoint. The dashboard remains usable in public synthetic demo mode without PayPal credentials. `make setup` starts Postgres, migrates the database, seeds 52 deterministic synthetic clients and 1,500–3,000 invoices (with exactly 50 intentionally open), and trains the forecast.
 
@@ -57,7 +83,7 @@ The invoice dashboard uses **AG Grid Community**, the free MIT-licensed edition.
 
 ## Render
 
-`render.yaml` defines the web service, API service, and Postgres database. The API seeds the public synthetic demo on first boot only, preserving its records on later restarts. The web build runs Bun 1.3.6, matching the local lockfile. The private GitHub repository is connected to Render and deployed as a free Blueprint. The API is at `https://latepayer-api.onrender.com`; check its liveness at `/healthz`. Operator and Sandbox secrets stay in Render, while the generated operator login is also saved in ignored local `.env.render` (mode `0600`). The PayPal Sandbox Invoicing scope and invoice operations are verified; the controlled invoice, reminder, payment reconciliation, and webhook flow passed acceptance. Keep `PAYPAL_MODE=sandbox`. Free Render Postgres expires 30 days after creation and has a 14-day grace period before deletion; record the actual dashboard dates and follow [the Render runbook](docs/render-free-tier-runbook.md). Update `WEB_ORIGIN` if you use a custom web domain.
+`render.yaml` defines the web service, API service, and Postgres database. The API seeds the public synthetic demo on first boot only, preserving its records on later restarts. The web build runs Bun 1.3.6, matching the local lockfile. The GitHub repository is connected to Render and deployed as a free Blueprint. The API is at `https://latepayer-api.onrender.com`; check its liveness at `/healthz`. Operator and Sandbox secrets stay in Render, while the generated operator login is also saved in ignored local `.env.render` (mode `0600`). The PayPal Sandbox Invoicing scope and invoice operations are verified; the controlled invoice, reminder, payment reconciliation, and webhook flow passed acceptance. Keep `PAYPAL_MODE=sandbox`. Free Render Postgres expires 30 days after creation and has a 14-day grace period before deletion; record the actual dashboard dates and follow [the Render runbook](docs/render-free-tier-runbook.md). Update `WEB_ORIGIN` if you use a custom web domain.
 
 Full external actions and account configuration are listed in [docs/external-setup.md](docs/external-setup.md). Execution evidence and remaining external blockers are in [docs/execution-status.md](docs/execution-status.md) and [docs/v1-acceptance.md](docs/v1-acceptance.md).
 
