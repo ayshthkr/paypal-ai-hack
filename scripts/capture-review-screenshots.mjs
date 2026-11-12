@@ -69,7 +69,7 @@ function makeQueueFixture(kind) {
     currency: "USD",
     outstanding: "1250.00",
     due_date: "2026-11-15",
-    decision: { ...base.decision, action: "friendly", reason: "Payment is unlikely by the due date." },
+    decision: { ...base.decision, action: "friendly", reason: "Payment is unlikely by the due date.", expected_cash_gain: 125 },
     recommendation: {
       ...(base.recommendation || {}),
       id: `screenshot-${kind}-recommendation-${suffix}`,
@@ -290,11 +290,11 @@ try {
   invoiceListSnapshot = await waitForApiSnapshot("/api/invoices");
   await waitForInvoiceNeighbors();
 
-  const invoiceMatcher = (url, request) => url.pathname === invoicePath && request.method() === "GET";
-  const invoiceListMatcher = (url, request) => url.pathname === "/api/invoices" && url.searchParams.get("sort") === "action" && request.method() === "GET";
-  const paymentMatcher = (url, request) => url.pathname === `/api/demo/invoices/${encodeURIComponent(invoiceSnapshot.id)}/payment` && request.method() === "POST";
-  const replyMatcher = (url, request) => url.pathname === `${invoicePath}/reply` && request.method() === "POST";
-  const replyApplyMatcher = (url, request) => /^\/api\/invoices\/[^/]+\/reply-triage\/[^/]+\/apply$/.test(url.pathname) && request.method() === "POST";
+  const invoiceMatcher = (url) => url.pathname === invoicePath;
+  const invoiceListMatcher = (url) => url.pathname === "/api/invoices" && url.searchParams.get("sort") === "action";
+  const paymentMatcher = (url) => url.pathname === `/api/demo/invoices/${encodeURIComponent(invoiceSnapshot.id)}/payment`;
+  const replyMatcher = (url) => url.pathname === `${invoicePath}/reply`;
+  const replyApplyMatcher = (url) => /^\/api\/invoices\/[^/]+\/reply-triage\/[^/]+\/apply$/.test(url.pathname);
   await page.route(invoiceMatcher, (route) => fulfillJson(route, makeInvoiceFixture()));
   await page.route(invoiceListMatcher, (route) => fulfillJson(route, invoiceListSnapshot));
   await page.route(paymentMatcher, (route) => {
@@ -342,9 +342,23 @@ try {
 
   await optional("client-detail-and-terms-scenario", async () => {
     if (!verdantHref) throw new Error("The dashboard story menu did not expose the Verdant Market detail link.");
-    const clientPath = new URL(verdantHref, baseUrl).pathname.replace(/^\/clients\//, "/api/facts/clients/");
+    const storyPath = new URL(verdantHref, baseUrl).pathname;
+    let clientHref = verdantHref;
+    if (storyPath.startsWith("/invoices/")) {
+      let storyInvoice = invoiceSnapshot;
+      const storyInvoicePath = storyPath.replace(/^/, "/api");
+      if (storyInvoicePath !== invoicePath) {
+        apiSnapshots.delete(storyInvoicePath);
+        await navigate(verdantHref);
+        await page.locator("#invoice-timeline").waitFor({ state: "visible", timeout: 90_000 });
+        storyInvoice = await waitForApiSnapshot(storyInvoicePath);
+      }
+      if (!storyInvoice?.client_id) throw new Error("The Verdant story invoice did not include its client identity.");
+      clientHref = `/clients/${encodeURIComponent(storyInvoice.client_id)}`;
+    }
+    const clientPath = new URL(clientHref, baseUrl).pathname.replace(/^\/clients\//, "/api/facts/clients/");
     apiSnapshots.delete(clientPath);
-    await navigate(verdantHref);
+    await navigate(clientHref);
     await page.getByText(/invoices · \d+ fully settled · as of/).waitFor({ state: "visible", timeout: 90_000 });
     clientSnapshot = await waitForApiSnapshot(clientPath);
     await save("05-clients/01-client-timing-and-exposure.jpg");
@@ -355,7 +369,7 @@ try {
       const response = await responsePromise;
       if (!response.ok()) throw new Error(`Terms scenario returned ${response.status()}.`);
       whatIfSnapshot = await response.json();
-      await save("05-clients/02-terms-scenario-horizons.jpg");
+      await save("05-clients/02-terms-scenario-horizons.jpg", { fullPage: true });
       const probabilities = page.locator(".client-invoice-table").filter({ hasText: "Paid within 30 days" });
       await probabilities.scrollIntoViewIfNeeded();
       await save("05-clients/03-terms-scenario-30-60-90-day-comparison.jpg", { selector: probabilities });
@@ -381,18 +395,18 @@ try {
       await save(`06-performance/${file}.jpg`);
     });
   }
-  await page.route((url, request) => url.pathname === "/api/evaluation" && request.method() === "GET", (route) => fulfillJson(route, evaluationSnapshot));
+  await page.route((url) => url.pathname === "/api/evaluation", (route) => fulfillJson(route, evaluationSnapshot));
 
   let activeQueueFixture = makeQueueFixture("provider");
   let mockedSkippedItem = null;
   let collectionSaveFixture = null;
   let collectionSaveInvoiceId = null;
-  const queueMatcher = (url, request) => url.pathname === "/api/action-queue" && request.method() === "GET";
+  const queueMatcher = (url) => url.pathname === "/api/action-queue";
   const authMatcher = (url) => url.pathname === "/api/auth/me";
-  const draftMatcher = (url, request) => /^\/api\/recommendations\/[^/]+\/draft$/.test(url.pathname) && request.method() === "POST";
-  const skipMatcher = (url, request) => /^\/api\/recommendations\/[^/]+\/skip$/.test(url.pathname) && request.method() === "POST";
-  const reviewMetricMatcher = (url, request) => /^\/api\/invoices\/[^/]+\/review-metric$/.test(url.pathname) && request.method() === "POST";
-  const collectionMatcher = (url, request) => /^\/api\/invoices\/[^/]+\/collection-review$/.test(url.pathname) && request.method() === "PATCH";
+  const draftMatcher = (url) => /^\/api\/recommendations\/[^/]+\/draft$/.test(url.pathname);
+  const skipMatcher = (url) => /^\/api\/recommendations\/[^/]+\/skip$/.test(url.pathname);
+  const reviewMetricMatcher = (url) => /^\/api\/invoices\/[^/]+\/review-metric$/.test(url.pathname);
+  const collectionMatcher = (url) => /^\/api\/invoices\/[^/]+\/collection-review$/.test(url.pathname);
   await page.route(queueMatcher, (route) => {
     const payload = structuredClone(activeQueueFixture);
     if (collectionSaveFixture && collectionSaveInvoiceId) {
@@ -443,7 +457,9 @@ try {
     activeQueueFixture = makeQueueFixture("synthetic");
     mockedSkippedItem = null;
     await navigate("/actions");
-    const card = page.locator(".queue-card").filter({ has: page.locator(".draft-provenance") }).first();
+    await page.locator("#action-approval .queue-card").first().waitFor({ state: "visible", timeout: 90_000 });
+    const card = page.locator("#action-approval .queue-card").first();
+    await card.locator(".draft-provenance").waitFor({ state: "visible", timeout: 30_000 });
     const editor = card.locator("textarea").first();
     if (!(await editor.count()) || !(await editor.isEnabled())) throw new Error("The browser-local queue fixture has no editable reminder.");
     const original = await editor.inputValue();
@@ -611,6 +627,7 @@ try {
   });
 
   await optional("narrow-portfolio", async () => {
+    await page.evaluate(() => sessionStorage.removeItem("latepayer-tour-stop"));
     await page.setViewportSize({ width: 390, height: 844 });
     await navigate("/");
     await save("10-responsive/01-narrow-portfolio.jpg");

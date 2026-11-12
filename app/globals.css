@@ -38,7 +38,7 @@ h1 { margin: 8px 0 6px; font-size: clamp(29px, 4vw, 42px); line-height: 1.05; le
 .btn.dark { background: #142b40; color: #fff; border-color: #142b40; }
 .btn.danger { color: #9b332c; border-color: #f0d0ce; background: #fff8f7; }
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
-.confirm-dialog { width: min(600px, calc(100vw - 32px)); max-width: 600px; max-height: min(82vh, 760px); padding: 0; border: 1px solid #d7e0e5; border-radius: 16px; color: var(--ink); background: #fff; box-shadow: 0 24px 80px #152b3d40; }
+.confirm-dialog { position: fixed; inset: 0; width: min(600px, calc(100vw - 32px)); max-width: 600px; max-height: min(82vh, 760px); margin: auto; padding: 0; border: 1px solid #d7e0e5; border-radius: 16px; color: var(--ink); background: #fff; box-shadow: 0 24px 80px #152b3d40; }
 .confirm-dialog::backdrop { background: #142b40a6; }
 .confirm-dialog-content { display: grid; gap: 14px; padding: 24px; }
 .confirm-dialog h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
