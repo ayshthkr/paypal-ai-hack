@@ -12,14 +12,15 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 
 ## Current state
 
-### Active application release — commit `eb0b407`, 2026-11-12
+### Active application release — commit `8b3b217`, 2026-11-12
 
-- Render API and web run `eb0b407`. `/health` and `/healthz` return 200; `/ready` is not implemented. Startup memory pressure from the Nov 11 incident was addressed in `09e7195`.
+- Render API and web run `8b3b217`. `/health` and the hosted web root return 200; `/ready` is not implemented. Startup memory pressure from the Nov 11 incident was addressed in `09e7195`.
 - The release implements the reviewer workflow fixes across forecasting, collections, replies, actions, scenarios, performance, operator controls, and the packaged fallback. Follow-up fixes reconcile weekly cash cards to invoice probability-mass contributors, align the first-visit queue count with its ranked actions, label filtered versus portfolio-wide summaries, and keep survival-chart dates and table readable.
 - Collections and reply flows retain edits through errors, distinguish save from refresh failures, and provide status reconciliation. Synthetic payment retries reuse stable identities. The packaged fallback is directly reachable from failure states.
-- `make check` passes: Ruff, 96 Python tests, ESLint, TypeScript, and the Next.js production build. Seven hosted Playwright checks cover cash-card/API reconciliation, queue-count reconciliation, empty-search scope, controlled retry, reply timeout recovery, the five-stop tour/fallback, and collections save/reload.
-- Hosted routes `/`, `/actions`, `/collections`, `/tour`, `/offline-demo`, `/performance`, `/operator`, and `/login`, plus API `/health`, `/healthz`, `/action-queue`, `/demo-stories`, and `/evaluation`, returned HTTP 200. Portfolio and action-queue proxy reads took 19.95s and 14.10s in the recorded run. The retry test injects one 503 and verifies recovery; it does not force Render to sleep.
-- The 34 ordered hosted screenshots are in `artifacts/screenshots/review-2026-11-12/`. PayPal remained in Sandbox, and this implementation/capture pass did not send a reminder or alter a PayPal record.
+- `make check` passes: Ruff, 96 Python tests, ESLint, TypeScript, and the Next.js production build. The local production browser suite passed 13 checks with two fixture/provider-gated skips. It covers cash-card contributors, empty-search scope, controlled outages, reply timeout recovery, tour/fallback, and collections save/reload.
+- Guided-tour progress controls and the mobile header remain readable on narrow screens. The added Playwright layout regression passed locally and against Render.
+- The hosted five-stop route completed in 40.6 seconds, all five stops live, under the 180-second budget. Web root, tour, fallback, and API `/health` returned HTTP 200 in the post-deploy checks. Render Free can sleep; the route check records a hosted run, not a forced sleep/wake cycle.
+- The 48 ordered hosted screenshots are in `artifacts/screenshots/review-2026-11-12/`, including all optional captures and the final responsive tour navigation. PayPal remained in Sandbox, and this implementation/capture pass did not send a reminder or alter a PayPal record.
 - The health workflow is enabled and scheduled every five minutes, but recorded scheduled history was sparse. Render Free can sleep; scheduled jobs are best-effort.
 
 ### Earlier deployed state and evidence
@@ -31,7 +32,7 @@ Late Payer is a receivables dashboard with payment-date forecasts, descriptive c
 - The active reminder workflow calls Gemini for grounded draft generation and reply classification. The key is managed in Render and ignored local environment files; never print, log, or commit it.
 - Live PayPal credentials/payments are not configured. No KYC, PayPal support, or paid AG Grid action is pending for Sandbox V1.
 
-Application release `eb0b407` is pushed to `origin/codex/late-payer-v1`; both Render services are deployed. Preserve the user's uncommitted `docs/final-walkthrough-audit.md` and any existing `AGENTS.md` or `walkthrough.md` changes.
+Application release `8b3b217` is pushed to `origin/codex/late-payer-v1`; both Render services are deployed. Preserve the user's uncommitted `docs/final-walkthrough-audit.md` and any existing `AGENTS.md` or `walkthrough.md` changes.
 
 ## Next checks
 
