@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   async headers() {
     const scriptPolicy = process.env.NODE_ENV === "development"
       ? "'self' 'unsafe-inline' 'unsafe-eval'"
