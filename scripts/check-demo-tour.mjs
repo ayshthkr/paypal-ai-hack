@@ -53,7 +53,7 @@ async function openAndWait(stop, liveLabel, ready, fallbackReady) {
 }
 
 try {
-  await openAndWait(1, "Open live Portfolio", page.locator("#invoice-grid"), page.getByText(/Packaged snapshot/));
+  await openAndWait(1, "Open live Portfolio", page.locator(".decision-hero"), page.getByText(/Packaged snapshot/));
   await openAndWait(2, "Open live story", page.getByText("Payment timing forecast", { exact: true }), page.getByText(/Offline stop 2 of 5/));
   await openAndWait(3, "Open live Action queue", page.locator("#action-approval .queue-card").first(), page.getByText(/Offline stop 3 of 5/));
   await openAndWait(4, "Open live Model performance", page.locator(".performance-section-nav"), page.getByText(/Offline stop 4 of 5/));

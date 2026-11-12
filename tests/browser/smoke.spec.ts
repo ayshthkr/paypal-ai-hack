@@ -43,7 +43,7 @@ test("portfolio, queue, client and invoice workflow stays within warm budgets", 
     if (timing.responseEnd > 6000) slowReads.push(`${path}: ${timing.responseEnd}ms`);
     requests.set(path, (requests.get(path) || 0) + 1);
   });
-  await page.goto("/");
+  await page.goto("/#invoices");
   await expect(page.locator("#invoice-grid")).toBeVisible({ timeout: 10_000 });
   const invoice = page.locator('.ag-cell a[href^="/invoices/"]').first();
   const invoiceUrl = await invoice.getAttribute("href");
@@ -104,7 +104,7 @@ test("an editable synthetic invoice draft survives a reload", async ({ page }) =
 
 test("cash-week cards open probability contributors with individual expected amounts", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto("/");
+  await page.goto("/#cash");
   const weekCard = page.locator("#cash-forecast button.cash-week").first();
   await expect(weekCard).toBeVisible({ timeout: 90_000 });
   const filteredResponse = page.waitForResponse(response => {
@@ -147,13 +147,15 @@ test("empty search labels filtered summaries and leaves client signals portfolio
   test.setTimeout(90_000);
   await page.goto("/?q=no-such-demo-invoice-987654");
   await expect(page.getByText(/No matching invoices\./).first()).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("tab", { name: "Cash forecast" }).click();
   await expect(page.getByText(/Filtered open balance by forecast horizon/)).toBeVisible();
+  await page.getByRole("tab", { name: /Client signals/ }).click();
   await expect(page.getByText("Portfolio-wide client payment timing", { exact: true })).toBeVisible();
 });
 
 test("client invoice table preserves probabilities below one percent", async ({ page }) => {
   test.setTimeout(90_000);
-  await page.goto("/");
+  await page.goto("/#invoices");
   const clientHref = await page.locator('.ag-cell a[href^="/clients/"]').first().getAttribute("href");
   expect(clientHref).toBeTruthy();
   const clientId = new URL(clientHref!, "http://localhost").pathname.split("/").pop()!;

@@ -1,11 +1,10 @@
 import Link from "next/link";
+import SiteHeader from "./site-header";
 
 export default function NotFound() {
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link>
-      </header>
+      <SiteHeader/>
       <main className="main-wrap">
         <section className="panel">
           <div className="eyebrow">Page not found</div>

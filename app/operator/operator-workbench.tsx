@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { clearReads, readFailureMessage, requestJson } from "../lib/api";
-import { OperatorControls, useAuth } from "../providers";
+import { useAuth } from "../providers";
 
+import SiteHeader from "../site-header";
 type Recipient = { id: string; name: string; email: string };
 type WebhookEvidence = { event_type: string; occurred_at: string | null; received_at: string; verified: boolean; processing_status: string; failure_reason: string | null; invoice_id: string | null };
 type SyncStatus = { last_run: null | { started_at: string; completed_at: string | null; status: string; created: number; updated: number; event_refreshes: number; retry_failures: number; errors: string[] }; webhook_failures: number; webhook_events: WebhookEvidence[] };
@@ -98,9 +99,9 @@ export default function OperatorWorkbench() {
     finally { setSyncing(false); }
   };
 
-  if (!authenticated) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="btn" href="/offline-demo">Read-only fallback</Link></div></header><main className="main-wrap"><section className="panel"><div className="eyebrow">Operator route · PayPal Sandbox</div><h1>Sign in to run the integration checklist</h1><p className="subheading">Invoice creation, payment checks, webhooks, and sync are restricted to the authenticated operator session.</p><Link className="btn primary" href="/login">Operator login</Link></section></main></div>;
+  if (!authenticated) return <div className="app-shell"><SiteHeader/><main className="main-wrap"><section className="panel"><div className="eyebrow">Operator route · PayPal Sandbox</div><h1>Sign in to run the integration checklist</h1><p className="subheading">Invoice creation, payment checks, webhooks, and sync are restricted to the authenticated operator session.</p><Link className="btn primary" href="/login">Operator login</Link></section></main></div>;
 
-  return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href="/">Portfolio</Link><Link className="back-link" href="/actions">Action queue</Link><Link className="back-link" href="/collections">Collections</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link><OperatorControls/></div></header><main className="main-wrap">
+  return <div className="app-shell"><SiteHeader/><main className="main-wrap">
     <div className="heading-row"><div><div className="eyebrow">Operator route · PayPal Sandbox only</div><h1>PayPal integration checklist</h1><p className="subheading">Create an allowlisted test invoice, pay it with a Sandbox buyer, receive or sync the event, then confirm the balance update.</p></div><button className="btn" disabled={loading || syncing} onClick={() => void refreshEvidence()}>Refresh evidence</button></div>
     <div className="demo-banner"><span className="demo-dot"/><strong>Authenticated</strong><span>PayPal mode: Sandbox · test recipient allowlist enforced · no production invoice operations.</span></div>
     {error && <div className="error-box" role="alert">{error} <button className="btn" onClick={() => void refreshEvidence()}>Retry evidence</button></div>}{notice && <div className="action-message" role="status">{notice}</div>}

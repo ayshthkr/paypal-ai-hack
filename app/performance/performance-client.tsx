@@ -86,10 +86,13 @@ export default function ModelPerformance() {
     <section className="panel" aria-labelledby="evaluation-summary-title">
       <div className="eyebrow">Read this first</div>
       <h2 id="evaluation-summary-title">The 80% coverage interval covered {backtest?.coverage_hit_count ?? "—"} of {backtest?.coverage_invoice_count ?? 0} eligible paid test invoices ({percent(intervalCoverage)}).</h2>
+      <p className="subheading">This is a synthetic pipeline check, not evidence of real-world accuracy.</p>
+      <details className="about-data inline"><summary>Evaluation details</summary>
       <p>{data.censor_aware_evaluation?.test_invoice_count ?? 0} held-out invoices were evaluated with censor-aware survival metrics, including {data.censor_aware_evaluation?.right_censored_count ?? 0} right-censored open invoices. Issue-origin P50 error starts at invoice issue; conditional forecasts start at a later unpaid checkpoint, so they use different cohorts and starting points.</p>
       <p className="fine-print">The held-out paid date cohort contains {backtest?.paid_invoice_count ?? 0} invoices. {Math.max(0, (backtest?.paid_invoice_count ?? 0) - (backtest?.coverage_invoice_count ?? 0))} invoices have no finite upper interval bound and are excluded from coverage. The monthly table shows the paid count, eligible interval denominator, and exclusions separately.</p>
       {data.deployed_forecast_evaluation && <><p>The selected production scoring path ({data.deployed_forecast_evaluation.model}) was replayed from point-in-time facts at overdue checkpoints for {data.deployed_forecast_evaluation.observation_count} at-risk observations: median paid-only P50 error {medianError(data.deployed_forecast_evaluation.paid_only_p50_median_absolute_error_days)} across {data.deployed_forecast_evaluation.paid_only_p50_count} paid outcomes. Conditional Brier scores at 14/30/60 days {Object.entries(data.deployed_forecast_evaluation.brier_by_horizon).map(([horizon, value]) => `${horizon} ${score(value)} (n=${data.deployed_forecast_evaluation?.brier_observation_counts[horizon] ?? 0}, censored early=${data.deployed_forecast_evaluation?.brier_censored_before_horizon_excluded_counts[horizon] ?? 0})`).join(" · ")}.</p><p className="fine-print">{data.deployed_forecast_evaluation.brier_method} {data.deployed_forecast_evaluation.limitations}</p></>}
-      <p className="fine-print">Raw curve P10–P90 coverage was {percent(backtest?.raw_quantile_coverage)}. The wider calibrated coverage interval is a separate output. This is a synthetic pipeline check, not evidence of real-world accuracy.</p>
+      <p className="fine-print">Raw curve P10–P90 coverage was {percent(backtest?.raw_quantile_coverage)}. The wider calibrated coverage interval is a separate output.</p>
+      </details>
     </section>
 
     {data.model_card && <section className="panel"><div className="panel-title">Model card</div><div className="invoice-facts">

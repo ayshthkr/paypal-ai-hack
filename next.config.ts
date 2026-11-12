@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Keep the dev route badge out of demo recordings; compile and runtime errors still surface.
+  devIndicators: false,
   async headers() {
     const scriptPolicy = process.env.NODE_ENV === "development"
       ? "'self' 'unsafe-inline' 'unsafe-eval'"

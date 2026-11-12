@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { API_WRITE_TIMEOUT_MS, clearReads } from "../lib/api";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import SiteHeader from "../site-header";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -24,5 +24,5 @@ export default function LoginPage() {
     finally { setBusy(false); }
   };
 
-  return <div className="app-shell"><header className="topbar"><Link href="/" className="brand"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link href="/" className="back-link">← Back to demo</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></div></header><main className="main-wrap"><form className="auth-card" onSubmit={submit}><div className="eyebrow">Operator access</div><h1>Sign in</h1><p className="subheading">Access PayPal invoices and approve reminders.</p>{error && <div className="error-box" role="alert" style={{ marginTop: 16 }}>{error}</div>}<label className="field-label" htmlFor="username">Username</label><input className="input" id="username" autoComplete="username" required value={username} onChange={event => setUsername(event.target.value)}/><label className="field-label" htmlFor="password">Password</label><input className="input" id="password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)}/><button className="btn primary" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button><p className="fine-print" style={{ marginTop: 16 }}>Credentials are checked by the API. The session cookie is HttpOnly.</p></form></main></div>;
+  return <div className="app-shell"><SiteHeader/><main className="main-wrap"><form className="auth-card" onSubmit={submit}><div className="eyebrow">Operator access</div><h1>Sign in</h1><p className="subheading">Access PayPal invoices and approve reminders.</p>{error && <div className="error-box" role="alert" style={{ marginTop: 16 }}>{error}</div>}<label className="field-label" htmlFor="username">Username</label><input className="input" id="username" autoComplete="username" required value={username} onChange={event => setUsername(event.target.value)}/><label className="field-label" htmlFor="password">Password</label><input className="input" id="password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)}/><button className="btn primary" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button></form></main></div>;
 }

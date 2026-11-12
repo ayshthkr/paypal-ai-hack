@@ -5,8 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { requestJson, RequestError, clearReads, ensureDemoSession, API_WRITE_TIMEOUT_MS, readFailureMessage } from "../../lib/api";
 import { decisionLabel, signalLabel, statusLabel, termLabel } from "../../lib/labels";
 import { useEffect, useState } from "react";
-import { OperatorControls } from "../../providers";
 
+import SiteHeader from "../../site-header";
 type DelayInvoice = {
   id: string; invoice_number: string; issue_date: string; due_date: string; settled_at: string | null; payment_term_type: string | null; disputed: boolean;
   days_late: number | null; total: string; paid: string; outstanding: string; currency: string; status: string;
@@ -75,8 +75,8 @@ export default function ClientDetail({ id }: { id: string }) {
     if (saved) { sessionStorage.removeItem(key); window.setTimeout(() => window.scrollTo({ top: Number(saved), behavior: "instant" }), 0); }
   }, [id]);
 
-  if (error && !data && notFound) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
-  if (!data) return <div className="app-shell"><header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link></header><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => { clearReads(); setReload(value => value + 1); }}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
+  if (error && !data && notFound) return <div className="app-shell"><SiteHeader/><main className="main-wrap"><div className="panel"><h1>Client not found</h1><p className="subheading">This client is unavailable or your operator session has expired.</p><Link className="btn" href="/">Back to portfolio</Link>{error.includes("login") && <Link className="btn" href="/login">Operator login</Link>}</div></main></div>;
+  if (!data) return <div className="app-shell"><SiteHeader/><main className="main-wrap">{error ? <div className="error-box">{error.includes("unavailable") || error.includes("502") ? "The API may be waking up. Refresh to load client history." : error} <button className="btn" onClick={() => { clearReads(); setReload(value => value + 1); }}>Retry</button> {error.includes("login") && <Link className="table-link" href="/login">Operator login</Link>}</div> : <div className="empty-box">Loading client history…</div>}</main></div>;
 
   const balances = data.invoices.reduce<Record<string, number>>((totals, invoice) => {
     if (!new Set(["PAID", "CANCELLED", "REFUNDED", "VOIDED", "DRAFT", "DELETED"]).has(invoice.status) && Number(invoice.outstanding) > 0) {
@@ -122,9 +122,10 @@ export default function ClientDetail({ id }: { id: string }) {
   };
 
   return <div className="app-shell">
-    <header className="topbar"><Link className="brand" href="/"><span className="brand-mark">L</span> Late Payer</Link><div className="top-actions"><Link className="back-link" href={returnTo}>← Client portfolio</Link><Link className="back-link" href="/actions">Action queue</Link><Link className="back-link" href="/collections">Collections</Link><Link className="back-link" href="/operator">PayPal operator</Link><Link className="btn" href="/offline-demo">Read-only fallback</Link><OperatorControls/></div></header>
+    <SiteHeader/>
     <main className="main-wrap">
       {isSynthetic && <div className="demo-banner"><span className="demo-dot"/><strong>Synthetic demo</strong><span>Invoice and payment history is generated for this isolated browser session.</span></div>}
+      <Link className="back-link crumb" href={returnTo}>← Back to portfolio</Link>
       <div className="heading-row"><div><div className="eyebrow">Client detail · {isSynthetic ? "Synthetic" : "PayPal Sandbox"}</div><h1>{data.client.name}</h1><p className="subheading">{data.history.invoice_count} invoices · {data.history.settled_invoice_count} fully settled · as of {formatDate(data.as_of)}</p></div><span className="status-pill">{signalLabel(data.drift.signal_type)}</span></div>
       {data.history.settled_invoice_count < 5 && <div className="delivery-note">Limited history · fewer than 5 settlements; forecasts use pooled priors.</div>}
       <section className="stats-grid">
