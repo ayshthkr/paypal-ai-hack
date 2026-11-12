@@ -12,7 +12,7 @@ const steps = [
     title: "Portfolio",
     read: "Open balance, past-due invoices, and current client timing signals.",
     detail: "Start with cash exposure and today’s review actions. The forecast distributes expected cash by settlement probability.",
-    href: "/",
+    href: "/#overview",
   },
   {
     title: "Verdant Market outlier",
@@ -91,8 +91,8 @@ export default function TourClient() {
   const story = step.story ? stories.find(item => item.key === step.story) : null;
   const href = story?.href || step.href || STORY_FALLBACK[step.story || ""] || "/offline-demo";
   const fallbackHref = `/offline-demo?stop=${activeIndex + 1}`;
-  const anchor = step.story === "dispute" ? "#reply-triage" : "";
   const destination = new URL(href, "https://latepayer.invalid");
+  const anchor = step.story === "dispute" ? "#reply-triage" : destination.hash;
   destination.searchParams.set("tour", "1");
   destination.searchParams.set("tour_stop", String(activeIndex + 1));
   const openHref = `${destination.pathname}${destination.search}${anchor}`;
